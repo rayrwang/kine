@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 
 import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.hud.MobHealthHud;
+import ai.rrw.kine.hud.MiningHud;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -20,5 +21,6 @@ public class Kine implements ClientModInitializer {
 	public void onInitializeClient() {
 		VelocityHud.register();
 		MobHealthHud.register();
+		MiningHud.register();
 	}
 }

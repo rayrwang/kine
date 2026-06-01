@@ -8,11 +8,11 @@ Minecraft utility mod.
 ## Current Features
 
 - Display player speed (total and ground).
-- Display health of mobs.
+- Show health of mobs.
+- Block breaking percentage and time left indicator
 
 ## Planned
 
-- Block breaking percentage and time
 - Fall prevention (don't walk off ledge, not anti damage cheat)
 - Elytra autopilot (infinite distance using up and down trick), collision avoidance
 - Projectile aimbot
