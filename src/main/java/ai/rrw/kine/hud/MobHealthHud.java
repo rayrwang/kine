@@ -52,14 +52,16 @@ public class MobHealthHud {
 
             double dx = ex - camPos.x, dy = midY - camPos.y, dz = ez - camPos.z;
             double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            float scale = (float) (6.0 / dist);
-            scale = Math.max(0.25f, Math.min(scale, 1.5f));
+            if (dist < 30) { // TODO adjust in settings
+                float scale = (float) (6.0 / dist);
+                scale = Math.max(0.25f, Math.min(scale, 1.5f));
 
-            String health = String.format("%.0f / %.0f", living.getHealth(), living.getMaxHealth());
-            String name = living.getName().getString();
+                String health = String.format("%.0f / %.0f", living.getHealth(), living.getMaxHealth());
+                String name = living.getName().getString();
 
-            drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, headY, ez, health, scale);
-            drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, midY,  ez, name, scale * 0.65f);
+                drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, headY, ez, health, scale);
+                drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, midY,  ez, name, scale * 0.65f);
+            }
         }
     }
 
