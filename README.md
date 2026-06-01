@@ -11,8 +11,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
-- **See what your arrow will hit.**
-	- Projectile predictions.
+- **Auto aim and projectile predictions.**
+	- Never again guess where your arrows or ender pearls will end up.
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.

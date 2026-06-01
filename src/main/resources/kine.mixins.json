@@ -3,7 +3,8 @@
 	"package": "ai.rrw.kine.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"PlayerMixin"
+		"PlayerMixin",
+		"EntityMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
