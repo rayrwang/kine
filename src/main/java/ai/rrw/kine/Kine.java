@@ -8,9 +8,9 @@ import org.slf4j.LoggerFactory;
 import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.hud.MobHealthHud;
 import ai.rrw.kine.hud.MiningHud;
-import ai.rrw.kine.hud.FlightDirector;
 import ai.rrw.kine.hud.RadioAltimeter;
-import ai.rrw.kine.hud.Autopilot;
+import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.Autopilot;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";

@@ -1,4 +1,4 @@
-package ai.rrw.kine.hud;
+package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
