@@ -11,8 +11,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - Display player speed (total and ground).
 - Show health of mobs.
-- Block breaking percentage and time left indicator
-- Fall prevention: the mod will prevent you from walking off ledges greater than 3 blocks high, you can override it by jumping then walking off
+- Block breaking percentage and time left indicator.
+- Fall prevention: the mod will prevent you from walking off ledges greater than 3 blocks high, you can override it by jumping then walking off.
 
 ## Planned
 
