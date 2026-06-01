@@ -3,7 +3,7 @@
 	"id": "kine",
 	"version": "${version}",
 	"name": "kine",
-	"description": "",
+	"description": "Utility mod.",
 	"authors": [
 		"Raymond Wang"
 	],
