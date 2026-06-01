@@ -48,6 +48,11 @@ public class ProjectileTargeting {
     private static final float MOUSE_EPS      = 0.4f;  // mouse drift (deg) that releases the lock
     private static final int   COOLDOWN_TICKS = 10;    // ticks aim stays off after you look away
     private static final int   AIM_ITERS      = 8;
+    // open-sky acquisition fallback: used only when the arrow finds no block impact
+    private static final double CONE_DEG      = 6.0;                              // acquisition half-angle
+    private static final double CONE_COS      = Math.cos(Math.toRadians(CONE_DEG));
+    private static final double CONE_HOLD_COS = Math.cos(Math.toRadians(10.0));   // wider angle to keep an existing lock
+    private static final double CONE_RANGE    = 80.0;                             // max fallback acquisition distance (blocks)
 
     // --- colors (ARGB) ---
     private static final int COLOR_RING   = 0xFFFFFFFF;
@@ -69,6 +74,7 @@ public class ProjectileTargeting {
     private static boolean aiming = false;
     private static float lastAimYaw, lastAimPitch;
     private static int cooldown = 0;
+    private static Entity coneLock = null;   // last cone-acquired target, for open-sky stickiness
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
@@ -173,6 +179,37 @@ public class ProjectileTargeting {
         return best;
     }
 
+    // open-sky fallback: pick the entity nearest your look ray (within a cone), requiring line of sight
+    // and a range cap. Keeps the previous lock if it's still inside a wider hold-cone, to avoid flicker.
+    private static Entity coneTarget(LocalPlayer p, ClientLevel level, Vec3 eye) {
+        Vec3 look = p.getLookAngle();
+        AABB search = new AABB(eye, eye).inflate(CONE_RANGE);
+
+        Entity best = null; double bestCos = CONE_COS;   // most-centered new acquisition (tight cone)
+        boolean keepLock = false;                        // is the existing lock still valid (hold cone)?
+
+        for (Entity e : level.getEntities(p, search, ProjectileTargeting::canHit)) {
+            Vec3 c = e.getBoundingBox().getCenter();
+            Vec3 to = c.subtract(eye);
+            double dist = to.length();
+            if (dist < 1e-3 || dist > CONE_RANGE) continue;
+            double cos = to.scale(1.0 / dist).dot(look);
+            if (cos < CONE_HOLD_COS) continue;            // outside even the hold cone
+            if (!losClear(level, p, eye, c)) continue;    // terrain in the way
+            if (e == coneLock) keepLock = true;           // current target still visible & within hold cone
+            if (cos > bestCos) { bestCos = cos; best = e; }
+        }
+
+        if (keepLock) return coneLock;                    // stick with the current target
+        coneLock = best;                                  // else acquire the most-centered (or clear the lock)
+        return best;
+    }
+
+    private static boolean losClear(ClientLevel level, Entity self, Vec3 from, Vec3 to) {
+        return level.clip(new ClipContext(from, to,
+            ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self)).getType() == HitResult.Type.MISS;
+    }
+
     private static int nearestIndex(List<Vec3> path, Vec3 t) {
         int best = 0; double bd = Double.MAX_VALUE;
         for (int i = 0; i < path.size(); i++) {
@@ -226,6 +263,8 @@ public class ProjectileTargeting {
         if (s0.impact() != null) {
             double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * spec.uncertainty() * ANG_PER_UNC * SPREAD_MULT);
             tgt = bestTarget(p, level, s0.impact(), r0);
+        } else if (Settings.autoAim && spec.weapon()) {
+            tgt = coneTarget(p, level, eye);   // open-sky fallback: pick by look-ray angle
         }
 
         // aim assist — weapons only (bow / crossbow / trident), with target lead
