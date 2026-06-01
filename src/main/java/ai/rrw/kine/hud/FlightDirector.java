@@ -13,6 +13,9 @@ import net.minecraft.resources.Identifier;
 
 public class FlightDirector {
 
+  public static boolean isActive()      { return active; }
+  public static float   commandedPitch() { return commandedPitch; }
+
   // --- commanded technique (from the optimizer) ---
   private static final float DIVE       = 34f;   // nose-down hold angle (xRot +)
   private static final float UP         = -48f;  // nose-up snap angle (xRot -)
