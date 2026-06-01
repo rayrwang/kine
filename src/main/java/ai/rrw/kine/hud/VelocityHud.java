@@ -8,7 +8,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.resources.Identifier;
-import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix3x2fStack;
 
 public class VelocityHud {
@@ -37,21 +36,23 @@ public class VelocityHud {
         String.format("Ground speed: %.1f m/s", groundSpeed)
     };
 
-    float scale = 2f; // TODO adjust using setting
+    float scale = 1f; // TODO adjust using setting
 
     // Render the text
-    int margin = 4;
-    int right = mc.getWindow().getGuiScaledWidth() - margin;
-    int maxW = 0;
-    for (String line : lines) {
-      maxW = Math.max(maxW, mc.font.width(line));
-    }
+    // TODO fix conflict with item names display
+    int screenW = mc.getWindow().getGuiScaledWidth();
+    int screenH = mc.getWindow().getGuiScaledHeight();
+
+    int barsTop = screenH - 39; // top of the vanilla health/hunger row
+    float lineH = mc.font.lineHeight * scale; // one line's height, in screen pixels
+
     Matrix3x2fStack matrices = graphics.pose();
     matrices.pushMatrix();
     matrices.scale(scale, scale);
-    int x = (int) (right / scale - maxW);          // one shared left edge for both lines
     for (int i = 0; i < lines.length; i++) {
-      int y = (int) (margin / scale + i * mc.font.lineHeight);
+      int w = mc.font.width(lines[i]);
+      int x = (int) (screenW / (2f * scale) - w / 2f); // center this line
+      int y = (int) ((barsTop - 1*lineH - (lines.length - i) * lineH) / scale);
       graphics.text(mc.font, lines[i], x, y, 0xFFFFFFFF, true);
     }
     matrices.popMatrix();
