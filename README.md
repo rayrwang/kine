@@ -8,7 +8,7 @@ Minecraft utility mod.
 ## Current Features
 
 - Display player speed (total and ground).
-- Display mob health.
+- Display health of mobs.
 
 ## Planned
 
@@ -17,6 +17,7 @@ Minecraft utility mod.
 - Fall prevention (don't walk off ledge, not anti damage cheat).
 - Elytra autopilot (infinite distance using up and down trick), collision avoidance.
 - Projectile aimbot.
+- Support multiple versions & forge.
 
 ## Long Term
 
