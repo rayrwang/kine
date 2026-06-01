@@ -12,6 +12,7 @@ Minecraft utility mod.
 
 ## Planned
 
+- Block breaking percentage and time.
 - Settings menu.
 - Fall prevention (don't walk off ledge, not anti damage cheat).
 - Elytra autopilot (infinite distance using up and down trick), collision avoidance.
