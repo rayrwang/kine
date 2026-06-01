@@ -11,7 +11,7 @@
 		"homepage": "",
 		"sources": "https://github.com/rayrwang/kine"
 	},
-	"license": "CC0-1.0",
+	"license": "GPL-3.0-or-later",
 	"icon": "assets/kine/icon.png",
 	"environment": "client",
 	"entrypoints": {
