@@ -14,7 +14,6 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -55,7 +54,7 @@ public class ProjectileTargeting {
     // flight params for the held/used projectile
     private record Spec(double gravity, double drag, double speed, double uncertainty,
                         double yOffsetDeg, boolean gravityFirst, boolean weapon) {}
-    private record SimResult(Vec3 impact, Vec3 normal, Entity entity, List<Vec3> path) {}
+    private record SimResult(Vec3 impact, Vec3 normal, Entity entity, List<Vec3> path, int ticks) {}
 
     // render state (written each tick, read each frame)
     private static volatile boolean valid = false;
@@ -128,6 +127,7 @@ public class ProjectileTargeting {
     private static SimResult simulate(ClientLevel level, Vec3 eye, Vec3 vel, Spec spec, Entity self) {
         Vec3 pos = eye, v = vel, nrm = new Vec3(0, 1, 0), imp = null;
         Entity ent = null;
+        int hitTick = MAX_TICKS;
         List<Vec3> pts = new ArrayList<>();
         pts.add(pos);
         for (int i = 0; i < MAX_TICKS; i++) {
@@ -146,13 +146,13 @@ public class ProjectileTargeting {
                     if (d < best) { best = d; ne = e; np = h.get(); }
                 }
             }
-            if (ne != null) { imp = np; ent = ne; pts.add(np); break; }
-            if (bhr.getType() != HitResult.Type.MISS) { imp = bhr.getLocation(); nrm = bhr.getDirection().getUnitVec3(); pts.add(imp); break; }
+            if (ne != null) { imp = np; ent = ne; pts.add(np); hitTick = i + 1; break; }
+            if (bhr.getType() != HitResult.Type.MISS) { imp = bhr.getLocation(); nrm = bhr.getDirection().getUnitVec3(); pts.add(imp); hitTick = i + 1; break; }
 
             pos = next; pts.add(pos);
             if (!spec.gravityFirst()) { v = v.scale(spec.drag()); v = v.add(0, -spec.gravity(), 0); }
         }
-        return new SimResult(imp, nrm, ent, pts);
+        return new SimResult(imp, nrm, ent, pts, hitTick);
     }
 
     // entity nearest the reticle center P, among those the spread disc (radius r) overlaps
@@ -167,20 +167,24 @@ public class ProjectileTargeting {
         return best;
     }
 
-    // iterative ballistic solve: find an aim point whose shot lands on targetCenter
-    private static Vec3 solveAim(ClientLevel level, LocalPlayer p, Vec3 eye, Vec3 targetCenter, Spec spec) {
-        Vec3 aimAt = targetCenter;
+    // iterative ballistic solve WITH target lead: find an aim point whose shot lands where the
+    // target will be when the projectile arrives. Folds gravity drop and flight-time lead together.
+    private static Vec3 solveAim(ClientLevel level, LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
+        Vec3 center = target.getBoundingBox().getCenter();
+        Vec3 tv = new Vec3(target.getX() - target.xOld, target.getY() - target.yOld, target.getZ() - target.zOld);
+        Vec3 lead = center;
         for (int i = 0; i < AIM_ITERS; i++) {
-            Vec3 d = aimAt.subtract(eye);
+            Vec3 d = lead.subtract(eye);
             if (d.lengthSqr() < 1e-6) break;
             d = d.normalize();
             float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
             float pitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
             SimResult s = simulate(level, eye, launchVel(p, yaw, pitch, spec), spec, p);
             if (s.impact() == null) break;
-            aimAt = aimAt.add(targetCenter.subtract(s.impact()));
+            Vec3 desired = center.add(tv.scale(s.ticks()));  // where the target will be at arrival
+            lead = lead.add(desired.subtract(s.impact()));   // steer aim toward that future point
         }
-        return aimAt;
+        return lead;
     }
 
     private static float ease(float cur, float target, boolean wrap) {
@@ -206,26 +210,28 @@ public class ProjectileTargeting {
             tgt = bestTarget(p, level, s0.impact(), r0);
         }
 
-        // aim assist — weapons only (bow / crossbow / trident)
+        // aim assist — weapons only (bow / crossbow / trident), with target lead
+        Entity locked = null;
         boolean overridden = aiming && (Math.abs(Mth.wrapDegrees(p.getYRot() - lastAimYaw)) > MOUSE_EPS
                                      || Math.abs(p.getXRot() - lastAimPitch) > MOUSE_EPS);
         if (overridden) { cooldown = COOLDOWN_TICKS; aiming = false; }
         if (cooldown > 0) { cooldown--; aiming = false; }
         else if (tgt != null && spec.weapon()) {
-            Vec3 aimAt = solveAim(level, p, eye, tgt.getBoundingBox().getCenter(), spec);
+            Vec3 aimAt = solveAim(level, p, eye, tgt, spec);
             Vec3 d = aimAt.subtract(eye).normalize();
             float fyaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
             float fpitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
             p.setYRot(ease(p.getYRot(), fyaw, true));
             p.setXRot(Mth.clamp(ease(p.getXRot(), fpitch, false), -90f, 90f));
             lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
+            locked = tgt;
         } else aiming = false;
 
         // final reticle (reflects any aim correction this tick)
         SimResult sf = simulate(level, eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, p);
         if (sf.impact() == null) return;
         double r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * spec.uncertainty() * ANG_PER_UNC * SPREAD_MULT);
-        Entity tgtF = bestTarget(p, level, sf.impact(), r);
+        Entity tgtF = locked != null ? locked : bestTarget(p, level, sf.impact(), r);
         impact = sf.impact(); normal = sf.normal();
         radius = r; hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
         valid = true;
