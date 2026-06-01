@@ -45,7 +45,7 @@ public class ProjectileTargeting {
     private static final float AIM_MAX_STEP   = 10f;   // deg/tick cap
     private static final float MOUSE_EPS      = 0.4f;  // mouse drift (deg) that releases the lock
     private static final int   COOLDOWN_TICKS = 10;    // ticks aim stays off after you look away
-    private static final int   AIM_ITERS      = 5;
+    private static final int   AIM_ITERS      = 8;
 
     // --- colors (ARGB) ---
     private static final int COLOR_RING   = 0xFFFFFFFF;
@@ -123,8 +123,9 @@ public class ProjectileTargeting {
         return e instanceof LivingEntity && e.isAlive() && !e.isSpectator();
     }
 
-    // step the projectile tick-by-tick until it hits a block or entity
-    private static SimResult simulate(ClientLevel level, Vec3 eye, Vec3 vel, Spec spec, Entity self) {
+    // step the projectile tick-by-tick. collide=true stops at blocks/entities (for the reticle);
+    // collide=false is a free-flight arc (for the aim solver, so drop is measured at the target's range).
+    private static SimResult simulate(ClientLevel level, Vec3 eye, Vec3 vel, Spec spec, Entity self, boolean collide) {
         Vec3 pos = eye, v = vel, nrm = new Vec3(0, 1, 0), imp = null;
         Entity ent = null;
         int hitTick = MAX_TICKS;
@@ -134,20 +135,22 @@ public class ProjectileTargeting {
             if (spec.gravityFirst()) { v = v.add(0, -spec.gravity(), 0); v = v.scale(spec.drag()); }
             Vec3 next = pos.add(v);
 
-            BlockHitResult bhr = level.clip(new ClipContext(pos, next,
-                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
-            Vec3 segEnd = bhr.getType() != HitResult.Type.MISS ? bhr.getLocation() : next;
+            if (collide) {
+                BlockHitResult bhr = level.clip(new ClipContext(pos, next,
+                    ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
+                Vec3 segEnd = bhr.getType() != HitResult.Type.MISS ? bhr.getLocation() : next;
 
-            Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
-            for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), ProjectileTargeting::canHit)) {
-                Optional<Vec3> h = e.getBoundingBox().inflate(ENTITY_PAD).clip(pos, segEnd);
-                if (h.isPresent()) {
-                    double d = pos.distanceToSqr(h.get());
-                    if (d < best) { best = d; ne = e; np = h.get(); }
+                Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
+                for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), ProjectileTargeting::canHit)) {
+                    Optional<Vec3> h = e.getBoundingBox().inflate(ENTITY_PAD).clip(pos, segEnd);
+                    if (h.isPresent()) {
+                        double d = pos.distanceToSqr(h.get());
+                        if (d < best) { best = d; ne = e; np = h.get(); }
+                    }
                 }
+                if (ne != null) { imp = np; ent = ne; pts.add(np); hitTick = i + 1; break; }
+                if (bhr.getType() != HitResult.Type.MISS) { imp = bhr.getLocation(); nrm = bhr.getDirection().getUnitVec3(); pts.add(imp); hitTick = i + 1; break; }
             }
-            if (ne != null) { imp = np; ent = ne; pts.add(np); hitTick = i + 1; break; }
-            if (bhr.getType() != HitResult.Type.MISS) { imp = bhr.getLocation(); nrm = bhr.getDirection().getUnitVec3(); pts.add(imp); hitTick = i + 1; break; }
 
             pos = next; pts.add(pos);
             if (!spec.gravityFirst()) { v = v.scale(spec.drag()); v = v.add(0, -spec.gravity(), 0); }
@@ -167,24 +170,34 @@ public class ProjectileTargeting {
         return best;
     }
 
-    // iterative ballistic solve WITH target lead: find an aim point whose shot lands where the
-    // target will be when the projectile arrives. Folds gravity drop and flight-time lead together.
+    private static int nearestIndex(List<Vec3> path, Vec3 t) {
+        int best = 0; double bd = Double.MAX_VALUE;
+        for (int i = 0; i < path.size(); i++) {
+            double d = path.get(i).distanceToSqr(t);
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    }
+
+    // iterative ballistic solve WITH target lead. Uses a FREE-FLIGHT arc and measures the miss at the
+    // projectile's closest approach to the target's range, so it lifts the aim for drop at long range.
     private static Vec3 solveAim(ClientLevel level, LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
         Vec3 center = target.getBoundingBox().getCenter();
         Vec3 tv = new Vec3(target.getX() - target.xOld, target.getY() - target.yOld, target.getZ() - target.zOld);
-        Vec3 lead = center;
+        Vec3 aim = center;
         for (int i = 0; i < AIM_ITERS; i++) {
-            Vec3 d = lead.subtract(eye);
+            Vec3 d = aim.subtract(eye);
             if (d.lengthSqr() < 1e-6) break;
             d = d.normalize();
             float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
             float pitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
-            SimResult s = simulate(level, eye, launchVel(p, yaw, pitch, spec), spec, p);
-            if (s.impact() == null) break;
-            Vec3 desired = center.add(tv.scale(s.ticks()));  // where the target will be at arrival
-            lead = lead.add(desired.subtract(s.impact()));   // steer aim toward that future point
+            List<Vec3> path = simulate(level, eye, launchVel(p, yaw, pitch, spec), spec, p, false).path();
+            int k = nearestIndex(path, center);                  // flight time to the target's range
+            Vec3 leadTarget = center.add(tv.scale(k));           // where the target will be then
+            Vec3 cp = path.get(nearestIndex(path, leadTarget));  // projectile's closest approach to it
+            aim = aim.add(leadTarget.subtract(cp));              // raise/adjust aim by the miss at that range
         }
-        return lead;
+        return aim;
     }
 
     private static float ease(float cur, float target, boolean wrap) {
@@ -203,7 +216,7 @@ public class ProjectileTargeting {
         Vec3 eye = p.getEyePosition();
 
         // reticle from current aim -> candidate target
-        SimResult s0 = simulate(level, eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, p);
+        SimResult s0 = simulate(level, eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, p, true);
         Entity tgt = null;
         if (s0.impact() != null) {
             double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * spec.uncertainty() * ANG_PER_UNC * SPREAD_MULT);
@@ -228,7 +241,7 @@ public class ProjectileTargeting {
         } else aiming = false;
 
         // final reticle (reflects any aim correction this tick)
-        SimResult sf = simulate(level, eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, p);
+        SimResult sf = simulate(level, eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, p, true);
         if (sf.impact() == null) return;
         double r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * spec.uncertainty() * ANG_PER_UNC * SPREAD_MULT);
         Entity tgtF = locked != null ? locked : bestTarget(p, level, sf.impact(), r);
