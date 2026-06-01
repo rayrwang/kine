@@ -11,6 +11,7 @@ import ai.rrw.kine.hud.MiningHud;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Autopilot;
+import ai.rrw.kine.combat.ProjectileTargeting;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -28,5 +29,6 @@ public class Kine implements ClientModInitializer {
 		FlightDirector.register();
 		RadioAltimeter.register();
 		Autopilot.register();
+		ProjectileTargeting.register();
 	}
 }
