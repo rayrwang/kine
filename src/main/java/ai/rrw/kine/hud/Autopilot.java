@@ -73,8 +73,7 @@ public class Autopilot {
         float dPitch = Math.abs(p.getXRot() - lastSetPitch);
         float dYaw   = Math.abs(Mth.wrapDegrees(p.getYRot() - lastSetYaw));
         if (dPitch > MOUSE_EPS || dYaw > MOUSE_EPS) return true;       // mouse look
-        return mc.options.keyAttack.isDown() || mc.options.keyUse.isDown()
-            || mc.options.keyPickItem.isDown();                        // mouse buttons
+        return false; // ignore mouse buttons
     }
 
     private static float ease(float cur, float target) {
