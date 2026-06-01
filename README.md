@@ -1,7 +1,7 @@
 
 # kine
 
-Minecraft utility mod with elytra autopilot, movement tweaks, and HUD displays.
+Minecraft utility mod with elytra autopilot, aimbot, movement tweaks, and HUD displays.
 
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
