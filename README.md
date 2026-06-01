@@ -1,7 +1,7 @@
 
 # kine
 
-Minecraft utility mod.
+Minecraft utility mod with elytra autopilot, movement tweaks, and HUD displays.
 
 (Client side only, cheats optional)
 
