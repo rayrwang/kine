@@ -5,6 +5,8 @@ Minecraft utility mod.
 
 (Client side only, cheats optional)
 
+Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
+
 ## Current Features
 
 - Display player speed (total and ground).
