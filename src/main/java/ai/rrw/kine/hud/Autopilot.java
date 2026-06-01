@@ -83,16 +83,19 @@ public class Autopilot {
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!engaged) return;
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
-        int boxX = W / 2 + 91 + 4;     // mirror of the offhand slot, right of the hotbar
-        int boxY = H - 22;
-        g.fill(boxX, boxY, boxX + 22, boxY + 22, 0x90000000);   // slot-like backdrop
+        int boxX = W / 2 + 91 + 4; // mirror of the offhand slot, right of the hotbar
+        int boxY = H - 20;
+        g.fill(boxX, boxY, boxX + 18, boxY + 18, 0x90000000); // slot-like backdrop
         String s = "AP";
-        int tx = boxX + (22 - mc.font.width(s)) / 2;
-        int ty = boxY + (22 - mc.font.lineHeight) / 2 + 1;
-        g.text(mc.font, s, tx, ty, 0xFF55FF55, true);           // green = engaged
+        int tx = boxX + (20 - mc.font.width(s)) / 2;
+        int ty = boxY + (20 - mc.font.lineHeight) / 2 + 1;
+        if (engaged) {
+            g.text(mc.font, s, tx, ty, 0xFF55FF55, true); // green
+        } else {
+            g.text(mc.font, s, tx, ty, 0xFFFF0000, true); // red
+        }
     }
 }
