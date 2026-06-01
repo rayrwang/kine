@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.Camera;
@@ -29,6 +30,7 @@ public class MobHealthHud {
     private static void render(GuiGraphicsExtractor graphics, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
+        if (!Settings.displayMobHealths && !Settings.displayMobNames) return;
 
         Camera camera = mc.gameRenderer.getMainCamera();
         Matrix4f viewProj = camera.getViewRotationProjectionMatrix(new Matrix4f());
@@ -59,8 +61,8 @@ public class MobHealthHud {
                 String health = String.format("%.0f / %.0f", living.getHealth(), living.getMaxHealth());
                 String name = living.getName().getString();
 
-                drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, headY, ez, health, scale);
-                drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, midY,  ez, name, scale * 0.65f);
+                if (Settings.displayMobHealths) drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, headY, ez, health, scale);
+                if (Settings.displayMobNames) drawLabel(graphics, pose, mc.font, viewProj, camPos, screenW, screenH, ex, midY,  ez, name, scale * 0.65f);
             }
         }
     }

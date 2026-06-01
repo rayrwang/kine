@@ -23,6 +23,7 @@ public class Kine implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		Settings.load();
 		VelocityHud.register();
 		MobHealthHud.register();
 		MiningHud.register();
@@ -30,5 +31,6 @@ public class Kine implements ClientModInitializer {
 		RadioAltimeter.register();
 		Autopilot.register();
 		ProjectileTargeting.register();
+		ai.rrw.kine.ui.KineMenu.register();
 	}
 }

@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
@@ -31,10 +32,10 @@ public class VelocityHud {
     double speed = Math.sqrt(dx*dx + dy*dy + dz*dz) * 20.0;
     double groundSpeed = Math.sqrt(dx*dx + dz*dz) * 20.0;
 
-    String[] lines = {
-        String.format("Speed: %.1f m/s", speed),
-        String.format("Ground speed: %.1f m/s", groundSpeed)
-    };
+    java.util.List<String> lines = new java.util.ArrayList<>();
+    if (Settings.displaySpeed)       lines.add(String.format("Speed: %.1f m/s", speed));
+    if (Settings.displayGroundSpeed) lines.add(String.format("Ground speed: %.1f m/s", groundSpeed));
+    if (lines.isEmpty()) return;
 
     float scale = 1f; // TODO adjust using setting
 
@@ -49,11 +50,11 @@ public class VelocityHud {
     Matrix3x2fStack matrices = graphics.pose();
     matrices.pushMatrix();
     matrices.scale(scale, scale);
-    for (int i = 0; i < lines.length; i++) {
-      int w = mc.font.width(lines[i]);
+    for (int i = 0; i < lines.size(); i++) {
+      int w = mc.font.width(lines.get(i));
       int x = (int) (screenW / (2f * scale) - w / 2f); // center this line
-      int y = (int) ((barsTop - 2.5*lineH - (lines.length - i) * lineH) / scale);
-      graphics.text(mc.font, lines[i], x, y, 0xFFFFFFFF, true);
+      int y = (int) ((barsTop - 2.5*lineH - (lines.size() - i) * lineH) / scale);
+      graphics.text(mc.font, lines.get(i), x, y, 0xFFFFFFFF, true);
     }
     matrices.popMatrix();
   }

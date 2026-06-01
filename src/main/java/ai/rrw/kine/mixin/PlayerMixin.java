@@ -1,5 +1,6 @@
 package ai.rrw.kine.mixin;
 
+import ai.rrw.kine.Settings;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.world.entity.player.Player;
@@ -27,6 +28,7 @@ public abstract class PlayerMixin {
 
     @Unique
     private boolean kine$dangerousFallAhead(Vec3 delta) {
+        if (!Settings.fallPrevention) return false;
         // DELIBERATELY NAIVE first pass: treat any 3+ block drop as dangerous.
         return this.canFallAtLeast(delta.x, delta.z, 3.0);
     }

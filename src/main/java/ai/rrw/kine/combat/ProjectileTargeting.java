@@ -1,5 +1,6 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.Settings;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -208,6 +209,7 @@ public class ProjectileTargeting {
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player; ClientLevel level = mc.level;
         if (p == null || level == null) { aiming = false; valid = false; return; }
+        if (!Settings.projectileReticle && !Settings.autoAim) { aiming = false; valid = false; return; }
 
         valid = false; hitBox = null;
         Spec spec = specFor(p);
@@ -229,7 +231,7 @@ public class ProjectileTargeting {
                                      || Math.abs(p.getXRot() - lastAimPitch) > MOUSE_EPS);
         if (overridden) { cooldown = COOLDOWN_TICKS; aiming = false; }
         if (cooldown > 0) { cooldown--; aiming = false; }
-        else if (tgt != null && spec.weapon()) {
+        else if (tgt != null && spec.weapon() && Settings.autoAim) {
             Vec3 aimAt = solveAim(level, p, eye, tgt, spec);
             Vec3 d = aimAt.subtract(eye).normalize();
             float fyaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
@@ -251,6 +253,7 @@ public class ProjectileTargeting {
     }
 
     private static void render(LevelRenderContext ctx) {
+        if (!valid || !Settings.projectileReticle) return;
         if (!valid) return;
         Minecraft mc = Minecraft.getInstance();
         Vec3 cam = mc.gameRenderer.getMainCamera().position();
