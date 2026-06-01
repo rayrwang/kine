@@ -32,6 +32,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ---
 
-Client side only, cheats optional.
+Client side only, cheats are disabled by default, enable in settings (press K to open).
 
 kinematics
