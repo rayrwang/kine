@@ -96,14 +96,14 @@ public class FlightDirector {
     // pitch command error -> vertical offset of the horizontal bar
     float error = commandedPitch - p.getXRot();   // +ve = pitch down to follow
     float k = H * 0.35f / 30f;                     // ~35% of screen per 30°
-    int maxOff = (int) (H * 0.40f);
+    int maxOff = (int) (H * 0.25f);
     int off = (int) Math.max(-maxOff, Math.min(maxOff, error * k));
     int barY = cy + off;
 
     int thick = 1, half = 60, gap = 0;
-    // horizontal director (commands pitch): two wings with a gap for the boresight
+    // horizontal director bar
     g.fill(cx - half, barY - thick, cx - gap,  barY + thick, MAGENTA);
     g.fill(cx + gap,  barY - thick, cx + half, barY + thick, MAGENTA);
-    // vertical director (roll/heading): centered + unused for now
+    // vertical director bar
     g.fill(cx - thick, cy - half, cx + thick, cy + half, MAGENTA);  }
 }
