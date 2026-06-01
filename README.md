@@ -10,6 +10,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Current Features
 
 - Elytra flight directors and autopilot for optimal technique.
+	- Altitude indicator.
 - Display player speed (total and ground).
 - Show health of mobs.
 - Block breaking percentage and time left indicator.
