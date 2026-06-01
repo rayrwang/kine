@@ -3,8 +3,6 @@
 
 Minecraft utility mod with elytra autopilot, movement tweaks, and HUD displays.
 
-(Client side only, cheats optional)
-
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 \*heavy assistance from Opus 4.8
@@ -24,7 +22,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Planned
 
 - Elytra collision avoidance
-- Projectile aimbot
 - Settings menu, separate into normal and cheats. Default enable a subset of normal, no cheats.
 	- Font sizes for each display.
 	- Display speed (boolean)
@@ -40,3 +37,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - Pathfinding
 - Combat
+
+---
+
+Client side only, cheats optional.
+
+kinematics
