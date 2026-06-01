@@ -9,12 +9,13 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Current Features
 
-- Elytra flight directors and autopilot for optimal technique.
-	- Start high enough, then press P to engage.
+- **Fly long distances without fireworks.**
+	- Start high enough, then press P to engage autopilot.
+- **Fall protection.**
+	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Display player speed and altitude.
-- Show health of mobs.
 - Block breaking percentage and time left indicator.
-- Fall prevention: the mod will prevent you from walking off ledges greater than 3 blocks high, you can override it by jumping then walking off.
+- Show health of mobs.
 
 ## Planned
 
