@@ -5,6 +5,8 @@ import net.fabricmc.api.ClientModInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ai.rrw.kine.hud.VelocityHud;
+
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
 
@@ -15,10 +17,7 @@ public class Kine implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		// This code runs as soon as Minecraft is in a mod-load-ready state.
-		// However, some things (like resources) may still be uninitialized.
-		// Proceed with mild caution.
-
-		LOGGER.info("");
+		// Render player velocity
+		VelocityHud.register();
 	}
 }
