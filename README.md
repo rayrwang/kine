@@ -22,7 +22,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Elytra collision avoidance
+- Collision detection for both elytra & aimbot
 - Support multiple versions & forge
 
 ## Long Term
