@@ -12,14 +12,20 @@ Minecraft utility mod.
 
 ## Planned
 
-- Block breaking percentage and time.
-- Settings menu.
-- Fall prevention (don't walk off ledge, not anti damage cheat).
-- Elytra autopilot (infinite distance using up and down trick), collision avoidance.
-- Projectile aimbot.
-- Support multiple versions & forge.
+- Block breaking percentage and time
+- Fall prevention (don't walk off ledge, not anti damage cheat)
+- Elytra autopilot (infinite distance using up and down trick), collision avoidance
+- Projectile aimbot
+- Settings menu
+	- Display speed (boolean)
+	- Display ground speed (boolean)
+	- Display mob health (boolean)
+		- Max range (slider)
+	- Display mob labels (boolean)
+		- Max range (slider)
+- Support multiple versions & forge
 
 ## Long Term
 
-- Pathfinding.
-- Combat.
+- Pathfinding
+- Combat
