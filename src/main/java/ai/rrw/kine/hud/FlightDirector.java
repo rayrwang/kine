@@ -105,6 +105,5 @@ public class FlightDirector {
     g.fill(cx - half, barY - thick, cx - gap,  barY + thick, MAGENTA);
     g.fill(cx + gap,  barY - thick, cx + half, barY + thick, MAGENTA);
     // vertical director (roll/heading): centered + unused for now
-    g.fill(cx - thick, cy - 40, cx + thick, cy + 40, MAGENTA);
-  }
+    g.fill(cx - thick, cy - half, cx + thick, cy + half, MAGENTA);  }
 }
