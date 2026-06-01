@@ -7,6 +7,8 @@ Minecraft utility mod with elytra autopilot, movement tweaks, and HUD displays.
 
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
+\*heavy assistance from Opus 4.8
+
 ## Current Features
 
 - **Fly long distances without fireworks.**
