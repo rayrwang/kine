@@ -1,4 +1,4 @@
-package ai.rrw.kine.ui;
+package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;

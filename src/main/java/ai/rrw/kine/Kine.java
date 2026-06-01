@@ -8,7 +8,8 @@ import org.slf4j.LoggerFactory;
 import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.hud.MobHealthHud;
 import ai.rrw.kine.hud.MiningHud;
-import ai.rrw.kine.ui.FlightDirector;
+import ai.rrw.kine.hud.FlightDirector;
+import ai.rrw.kine.hud.RadioAltimeter;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -24,5 +25,6 @@ public class Kine implements ClientModInitializer {
 		MobHealthHud.register();
 		MiningHud.register();
 		FlightDirector.register();
+		RadioAltimeter.register();
 	}
 }
