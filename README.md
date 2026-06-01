@@ -11,7 +11,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
-- **Auto aim and projectile predictions.**
+- **Aimbot and targeting reticles for projectiles.**
 	- Enable in settings (press K to open).
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
