@@ -15,6 +15,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -121,6 +122,7 @@ public class ProjectileTargeting {
     }
 
     private static boolean canHit(Entity e) {
+        if (e instanceof EnderDragonPart) return true;   // dragon hitboxes aren't LivingEntity
         return e instanceof LivingEntity && e.isAlive() && !e.isSpectator();
     }
 
@@ -184,7 +186,8 @@ public class ProjectileTargeting {
     // projectile's closest approach to the target's range, so it lifts the aim for drop at long range.
     private static Vec3 solveAim(ClientLevel level, LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
         Vec3 center = target.getBoundingBox().getCenter();
-        Vec3 tv = new Vec3(target.getX() - target.xOld, target.getY() - target.yOld, target.getZ() - target.zOld);
+        Entity velSrc = target instanceof EnderDragonPart part ? part.parentMob : target;
+        Vec3 tv = new Vec3(velSrc.getX() - velSrc.xOld, velSrc.getY() - velSrc.yOld, velSrc.getZ() - velSrc.zOld);
         Vec3 aim = center;
         for (int i = 0; i < AIM_ITERS; i++) {
             Vec3 d = aim.subtract(eye);
