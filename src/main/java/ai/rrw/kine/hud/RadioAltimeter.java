@@ -51,7 +51,7 @@ public class RadioAltimeter {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
         int x = W / 2 - w / 2;
-        int y = H - 31;                          // right above the hotbar
-        g.text(mc.font, text, x, y, 0xFFFFC400, true);   // amber, ARGB
+        int y = H - 50; // right above the vanilla health/hunger row
+        g.text(mc.font, text, x, y, 0xFFFFC400, true); // amber, ARGB
     }
 }

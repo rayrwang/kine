@@ -52,7 +52,7 @@ public class VelocityHud {
     for (int i = 0; i < lines.length; i++) {
       int w = mc.font.width(lines[i]);
       int x = (int) (screenW / (2f * scale) - w / 2f); // center this line
-      int y = (int) ((barsTop - 1*lineH - (lines.length - i) * lineH) / scale);
+      int y = (int) ((barsTop - 2.5*lineH - (lines.length - i) * lineH) / scale);
       graphics.text(mc.font, lines[i], x, y, 0xFFFFFFFF, true);
     }
     matrices.popMatrix();
