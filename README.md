@@ -23,6 +23,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Planned
 
 - Collision detection for both elytra & aimbot
+- Dodge incoming projectiles.
+- Elytra soft landing.
 - Support multiple versions & forge
 
 ## Long Term
