@@ -14,7 +14,7 @@ Minecraft utility mod.
 
 - Settings menu.
 - Fall prevention (don't walk off ledge, not anti damage cheat).
-- Elytra autopilot.
+- Elytra autopilot (infinite distance using up and down trick), collision avoidance.
 - Projectile aimbot.
 
 ## Long Term
