@@ -254,7 +254,6 @@ public class ProjectileTargeting {
 
     private static void render(LevelRenderContext ctx) {
         if (!valid || !Settings.projectileReticle) return;
-        if (!valid) return;
         Minecraft mc = Minecraft.getInstance();
         Vec3 cam = mc.gameRenderer.getMainCamera().position();
         PoseStack ps = ctx.poseStack();
