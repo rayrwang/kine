@@ -39,11 +39,13 @@ public class KineSettingsScreen extends Screen {
             () -> Settings.displayMobNames, v -> Settings.displayMobNames = v);
         toggle(x, y + 6 * step, w, h, "Projectile targeting reticle", DESC_RETICLE,
             () -> Settings.projectileReticle, v -> Settings.projectileReticle = v);
-        toggle(x, y + 7 * step, w, h, "Auto aim", DESC_AUTOAIM,
+        toggle(x, y + 7 * step, w, h, "Projectile glow", DESC_GLOW,
+            () -> Settings.projectileGlow, v -> Settings.projectileGlow = v);
+        toggle(x, y + 8 * step, w, h, "Auto aim", DESC_AUTOAIM,
             () -> Settings.autoAim, v -> Settings.autoAim = v);
 
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-            .bounds(this.width / 2 - 100, y + 8 * step + 8, 200, h).build());
+            .bounds(this.width / 2 - 100, y + 9 * step + 8, 200, h).build());
     }
 
     private void toggle(int x, int y, int w, int h, String name, String desc,
@@ -100,6 +102,10 @@ public class KineSettingsScreen extends Screen {
         + "trident, snowball, egg, ender pearl, potion, or xp bottle \u2014 accounting for gravity, "
         + "drag, launch spread, and your own movement. The ring turns green when it covers a valid "
         + "target.";
+    private static final String DESC_GLOW =
+        "Outlines every projectile with a bright glow \u2014 in flight and after it lands \u2014 "
+        + "visible through walls, so arrows and thrown items are easy to follow. Applies to all "
+        + "projectiles, including those thrown by others.";
     private static final String DESC_AUTOAIM =
         "Automatically steers your view so weapon shots (bow, crossbow, trident) land on the target "
         + "nearest your reticle, leading moving targets by predicting where they'll be when the shot "

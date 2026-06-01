@@ -1,5 +1,6 @@
 package ai.rrw.kine.mixin;
 
+import ai.rrw.kine.Settings;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.Projectile;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,7 +13,7 @@ public class EntityMixin {
 
     @Inject(method = "isCurrentlyGlowing", at = @At("HEAD"), cancellable = true)
     private void kine$glowProjectiles(CallbackInfoReturnable<Boolean> cir) {
-        if ((Object) this instanceof Projectile) {
+        if (Settings.projectileGlow && (Object) this instanceof Projectile) {
             cir.setReturnValue(true);
         }
     }
