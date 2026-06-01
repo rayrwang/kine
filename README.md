@@ -10,10 +10,10 @@ Minecraft utility mod.
 - Display player speed (total and ground).
 - Show health of mobs.
 - Block breaking percentage and time left indicator
+- Fall prevention: the mod will prevent you from walking off ledges greater than 3 blocks high, you can override it by jumping then walking off
 
 ## Planned
 
-- Fall prevention (don't walk off ledge, not anti damage cheat)
 - Elytra autopilot (infinite distance using up and down trick), collision avoidance
 - Projectile aimbot
 - Settings menu, separate into normal and cheats. Default enable a subset of normal, no cheats.
@@ -24,6 +24,7 @@ Minecraft utility mod.
 		- Max range (slider)
 	- Display mob labels (boolean)
 		- Max range (slider)
+	- Toggle fall prevention (boolean)
 - Support multiple versions & forge
 
 ## Long Term
