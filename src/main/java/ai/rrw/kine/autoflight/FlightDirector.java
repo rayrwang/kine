@@ -122,7 +122,8 @@ public class FlightDirector {
     int cx = W / 2, cy = H / 2;
     int maxOff = (int) (H * 0.25f);
 
-    if (tooLow) {
+    boolean landing = Nav.landing();
+    if (tooLow && !landing) {
       // red advisory — but yield this slot to the nav readout when a nav mode is set
       if (Nav.mode() == Nav.Mode.OFF) {
         String s = "TOO LOW TO ACTIVATE AUTOPILOT";
@@ -131,24 +132,30 @@ public class FlightDirector {
       }
       return;
     }
-    if (!active || Nav.landing()) return;   // landing program owns pitch — don't draw the porpoise bar
+    if (!active && !landing) return;
 
     // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
-    // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is
-    // lerped from its previous-tick value.
+    // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is the
+    // landing descent while landing, otherwise the porpoise lerped from its previous-tick value.
     float partial = delta.getGameTimeDeltaPartialTick(false);
-    float cmdNow  = Mth.lerp(partial, commandedPitchOld, commandedPitch);
+    float cmdNow  = landing ? Nav.landingPitch() : Mth.lerp(partial, commandedPitchOld, commandedPitch);
     float pitchNow = p.getViewXRot(partial);
-    float error = cmdNow - pitchNow;               // +ve = pitch down to follow
     float k = H * 0.35f / 30f;                     // ~35% of screen per 30°
-    int off = (int) Math.max(-maxOff, Math.min(maxOff, error * k));
+    int off = (int) Math.max(-maxOff, Math.min(maxOff, (cmdNow - pitchNow) * k));
     int barY = cy + off;
 
+    // vertical bar is the heading/lateral director: deflects when a nav mode commands a turn
+    int barX = cx;
+    if (Nav.steering()) {
+      float yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getViewYRot(partial));
+      barX = cx + (int) Math.max(-maxOff, Math.min(maxOff, yawErr * k));
+    }
+
     int thick = 1, half = 60, gap = 0;
-    // horizontal director bar
+    // horizontal (pitch) director bar — moves vertically
     g.fill(cx - half, barY - thick, cx - gap,  barY + thick, MAGENTA);
     g.fill(cx + gap,  barY - thick, cx + half, barY + thick, MAGENTA);
-    // vertical director bar
-    g.fill(cx - thick, cy - half, cx + thick, cy + half, MAGENTA);
+    // vertical (heading) director bar — moves horizontally with the nav turn command
+    g.fill(barX - thick, cy - half, barX + thick, cy + half, MAGENTA);
   }
 }

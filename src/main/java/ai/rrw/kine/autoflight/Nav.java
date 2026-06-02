@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -17,6 +18,10 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix3x2fStack;
+import org.joml.Matrix4f;
+import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Set;
@@ -32,6 +37,10 @@ public class Nav {
     public enum Mode { OFF, SELECTED, MANAGED }
 
     private static final int    GREEN          = 0xFF44FF44;
+    private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
+    private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
+    private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
+    private static final double COLUMN_TOP_Y   = 320;
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final float  DESCENT_PITCH  = 15f;    // gentle nose-down glide while landing (deg, +down)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
@@ -150,6 +159,8 @@ public class Nav {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
         int cx = W / 2, cy = H / 2;
+
+        if (mode == Mode.MANAGED) drawTargetColumn(g, mc, W, H);
         int maxOff = (int) (H * 0.25f);
         int lh = mc.font.lineHeight;
         int etaY  = cy - maxOff - lh - 6;   // the slot the "too low" warning otherwise uses
@@ -157,7 +168,7 @@ public class Nav {
 
         String top = (mode == Mode.SELECTED)
             ? "HDG " + pad3(Math.round(selectedHeading))
-            : "COORD " + targetX + " " + targetZ + (landing ? "   LANDING" : "");
+            : "COORD " + targetX + " " + targetZ;
         g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
 
         if (mode == Mode.MANAGED) {
@@ -175,6 +186,45 @@ public class Nav {
     }
 
     // --- helpers ---
+
+    /** Baritone-style beam: project the world column at the target X/Z to screen and draw it. There is
+     *  no per-frame world-render hook in 26.1, so this is screen-space (and therefore draws through
+     *  terrain, like Baritone's goal beam). */
+    private static void drawTargetColumn(GuiGraphicsExtractor g, Minecraft mc, int W, int H) {
+        Camera cam = mc.gameRenderer.getMainCamera();
+        Matrix4f vp = cam.getViewRotationProjectionMatrix(new Matrix4f());
+        Vec3 c = cam.position();
+        double wx = targetX + 0.5, wz = targetZ + 0.5;
+
+        float[] base = project(vp, c, wx, COLUMN_BASE_Y, wz, W, H);
+        float[] top  = project(vp, c, wx, COLUMN_TOP_Y,  wz, W, H);
+        if (base == null || top == null) return;   // (partly) behind the camera — skip this frame
+
+        float sdx = top[0] - base[0], sdy = top[1] - base[1];
+        float len = (float) Math.sqrt(sdx * sdx + sdy * sdy);
+        if (len < 1f) return;
+
+        double ddx = wx - c.x, ddz = wz - c.z;
+        double dist = Math.sqrt(ddx * ddx + ddz * ddz);
+        int width = (int) Math.max(2, Math.min(16, 600.0 / Math.max(1.0, dist)));
+
+        Matrix3x2fStack pose = g.pose();
+        pose.pushMatrix();
+        pose.translate((base[0] + top[0]) / 2f, (base[1] + top[1]) / 2f);
+        pose.rotate((float) Math.atan2(sdy, sdx));   // align the quad with the projected column
+        int hl = Math.round(len / 2f);
+        g.fill(-hl, -width / 2, hl, width / 2, COLUMN_BODY);
+        g.fill(-hl, -1, hl, 1, COLUMN_CORE);
+        pose.popMatrix();
+    }
+
+    private static float[] project(Matrix4f vp, Vec3 c, double wx, double wy, double wz, int W, int H) {
+        Vector4f v = new Vector4f((float) (wx - c.x), (float) (wy - c.y), (float) (wz - c.z), 1.0f);
+        vp.transform(v);
+        if (v.w <= 0.0f) return null;
+        return new float[]{ (v.x / v.w * 0.5f + 0.5f) * W, (1.0f - (v.y / v.w * 0.5f + 0.5f)) * H };
+    }
+
     private static float wrap360(float d) { d %= 360f; return d < 0 ? d + 360f : d; }
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
