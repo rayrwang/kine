@@ -23,10 +23,12 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Press N to enter a destination.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
+- **Water bucket clutch automatically.**
 - **Dodge arrows and other projectiles.**
+- **AFK failsafes.**
+	- Logs you out if you gake damage while AFK, autopilot disconnects, or elytra has low durability.
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
-- **AFK failsafes**: Log out while AFK if take damage, autopilot disconnect, or elytra low durability.
 - Block breaking percentage and time left indicator.
 - Elytra low durability and collision protections, auto swap and endurance/range display.
 - Display player speed and altitude.
@@ -36,7 +38,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Water bucket clutch
 - Elytra collision avoidance, not just prevention, integrate with autopilot.
 - Warning sounds
 - Controls & displays list and explanations

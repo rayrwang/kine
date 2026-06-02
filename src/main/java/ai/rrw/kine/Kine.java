@@ -16,6 +16,7 @@ import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.ElytraGuard;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.ProjectileDodge;
+import ai.rrw.kine.combat.WaterClutch;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -37,6 +38,7 @@ public class Kine implements ClientModInitializer {
 		Autopilot.register();
 		Nav.register();
 		ElytraGuard.register();
+		WaterClutch.register();
 		ai.rrw.kine.combat.AfkGuard.register();
 		ProjectileTargeting.register();
 		ProjectileDodge.register();

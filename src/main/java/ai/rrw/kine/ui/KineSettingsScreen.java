@@ -120,6 +120,13 @@ public class KineSettingsScreen extends Screen {
         + "disconnect screen names what hit you. The autopilot moving the camera doesn't count as input, "
         + "so it still protects you on a hands-off flight; while a menu is open you're treated as present.";
 
+    private static final String DESC_CLUTCH =
+        "Auto water-bucket clutch. While you're free-falling hard enough to get hurt and have a water "
+        + "bucket in your hotbar or offhand, it drops water on the spot you're about to land and scoops "
+        + "it back up once you're safe \\u2014 sneaking as it places, so slabs, stairs and fences get the "
+        + "water on top rather than waterlogged. Never runs while gliding; a broken elytra is just falling. "
+        + "Doesn't work where water evaporates (the Nether).";
+
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
             Opt.of("Display speed", DESC_SPEED, () -> Settings.displaySpeed, v -> Settings.displaySpeed = v),
@@ -134,6 +141,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
             Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),
+            Opt.of("Water bucket clutch", DESC_CLUTCH, () -> Settings.waterBucketClutch, v -> Settings.waterBucketClutch = v),
         }),
         new Section("Combat", new Opt[]{
             Opt.of("Projectile targeting reticle", DESC_RETICLE, () -> Settings.projectileReticle, v -> Settings.projectileReticle = v),
