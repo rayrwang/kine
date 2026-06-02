@@ -2,6 +2,7 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.hud.RangeEndurance;
+import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -46,7 +47,10 @@ public class Nav {
     private static final double COLUMN_TOP_Y   = 320;
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
-    private static final float  DESCENT_PITCH  = 12f;    // gentle nose-down glide while landing (deg, +down)
+    private static final float  DIVE_PITCH    = 80f;    // near-vertical dive when high, to shed altitude fast (deg, +down)
+    private static final float  FLARE_PITCH   = 10f;    // gentle glide for the final approach near the ground
+    private static final double FLARE_AGL     = 12.0;   // at/below this height above ground, hold the gentle flare
+    private static final double DIVE_AGL      = 500.0;  // at/above this height, hold the full dive (so 1000m+ is essentially straight down)
     private static final double ORBIT_RADIUS   = 10.0;   // circle this tight around the landing spot
     private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
@@ -77,7 +81,12 @@ public class Nav {
     public static Mode    mode()          { return mode; }
     public static boolean steering()      { return (mode == Mode.SELECTED && hasHeading) || (mode == Mode.MANAGED && hasTarget); }
     public static boolean landing()       { return landing; }
-    public static float   landingPitch()  { return DESCENT_PITCH; }
+    /** Descent angle for the landing program: steep up high to lose altitude fast, easing to a gentle flare near the ground. */
+    public static float landingPitch() {
+        double agl = Math.max(0, RadioAltimeter.agl());
+        double t = Mth.clamp((agl - FLARE_AGL) / (DIVE_AGL - FLARE_AGL), 0.0, 1.0);
+        return (float) Mth.lerp(t, FLARE_PITCH, DIVE_PITCH);
+    }
     public static float   selectedHeading() { return selectedHeading; }
     public static boolean hasHeading()    { return hasHeading; }
     public static boolean hasTarget()     { return hasTarget; }
