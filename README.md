@@ -35,6 +35,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - Navigation screen / controls
 - AFK damage protection
+- Elytra collision avoidance not just prevention, integrate with autopilot.
 - Collision detection for aimbot
 - Support multiple versions & forge
 
