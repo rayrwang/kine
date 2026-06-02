@@ -26,6 +26,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Dodge arrows and other projectiles.**
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
+- **AFK failsafes**: Log out while AFK if take damage, autopilot disconnect, or elytra low durability.
 - Block breaking percentage and time left indicator.
 - Elytra low durability and collision protections, auto swap and endurance/range display.
 - Display player speed and altitude.
