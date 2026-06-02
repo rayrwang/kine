@@ -11,6 +11,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
 
 public class FlightDirector {
 
@@ -40,6 +41,7 @@ public class FlightDirector {
   private static final int HOLD = 0, TOP = 1, SWEEP = 2;
   private static int phase = HOLD;
   private static float commandedPitch = DIVE;
+  private static float commandedPitchOld = DIVE;   // value at the previous tick, for per-frame interpolation
   private static int topTicks = 0;
   private static boolean active = false;
   private static boolean tooLow = false;   // gliding, but below the altitude to arm
@@ -54,6 +56,7 @@ public class FlightDirector {
   }
 
   private static void tick(Minecraft mc) {
+    commandedPitchOld = commandedPitch;   // remember last tick's value so render can interpolate to it
     LocalPlayer p = mc.player;
     if (p == null || mc.level == null || !p.isFallFlying()) {
       reset();
@@ -128,8 +131,13 @@ public class FlightDirector {
     }
     if (!active) return;
 
-    // pitch command error -> vertical offset of the horizontal bar
-    float error = commandedPitch - p.getXRot();   // +ve = pitch down to follow
+    // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
+    // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is
+    // lerped from its previous-tick value.
+    float partial = delta.getGameTimeDeltaPartialTick(false);
+    float cmdNow  = Mth.lerp(partial, commandedPitchOld, commandedPitch);
+    float pitchNow = p.getViewXRot(partial);
+    float error = cmdNow - pitchNow;               // +ve = pitch down to follow
     float k = H * 0.35f / 30f;                     // ~35% of screen per 30°
     int off = (int) Math.max(-maxOff, Math.min(maxOff, error * k));
     int barY = cy + off;
