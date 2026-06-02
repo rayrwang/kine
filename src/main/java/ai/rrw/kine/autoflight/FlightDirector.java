@@ -25,9 +25,16 @@ public class FlightDirector {
   private static final double TRIGGER    = 44.0;       // snap up once horiz speed (m/s) reaches this
   private static final int    TOP_HOLD   = 12;         // ticks to hold the snap (~0.6 s)
   private static final float  SWEEP_RATE = 13f / 20f;  // deg per tick easing back down
-  private static final int    AGL_MIN    = 64;         // clear blocks needed below to engage
+
+  // Altitude gating with hysteresis: need ENGAGE_AGL clear blocks below to ARM (room for a full dive
+  // plus margin), but once armed we stay armed until dropping below FLOOR_AGL. Without the gap, the
+  // dive — which is meant to eat altitude — would drop us under the arm threshold and disengage us
+  // mid-maneuver. The dive budget (ENGAGE - FLOOR) comfortably exceeds the profile's real dive depth.
+  private static final int ENGAGE_AGL = 120;
+  private static final int FLOOR_AGL  = 48;
 
   private static final int MAGENTA = 0xFFFF00FF;
+  private static final int RED     = 0xFFFF3030;
 
   // --- state machine ---
   private static final int HOLD = 0, TOP = 1, SWEEP = 2;
@@ -35,6 +42,7 @@ public class FlightDirector {
   private static float commandedPitch = DIVE;
   private static int topTicks = 0;
   private static boolean active = false;
+  private static boolean tooLow = false;   // gliding, but below the altitude to arm
 
   public static void register() {
     HudElementRegistry.attachElementAfter(
@@ -47,11 +55,21 @@ public class FlightDirector {
 
   private static void tick(Minecraft mc) {
     LocalPlayer p = mc.player;
-    if (p == null || mc.level == null || !p.isFallFlying() || !hasAltitude(mc, p)) {
-      active = false;
-      phase = HOLD; commandedPitch = DIVE; topTicks = 0;   // reset for next engagement
+    if (p == null || mc.level == null || !p.isFallFlying()) {
+      reset();
       return;
     }
+
+    int clear = clearBelow(mc, p);
+    // arm needs ENGAGE_AGL; once armed, stay armed until below FLOOR_AGL
+    if (active ? clear < FLOOR_AGL : clear < ENGAGE_AGL) {
+      active = false;
+      tooLow = true;                 // gliding but can't (or no longer can) operate safely
+      phase = HOLD; commandedPitch = DIVE; topTicks = 0;
+      return;
+    }
+    active = true;
+    tooLow = false;
 
     double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
     double hSpeed = Math.sqrt(dx * dx + dz * dz) * 20.0;   // m/s, matches the velocity HUD
@@ -70,25 +88,28 @@ public class FlightDirector {
         if (commandedPitch >= DIVE) { commandedPitch = DIVE; phase = HOLD; }
       }
     }
-    active = true;
   }
 
-  /** True if there are at least AGL_MIN clear blocks straight below — room to dive. */
-  private static boolean hasAltitude(Minecraft mc, LocalPlayer p) {
+  private static void reset() {
+    active = false; tooLow = false;
+    phase = HOLD; commandedPitch = DIVE; topTicks = 0;
+  }
+
+  /** Clear blocks straight below the player, scanning down to ENGAGE_AGL (returns ENGAGE_AGL if more). */
+  private static int clearBelow(Minecraft mc, LocalPlayer p) {
     int x = p.getBlockX(), z = p.getBlockZ();
     int top = (int) Math.floor(p.getY()) - 1;
-    int limit = Math.max(mc.level.getMinY(), top - AGL_MIN);
+    int limit = Math.max(mc.level.getMinY(), top - ENGAGE_AGL);
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     for (int y = top; y > limit; y--) {
       pos.set(x, y, z);
-      if (!mc.level.getBlockState(pos).isAir()) return false;   // ground too close
+      if (!mc.level.getBlockState(pos).isAir()) return top - y;
     }
-    return true;
+    return ENGAGE_AGL;
   }
 
   private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
     if (!Settings.displayFlightDirectors) return;
-    if (!active) return;
     Minecraft mc = Minecraft.getInstance();
     LocalPlayer p = mc.player;
     if (p == null) return;
@@ -96,11 +117,20 @@ public class FlightDirector {
     int W = mc.getWindow().getGuiScaledWidth();
     int H = mc.getWindow().getGuiScaledHeight();
     int cx = W / 2, cy = H / 2;
+    int maxOff = (int) (H * 0.25f);
+
+    if (tooLow) {
+      // red advisory, placed where the bar's maximum upward deflection would reach
+      String s = "TOO LOW TO ACTIVATE AUTOPILOT";
+      int y = cy - maxOff - mc.font.lineHeight - 6;
+      g.text(mc.font, s, cx - mc.font.width(s) / 2, y, RED, true);
+      return;
+    }
+    if (!active) return;
 
     // pitch command error -> vertical offset of the horizontal bar
     float error = commandedPitch - p.getXRot();   // +ve = pitch down to follow
     float k = H * 0.35f / 30f;                     // ~35% of screen per 30°
-    int maxOff = (int) (H * 0.25f);
     int off = (int) Math.max(-maxOff, Math.min(maxOff, error * k));
     int barY = cy + off;
 
