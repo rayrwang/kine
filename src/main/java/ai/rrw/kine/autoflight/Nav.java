@@ -63,7 +63,9 @@ public class Nav {
     // --- state ---
     private static Mode    mode = Mode.OFF;
     private static float   selectedHeading = 0f;   // compass degrees (0=N, 90=E) for SELECTED
+    private static boolean hasHeading = false;     // no heading chosen until the dial is set
     private static int     targetX, targetZ;       // for MANAGED
+    private static boolean hasTarget = false;      // no destination chosen until coords are entered
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
@@ -73,16 +75,20 @@ public class Nav {
 
     // --- accessors used by the autopilot / flight director ---
     public static Mode    mode()          { return mode; }
-    public static boolean steering()      { return mode != Mode.OFF; }
+    public static boolean steering()      { return (mode == Mode.SELECTED && hasHeading) || (mode == Mode.MANAGED && hasTarget); }
     public static boolean landing()       { return landing; }
     public static float   landingPitch()  { return DESCENT_PITCH; }
     public static float   selectedHeading() { return selectedHeading; }
+    public static boolean hasHeading()    { return hasHeading; }
+    public static boolean hasTarget()     { return hasTarget; }
     public static int     targetX()       { return targetX; }
     public static int     targetZ()       { return targetZ; }
 
     // --- set by the nav screen ---
-    public static void setSelected(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); clearLanding(); }
-    public static void setManaged(int x, int z)      { mode = Mode.MANAGED; targetX = x; targetZ = z; clearLanding(); }
+    public static void enterSelected() { mode = Mode.SELECTED; clearLanding(); }   // mode only — heading stays unset
+    public static void enterManaged()  { mode = Mode.MANAGED;  clearLanding(); }   // mode only — target stays unset
+    public static void setHeading(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; clearLanding(); }
+    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; clearLanding(); }
     public static void off()                         { mode = Mode.OFF; clearLanding(); }
     private static void clearLanding()               { landing = false; haveSpot = false; }
 
@@ -124,7 +130,7 @@ public class Nav {
         }
         if (mode == Mode.OFF) { clearLanding(); return; }
 
-        if (mode == Mode.MANAGED) {
+        if (mode == Mode.MANAGED && hasTarget) {
             double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
             double dist = Math.sqrt(hdx * hdx + hdz * hdz);
             if (!landing) {
@@ -181,7 +187,7 @@ public class Nav {
         int H = mc.getWindow().getGuiScaledHeight();
         int cx = W / 2, cy = H / 2;
 
-        if (mode == Mode.MANAGED) drawTargetColumn(g, mc, W, H);
+        if (mode == Mode.MANAGED && hasTarget) drawTargetColumn(g, mc, W, H);
         if (FlightDirector.isTooLow() && !landing) return;   // too-low warning owns this slot instead
         int maxOff = (int) (H * 0.25f);
         int lh = mc.font.lineHeight;
@@ -189,11 +195,11 @@ public class Nav {
         int lineY = etaY - lh - 2;          // mode/target line, one line above
 
         String top = (mode == Mode.SELECTED)
-            ? "HDG " + pad3(Math.round(selectedHeading))
-            : "COORD " + targetX + " " + targetZ;
+            ? (hasHeading ? "HDG " + pad3(Math.round(selectedHeading)) : "HDG ---")
+            : (hasTarget  ? "COORD " + targetX + " " + targetZ          : "COORD --");
         g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
 
-        if (mode != Mode.MANAGED) return;   // SELECTED has no destination, so no distance/ETA/range
+        if (mode != Mode.MANAGED || !hasTarget) return;   // no destination yet — no distance/ETA/range
 
         double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
         double dist = Math.sqrt(hdx * hdx + hdz * hdz);

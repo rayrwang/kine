@@ -13,7 +13,8 @@ public class KineNavScreen extends Screen {
     private static final int GREEN = 0xFF44FF44, RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
 
     private Nav.Mode mode;
-    private float heading;          // compass deg (0 = N)
+    private float heading;          // compass deg (0 = N); only meaningful when hasHeading
+    private boolean hasHeading;     // has the dial been set this session / previously
     private EditBox xBox, zBox;
     private Button selBtn, manBtn, offBtn;
     private boolean draggingDial = false;
@@ -23,6 +24,7 @@ public class KineNavScreen extends Screen {
     public KineNavScreen() {
         super(Component.literal("Kine nav"));
         this.mode = Nav.mode();
+        this.hasHeading = Nav.hasHeading();
         this.heading = Nav.selectedHeading();
     }
 
@@ -46,12 +48,9 @@ public class KineNavScreen extends Screen {
         zBox = new EditBox(this.font, cx + 8,      fy, fw, fh, Component.literal("Z"));
         xBox.setMaxLength(8);
         zBox.setMaxLength(8);
-        if (Nav.mode() == Nav.Mode.MANAGED) {
+        if (Nav.hasTarget()) {                 // only restore a previously-set destination; no default
             xBox.setValue(Integer.toString(Nav.targetX()));
             zBox.setValue(Integer.toString(Nav.targetZ()));
-        } else if (this.minecraft != null && this.minecraft.player != null) {
-            xBox.setValue(Integer.toString((int) Math.floor(this.minecraft.player.getX())));
-            zBox.setValue(Integer.toString((int) Math.floor(this.minecraft.player.getZ())));
         }
         addRenderableWidget(xBox);
         addRenderableWidget(zBox);
@@ -64,15 +63,15 @@ public class KineNavScreen extends Screen {
 
     private void setMode(Nav.Mode m) {
         this.mode = m;
-        if (m == Nav.Mode.SELECTED) Nav.setSelected(heading);
-        else if (m == Nav.Mode.MANAGED) applyManaged();
+        if (m == Nav.Mode.SELECTED) Nav.enterSelected();           // heading stays unset until you dial it
+        else if (m == Nav.Mode.MANAGED) { Nav.enterManaged(); applyManaged(); }
         else Nav.off();
         updateVisibility();
     }
 
     private void applyManaged() {
         Integer x = parseInt(xBox.getValue()), z = parseInt(zBox.getValue());
-        if (x != null && z != null) Nav.setManaged(x, z);
+        if (x != null && z != null) Nav.setTarget(x, z);           // only commits once both coords are valid
     }
 
     private void updateVisibility() {
@@ -116,7 +115,8 @@ public class KineNavScreen extends Screen {
         if (dx == 0 && dy == 0) return;
         float h = (float) Math.toDegrees(Math.atan2(dx, -dy));   // up = 0 = N, right = 90 = E
         heading = (h % 360f + 360f) % 360f;
-        Nav.setSelected(heading);
+        hasHeading = true;
+        Nav.setHeading(heading);
     }
 
     @Override
@@ -151,14 +151,16 @@ public class KineNavScreen extends Screen {
         g.text(this.font, "E", dialCx + dialR + 5, dialCy - 4,  LABEL, true);
         g.text(this.font, "W", dialCx - dialR - 11, dialCy - 4, LABEL, true);
 
-        double hr = Math.toRadians(heading);
-        int hx = dialCx + (int) Math.round(Math.sin(hr) * (dialR - 4));
-        int hy = dialCy - (int) Math.round(Math.cos(hr) * (dialR - 4));
-        line(g, dialCx, dialCy, hx, hy, GREEN);
+        if (hasHeading) {
+            double hr = Math.toRadians(heading);
+            int hx = dialCx + (int) Math.round(Math.sin(hr) * (dialR - 4));
+            int hy = dialCy - (int) Math.round(Math.cos(hr) * (dialR - 4));
+            line(g, dialCx, dialCy, hx, hy, GREEN);
+        }
         g.fill(dialCx - 2, dialCy - 2, dialCx + 3, dialCy + 3, LABEL);
 
-        String hs = "HDG " + String.format("%03d", Math.round(heading) % 360);
-        g.text(this.font, hs, dialCx - this.font.width(hs) / 2, dialCy + dialR + 16, GREEN, true);
+        String hs = hasHeading ? "HDG " + String.format("%03d", Math.round(heading) % 360) : "HDG ---";
+        g.text(this.font, hs, dialCx - this.font.width(hs) / 2, dialCy + dialR + 16, hasHeading ? GREEN : DIM, true);
     }
 
     /** thin line via single-pixel fills (Bresenham) */
@@ -176,7 +178,7 @@ public class KineNavScreen extends Screen {
     @Override
     public void onClose() {
         if (mode == Nav.Mode.MANAGED) applyManaged();
-        else if (mode == Nav.Mode.SELECTED) Nav.setSelected(heading);
+        else if (mode == Nav.Mode.SELECTED && hasHeading) Nav.setHeading(heading);
         super.onClose();
     }
 
