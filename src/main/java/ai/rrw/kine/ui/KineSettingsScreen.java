@@ -13,18 +13,24 @@ import java.util.function.Consumer;
 
 public class KineSettingsScreen extends Screen {
 
-    private static final int MARGIN = 16;
+    private static final int MARGIN  = 16;
     private static final int DIVIDER = 0xFF555555;
     private static final int HEADER  = 0xFFBBBBBB;
+    private static final int ROW_H    = 20;
+    private static final int ROW_STEP = 22;
+    private static final int GAP      = 8;     // between sections
+    private static final int MODE_DIV = 10;    // space for divider under the mode row
 
     private final Screen parent;
 
-    // layout, computed in init()
-    private int rowX, colW, rowH;
-    private int modeDividerY;
-    private int[] headerY;
-    private Opt[] rowOpt;   // every toggle row, in draw order (for hover)
-    private int[] rowY;
+    // layout
+    private int rowX, colW, headH;
+    private int viewTop, viewBottom, contentHeight, maxScroll, scrollOffset;
+    private int baseModeDivY;
+    private int[] baseHeaderY;
+    private int[] baseRowY;       // content-space y of each toggle row
+    private Opt[] rowOpt;
+    private Button[] rowButton;
 
     public KineSettingsScreen(Screen parent) {
         super(Component.literal("Kine settings"));
@@ -46,7 +52,7 @@ public class KineSettingsScreen extends Screen {
 
     // ---- descriptions ----
     private static final String DESC_FLIGHTMODE =
-        "Sets what the elytra flight directors (and autopilot) optimize for. MAX CLIMB tunes the "
+        "Sets what the autopilot and elytra flight directors optimize for. MAX CLIMB tunes the "
         + "dive/pull-up cycle to gain the most altitude (~25 m/s ground speed, climbing ~1 block/s). "
         + "MAX SPEED holds altitude while cruising as fast as possible (~33 m/s). The active mode is "
         + "shown by the HUD annunciator above the director bars.";
@@ -107,8 +113,8 @@ public class KineSettingsScreen extends Screen {
         + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
         + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
 
-    // ---- top-of-menu mode selector (functional toggle, not enable/disable) ----
-    private static final Opt FLIGHT_MODE = Opt.mode("Flight director", DESC_FLIGHTMODE,
+    // top-of-menu mode selector (functional toggle, not enable/disable)
+    private static final Opt FLIGHT_MODE = Opt.mode("Autopilot / flight directors", DESC_FLIGHTMODE,
         () -> Settings.flightMaxSpeed, v -> Settings.flightMaxSpeed = v, "MAX SPEED", "MAX CLIMB");
 
     private static final Section[] SECTIONS = {
@@ -136,48 +142,54 @@ public class KineSettingsScreen extends Screen {
     protected void init() {
         rowX = MARGIN;
         colW = Math.min(280, this.width / 2 - MARGIN - 8);
+        headH = this.font.lineHeight + 6;
+        viewTop = 30;
+        int doneH = 18;
+        viewBottom = this.height - doneH - 12;
 
         int nOpts = 1;
         for (Section s : SECTIONS) nOpts += s.opts().length;
-
-        int headH = this.font.lineHeight + 6;   // header text + divider + gap
-        int gap   = 8;                           // gap between sections
-        int top   = 30;
-        int doneH = 18;
-        int modeDivH = 10;                       // space for the divider under the mode row
-        int fixed = top + modeDivH + SECTIONS.length * (headH + gap) + doneH + 12;
-        int rowStep = Math.max(16, Math.min(22, (this.height - fixed) / nOpts));
-        rowH = rowStep - 2;
-
         rowOpt = new Opt[nOpts];
-        rowY = new int[nOpts];
-        headerY = new int[SECTIONS.length];
-        int idx = 0;
-        int y = top;
+        baseRowY = new int[nOpts];
+        rowButton = new Button[nOpts];
+        baseHeaderY = new int[SECTIONS.length];
 
-        // mode selector at the very top, then a divider
-        rowOpt[idx] = FLIGHT_MODE; rowY[idx] = y;
-        addToggle(rowX, y, colW, rowH, FLIGHT_MODE);
-        idx++; y += rowStep;
-        modeDividerY = y + 1;
-        y += modeDivH;
+        int cY = 0, idx = 0;
+        // mode selector at the top, then a divider
+        rowOpt[idx] = FLIGHT_MODE; baseRowY[idx] = cY;
+        rowButton[idx] = addToggle(rowX, viewTop + cY, colW, ROW_H, FLIGHT_MODE);
+        idx++; cY += ROW_STEP;
+        baseModeDivY = cY + 1; cY += MODE_DIV;
 
         for (int s = 0; s < SECTIONS.length; s++) {
-            headerY[s] = y;
-            y += headH;
+            baseHeaderY[s] = cY;
+            cY += headH;
             for (Opt opt : SECTIONS[s].opts()) {
-                rowOpt[idx] = opt; rowY[idx] = y;
-                addToggle(rowX, y, colW, rowH, opt);
-                idx++; y += rowStep;
+                rowOpt[idx] = opt; baseRowY[idx] = cY;
+                rowButton[idx] = addToggle(rowX, viewTop + cY, colW, ROW_H, opt);
+                idx++; cY += ROW_STEP;
             }
-            y += gap;
+            cY += GAP;
         }
+        contentHeight = cY;
+        maxScroll = Math.max(0, contentHeight - (viewBottom - viewTop));
+        scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+        layout();
 
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-            .bounds(rowX, y, colW, doneH).build());
+            .bounds(rowX, this.height - doneH - 6, colW, doneH).build());
     }
 
-    private void addToggle(int x, int y, int w, int h, Opt opt) {
+    /** Reposition rows for the current scroll offset and hide any not fully inside the viewport. */
+    private void layout() {
+        for (int i = 0; i < rowButton.length; i++) {
+            int sy = viewTop + baseRowY[i] - scrollOffset;
+            rowButton[i].setY(sy);
+            rowButton[i].visible = sy >= viewTop && sy + ROW_H <= viewBottom;
+        }
+    }
+
+    private Button addToggle(int x, int y, int w, int h, Opt opt) {
         Button b = Button.builder(label(opt, opt.get().getAsBoolean()), btn -> {
             boolean nv = !opt.get().getAsBoolean();
             opt.set().accept(nv);
@@ -185,6 +197,7 @@ public class KineSettingsScreen extends Screen {
             Settings.save();
         }).bounds(x, y, w, h).build();
         addRenderableWidget(b);
+        return b;
     }
 
     private static Component label(Opt opt, boolean on) {
@@ -192,19 +205,40 @@ public class KineSettingsScreen extends Screen {
     }
 
     @Override
+    public boolean mouseScrolled(double mx, double my, double dx, double dy) {
+        if (maxScroll > 0) {
+            scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset - (int) (dy * 18)));
+            layout();
+            return true;
+        }
+        return super.mouseScrolled(mx, my, dx, dy);
+    }
+
+    @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+        layout();
         super.extractRenderState(graphics, mouseX, mouseY, a);
         graphics.centeredText(this.font, this.title, this.width / 2, 12, 0xFFFFFFFF);
 
-        // divider under the top mode selector
-        graphics.fill(rowX, modeDividerY, rowX + colW, modeDividerY + 1, DIVIDER);
-
-        // section headers, each with a divider beneath
+        // section headers + dividers, clipped to the scrolling viewport
+        graphics.enableScissor(0, viewTop, this.width, viewBottom);
+        int my = viewTop + baseModeDivY - scrollOffset;
+        graphics.fill(rowX, my, rowX + colW, my + 1, DIVIDER);
         for (int s = 0; s < SECTIONS.length; s++) {
-            int hy = headerY[s];
+            int hy = viewTop + baseHeaderY[s] - scrollOffset;
             graphics.text(this.font, Component.literal(SECTIONS[s].title()), rowX, hy, HEADER);
             int dy = hy + this.font.lineHeight + 2;
             graphics.fill(rowX, dy, rowX + colW, dy + 1, DIVIDER);
+        }
+        graphics.disableScissor();
+
+        // scrollbar
+        if (maxScroll > 0) {
+            int barX = rowX + colW + 4, viewH = viewBottom - viewTop;
+            int thumbH = Math.max(20, viewH * viewH / contentHeight);
+            int thumbY = viewTop + (int) ((long) (viewH - thumbH) * scrollOffset / maxScroll);
+            graphics.fill(barX, viewTop, barX + 2, viewBottom, 0xFF2A2A2A);
+            graphics.fill(barX, thumbY, barX + 2, thumbY + thumbH, 0xFF8A8A8A);
         }
 
         // right-side description panel for the hovered row
@@ -214,7 +248,9 @@ public class KineSettingsScreen extends Screen {
 
         Opt hovered = null;
         for (int i = 0; i < rowOpt.length; i++) {
-            if (mouseX >= rowX && mouseX <= rowX + colW && mouseY >= rowY[i] && mouseY <= rowY[i] + rowH) {
+            int sy = viewTop + baseRowY[i] - scrollOffset;
+            if (rowButton[i].visible && mouseX >= rowX && mouseX <= rowX + colW
+                && mouseY >= sy && mouseY <= sy + ROW_H) {
                 hovered = rowOpt[i];
                 break;
             }
@@ -222,9 +258,8 @@ public class KineSettingsScreen extends Screen {
 
         String text = hovered != null ? hovered.desc() : "Hover an option for details.";
         int color = hovered != null ? 0xFFFFFFFF : 0xFF909090;
-
         List<FormattedCharSequence> lines = this.font.split(Component.literal(text), descW);
-        int ty = 30;
+        int ty = viewTop;
         for (FormattedCharSequence line : lines) {
             graphics.text(this.font, line, descX, ty, color);
             ty += this.font.lineHeight + 2;

@@ -114,7 +114,7 @@ public class FlightDirector {
 
     // mode annunciator, just above the horizontal bar's maximum upward deflection (cy - maxOff)
     String mode = Settings.flightMaxSpeed ? "MAX SPEED" : "MAX CLIMB";
-    int annY = cy - maxOff - mc.font.lineHeight - 3;
-    g.text(mc.font, mode, cx - mc.font.width(mode) / 2, annY, MAGENTA, true);
+    int annY = cy - maxOff - mc.font.lineHeight - 6;
+    g.text(mc.font, mode, cx - mc.font.width(mode) / 2, annY, 0xFF44FF44, true);
   }
 }
