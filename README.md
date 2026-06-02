@@ -13,6 +13,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Start high enough, then press P to engage autopilot.
 - **Aimbot and targeting reticles for projectiles.**
 	- Enable in settings (press K to open).
+- **Dodge arrows and other projectiles.**
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.
@@ -23,7 +24,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Dodge incoming projectiles.
 - Collision detection for aimbot
 - Support multiple versions & forge
 

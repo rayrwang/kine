@@ -13,6 +13,7 @@ import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.ElytraGuard;
 import ai.rrw.kine.combat.ProjectileTargeting;
+import ai.rrw.kine.combat.ProjectileDodge;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -33,6 +34,7 @@ public class Kine implements ClientModInitializer {
 		Autopilot.register();
 		ElytraGuard.register();
 		ProjectileTargeting.register();
+		ProjectileDodge.register();
 		ai.rrw.kine.ui.KineMenu.register();
 	}
 }

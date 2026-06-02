@@ -20,6 +20,7 @@ public class Settings {
     public static boolean projectileReticle      = true;
     public static boolean projectileGlow         = true;
     public static boolean autoAim                = false;
+    public static boolean projectileDodge        = false;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
@@ -28,7 +29,7 @@ public class Settings {
         boolean displaySpeed = true, displayGroundSpeed = true, displayFlightDirectors = true,
                 elytraDuraFailsafe = true, crashProtection = true, fallPrevention = true,
                 displayMobHealths = true, displayMobNames = false, projectileReticle = true,
-                projectileGlow = true, autoAim = false;
+                projectileGlow = true, autoAim = false, projectileDodge = false;
     }
 
     public static void load() {
@@ -47,6 +48,7 @@ public class Settings {
             projectileReticle = d.projectileReticle;
             projectileGlow = d.projectileGlow;
             autoAim = d.autoAim;
+            projectileDodge = d.projectileDodge;
         } catch (Exception e) {
             Kine.LOGGER.warn("kine: could not load config, using defaults", e);
         }
@@ -65,6 +67,7 @@ public class Settings {
         d.projectileReticle = projectileReticle;
         d.projectileGlow = projectileGlow;
         d.autoAim = autoAim;
+        d.projectileDodge = projectileDodge;
         try {
             Files.writeString(FILE, GSON.toJson(d));
         } catch (IOException e) {

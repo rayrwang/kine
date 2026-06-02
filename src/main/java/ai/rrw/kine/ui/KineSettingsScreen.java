@@ -74,6 +74,13 @@ public class KineSettingsScreen extends Screen {
         + "utility items are never auto-aimed. This is an aimbot \u2014 expect a ban anywhere that "
         + "doesn't allow client mods.";
 
+    private static final String DESC_DODGE =
+        "Watches for incoming projectiles (arrows, tridents, fireballs and the like) and, when one is "
+        + "on course to hit you within about a second, sidesteps you off its line at roughly sprint "
+        + "speed. It can't beat a point-blank or very fast shot \u2014 there isn't time to clear the "
+        + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
+        + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
+
     private record Opt(String name, String desc, BooleanSupplier get, Consumer<Boolean> set) {}
 
     private static final Opt[] OPTS = {
@@ -99,6 +106,8 @@ public class KineSettingsScreen extends Screen {
             () -> Settings.projectileGlow, v -> Settings.projectileGlow = v),
         new Opt("Auto aim", DESC_AUTOAIM,
             () -> Settings.autoAim, v -> Settings.autoAim = v),
+        new Opt("Projectile dodge", DESC_DODGE,
+            () -> Settings.projectileDodge, v -> Settings.projectileDodge = v),
     };
 
     @Override
