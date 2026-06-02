@@ -1,17 +1,18 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -25,7 +26,9 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix3x2fStack;
 import org.joml.Matrix4f;
+import org.joml.Vector4f;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,8 +42,10 @@ public class ProjectileTargeting {
     private static final double ANG_PER_UNC = 0.0172275;
     private static final double MIN_R       = 0.15;
     private static final int    RING_SEGS   = 48;
-    private static final float  LINE_WIDTH  = 2.0f;
     private static final double ENTITY_PAD  = 0.3;   // arrow pick inflation
+    private static final float  NEAR_W      = 0.05f; // clip-space w to clip segments at (avoids divide blow-up)
+    private static final int    LINE_PX     = 1;     // reticle line thickness in GUI pixels
+    private static final float  MIN_SEG_PX2 = 1.0f;  // min on-screen segment length^2 before we draw (bridges thin-ellipse tips)
 
     // --- aim assist ---
     private static final float AIM_SMOOTH     = 0.35f; // ease fraction/tick toward solution
@@ -78,7 +83,10 @@ public class ProjectileTargeting {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
-        LevelRenderEvents.AFTER_TRANSLUCENT_FEATURES.register(ProjectileTargeting::render);
+        HudElementRegistry.attachElementAfter(
+            VanillaHudElements.MISC_OVERLAYS,
+            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "projectile_reticle"),
+            ProjectileTargeting::render);
     }
 
     // ---- which projectile, and its params ----
@@ -294,15 +302,18 @@ public class ProjectileTargeting {
         valid = true;
     }
 
-    private static void render(LevelRenderContext ctx) {
+    // Rendered as a screen-space overlay rather than in the world: the impact ring and target box are
+    // computed in world space (in tick) then projected to the screen here, so they draw on top of
+    // terrain instead of being occluded by it — there's no no-depth line render type to use in-world.
+    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!valid || !Settings.projectileReticle) return;
         Minecraft mc = Minecraft.getInstance();
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
-        PoseStack ps = ctx.poseStack();
-        MultiBufferSource.BufferSource buf = ctx.bufferSource();
-        VertexConsumer vc = buf.getBuffer(RenderTypes.lines());
-        Matrix4f m = ps.last().pose();
-        PoseStack.Pose pose = ps.last();
+        if (mc.player == null) return;
+        Camera camera = mc.gameRenderer.getMainCamera();
+        Matrix4f vp = camera.getViewRotationProjectionMatrix(new Matrix4f());
+        Vec3 cam = camera.position();
+        int W = mc.getWindow().getGuiScaledWidth();
+        int H = mc.getWindow().getGuiScaledHeight();
 
         // spread ring on the impact surface (green if it covers a target, else white)
         Vec3 n = normal.normalize();
@@ -310,33 +321,83 @@ public class ProjectileTargeting {
         Vec3 w = n.cross(u).normalize();
         Vec3 ic = impact.add(n.scale(0.01));
         int ringColor = hitBox != null ? COLOR_ENTITY : COLOR_RING;
-        Vec3 prev = null;
+        // Walk the ring projecting each point, drawing only once we've moved at least ~1px on screen.
+        // At shallow angles the ellipse gets very thin and its left/right tips bunch into sub-pixel
+        // steps; without this they'd round to zero length and drop out, splitting the ring into two arcs.
+        float[] anchor = null;
         for (int i = 0; i <= RING_SEGS; i++) {
             double a = (Math.PI * 2 * i) / RING_SEGS;
-            Vec3 ptp = ic.add(u.scale(Math.cos(a) * radius)).add(w.scale(Math.sin(a) * radius));
-            if (prev != null) seg(vc, m, pose, cam, prev, ptp, ringColor);
-            prev = ptp;
+            Vec3 p = ic.add(u.scale(Math.cos(a) * radius)).add(w.scale(Math.sin(a) * radius));
+            float[] s = screenOf(vp, cam, p, W, H);
+            if (s == null) { anchor = null; continue; }        // point behind the camera: break the ring here
+            if (anchor == null) { anchor = s; continue; }
+            float ddx = s[0] - anchor[0], ddy = s[1] - anchor[1];
+            if (ddx * ddx + ddy * ddy >= MIN_SEG_PX2) {        // far enough to draw a clean segment
+                line2d(g, anchor[0], anchor[1], s[0], s[1], ringColor);
+                anchor = s;
+            }                                                  // else accumulate: keep anchor, bridge to a later point
         }
-        if (hitBox != null) box(vc, m, pose, cam, hitBox, COLOR_ENTITY);
-
-        buf.endBatch(RenderTypes.lines());
+        if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, COLOR_ENTITY);
     }
 
-    private static void seg(VertexConsumer vc, Matrix4f m, PoseStack.Pose pose, Vec3 cam, Vec3 a, Vec3 b, int color) {
-        Vec3 d = b.subtract(a).normalize();
-        vc.addVertex(m, (float)(a.x-cam.x), (float)(a.y-cam.y), (float)(a.z-cam.z))
-            .setColor(color).setNormal(pose, (float)d.x, (float)d.y, (float)d.z).setLineWidth(LINE_WIDTH);
-        vc.addVertex(m, (float)(b.x-cam.x), (float)(b.y-cam.y), (float)(b.z-cam.z))
-            .setColor(color).setNormal(pose, (float)d.x, (float)d.y, (float)d.z).setLineWidth(LINE_WIDTH);
-    }
-
-    private static void box(VertexConsumer vc, Matrix4f m, PoseStack.Pose pose, Vec3 cam, AABB bb, int color) {
-        Vec3 a = new Vec3(bb.minX, bb.minY, bb.minZ), b = new Vec3(bb.maxX, bb.maxY, bb.maxZ);
+    private static void boxProjected(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, AABB bb, int color) {
         Vec3[] c = {
-            new Vec3(a.x,a.y,a.z), new Vec3(b.x,a.y,a.z), new Vec3(b.x,a.y,b.z), new Vec3(a.x,a.y,b.z),
-            new Vec3(a.x,b.y,a.z), new Vec3(b.x,b.y,a.z), new Vec3(b.x,b.y,b.z), new Vec3(a.x,b.y,b.z)
+            new Vec3(bb.minX, bb.minY, bb.minZ), new Vec3(bb.maxX, bb.minY, bb.minZ),
+            new Vec3(bb.maxX, bb.minY, bb.maxZ), new Vec3(bb.minX, bb.minY, bb.maxZ),
+            new Vec3(bb.minX, bb.maxY, bb.minZ), new Vec3(bb.maxX, bb.maxY, bb.minZ),
+            new Vec3(bb.maxX, bb.maxY, bb.maxZ), new Vec3(bb.minX, bb.maxY, bb.maxZ)
         };
         int[][] edges = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-        for (int[] e : edges) seg(vc, m, pose, cam, c[e[0]], c[e[1]], color);
+        for (int[] e : edges) line3d(g, vp, cam, W, H, c[e[0]], c[e[1]], color);
+    }
+
+    // Draw a world-space segment as a screen line, clipped to the camera near plane so a segment that
+    // crosses behind the camera doesn't blow up to infinity (which used to leave gaps on the ring sides).
+    private static void line3d(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, Vec3 A, Vec3 B, int color) {
+        Vector4f a = clip(vp, cam, A);
+        Vector4f b = clip(vp, cam, B);
+        boolean ain = a.w > NEAR_W, bin = b.w > NEAR_W;
+        if (!ain && !bin) return;                                     // whole segment behind the near plane
+        if (!ain)      a = lerp4(a, b, (NEAR_W - a.w) / (b.w - a.w));  // clip endpoint A forward to the near plane
+        else if (!bin) b = lerp4(b, a, (NEAR_W - b.w) / (a.w - b.w));  // clip endpoint B forward to the near plane
+        float[] sa = toScreen(a, W, H), sb = toScreen(b, W, H);
+        line2d(g, sa[0], sa[1], sb[0], sb[1], color);
+    }
+
+    /** World point -> clip space (before the perspective divide). */
+    private static Vector4f clip(Matrix4f vp, Vec3 cam, Vec3 p) {
+        Vector4f v = new Vector4f((float)(p.x - cam.x), (float)(p.y - cam.y), (float)(p.z - cam.z), 1.0f);
+        vp.transform(v);
+        return v;
+    }
+
+    private static Vector4f lerp4(Vector4f a, Vector4f b, float t) {
+        return new Vector4f(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+    }
+
+    /** Clip-space point -> screen pixel. */
+    private static float[] toScreen(Vector4f v, int W, int H) {
+        return new float[]{ (v.x / v.w * 0.5f + 0.5f) * W, (1.0f - (v.y / v.w * 0.5f + 0.5f)) * H };
+    }
+
+    /** World point -> screen pixel, or null if at/behind the camera near plane. */
+    private static float[] screenOf(Matrix4f vp, Vec3 cam, Vec3 p, int W, int H) {
+        Vector4f v = clip(vp, cam, p);
+        if (v.w <= NEAR_W) return null;
+        return toScreen(v, W, H);
+    }
+
+    /** Thin screen-space line between two points, via a rotated fill. */
+    private static void line2d(GuiGraphicsExtractor g, float x1, float y1, float x2, float y2, int color) {
+        float dx = x2 - x1, dy = y2 - y1;
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+        if (len < 0.5f) return;
+        Matrix3x2fStack pose = g.pose();
+        pose.pushMatrix();
+        pose.translate((x1 + x2) / 2f, (y1 + y2) / 2f);
+        pose.rotate((float) Math.atan2(dy, dx));
+        int hl = Math.round(len / 2f);
+        g.fill(-hl, 0, hl, LINE_PX, color);
+        pose.popMatrix();
     }
 }
