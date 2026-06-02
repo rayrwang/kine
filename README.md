@@ -34,6 +34,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Planned
 
 - Navigation screen / controls
+- AFK damage protection
 - Collision detection for aimbot
 - Support multiple versions & forge
 
