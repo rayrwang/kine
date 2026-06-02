@@ -70,7 +70,9 @@ Engagement uses hysteresis so the dive can't accidentally disarm it: you need cl
 
 While you're wearing an elytra the HUD estimates how much longer you can stay up and how far you can go. Endurance counts the durability left on the worn wing plus every spare you can actually reach in the air — inventory and offhand, but not shulker boxes (you'd have to land) — and scales each one by its Unbreaking level, which multiplies effective flight time. XP bottles and Mending aren't counted: there's no XP source in the air yet.
 
-Reserves are held back the way aviation fuel planning does it: a 5% contingency, plus a final reserve sized to glide down safely from your current altitude (bigger the higher you are). The estimate hits zero right as the durability failsafe would trigger. Range is endurance times your *own* recent average flight speed — a rolling mean of measured horizontal velocity — so it tracks how you actually fly instead of a theoretical number, and stays blank until it has enough samples to be stable.
+Reserves are held back the way aviation fuel planning does it: a 5% contingency, plus a final reserve sized to glide down safely from your current altitude (bigger the higher you are). That reserve follows a smoothed altitude, so the porpoise's constant up-and-down doesn't make the readouts pulse — the durability failsafe itself still reads your true instantaneous height, where the conservative number is wanted. The endurance estimate hits zero right as that failsafe would trigger.
+
+Range is endurance times your *own* cruise speed: a rolling mean of measured horizontal velocity, taken over whole porpoise cycles so the fast dives and slow climbs cancel out instead of making it wander. Before it has a full cycle of samples it falls back on a nominal cruise figure, so the readout works from the first second rather than sitting blank. The distance it shows is then eased into a steady decline rather than left to twitch with every durability step — smoothed, but without the optimistic "you can reach further than you can" bias a naive rolling average would introduce.
 
 ### Elytra durability failsafe and auto-swap
 
