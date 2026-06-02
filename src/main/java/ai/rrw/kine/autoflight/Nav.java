@@ -53,6 +53,7 @@ public class Nav {
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
     private static final double ETA_ANCHOR     = 21.0;   // nominal cruise groundspeed (m/s) the ETA is anchored to (sim: ~20.6 for the deployed porpoise)
     private static final double ETA_ADJUST     = 0.0001; // per-tick drift of the anchor toward the measured mean (~100s time constant)
+    private static final double ETA_TC         = 12.0;   // time constant (s) for smoothing the *displayed* ETA, on top of the speed smoothing
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     private static final Set<Block> DANGER = Set.of(
@@ -70,6 +71,8 @@ public class Nav {
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
     private static double  etaSpeed = ETA_ANCHOR;  // anchored, slowly-adapted groundspeed used for the ETA readout
+    private static double  etaShown = Double.NaN;  // low-passed ETA value actually displayed (s)
+    private static long    etaNanos = 0L;          // wall-clock of the last ETA display update
 
     private static KeyMapping navKey;
 
@@ -206,7 +209,7 @@ public class Nav {
 
         String line2 = landing
             ? "LANDING"
-            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(dist / etaSpeed);
+            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(smoothEta(dist / etaSpeed));
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
         // If the elytra can't take us that far, flag it to the right of the two readout lines.
@@ -262,4 +265,25 @@ public class Nav {
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
     private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
+
+    /**
+     * Smooths the displayed ETA. The raw figure (distance / cruise speed) is right on average but ticks
+     * down unevenly because ground speed surges in the dive and stalls at the top of each porpoise.
+     * Complementary filter: count the real clock down at exactly one second per second (perfectly even),
+     * then drift gently toward the true value so it stays accurate and absorbs genuine speed/heading
+     * changes. The slow drift averages the porpoise surge/stall away. Snaps on a big jump (new target,
+     * teleport) or after a render gap (screen open, F1) so it never crawls in from a stale value.
+     */
+    private static double smoothEta(double raw) {
+        long now = System.nanoTime();
+        double dt = (etaNanos == 0L) ? 0.0 : (now - etaNanos) / 1.0e9;
+        etaNanos = now;
+        if (Double.isNaN(etaShown) || dt <= 0 || dt > 1.0 || Math.abs(raw - etaShown) > Math.max(30.0, raw * 0.5)) {
+            etaShown = raw;
+        } else {
+            etaShown = Math.max(0.0, etaShown - dt);                  // real-clock countdown: smooth by construction
+            etaShown += (raw - etaShown) * (1.0 - Math.exp(-dt / ETA_TC));
+        }
+        return etaShown;
+    }
 }
