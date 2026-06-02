@@ -84,6 +84,10 @@ Swaps go through real container-click packets (the same path the inventory scree
 
 A movement hook watches for the ground, ceilings, and walls along your trajectory and bleeds off only the component of velocity heading *into* a surface — it never steers or redirects you, so it can't itself cause a crash. Ground approaches get flared to a survivable descent rate and fall damage is cushioned; walls are caught along the actual descending path rather than just straight ahead. It reduces impacts but can't guarantee zero damage, since damage is ultimately server-authoritative.
 
+### AFK damage protection
+
+A dead-man switch for when you've stepped away from the keyboard. The mod tracks the last time you gave any input — a movement or action key, the mouse actually turning the view (the autopilot moving the camera for you doesn't count, so a hands-off flight still reads as idle), or simply having a screen open. If you then take any damage after fifteen seconds with no input, it logs you out before something can finish you off unattended. It triggers on a fresh hit or any health drop in a tick, and reads the damage source straight off the client — the game records it on the same tick the blow lands — so the disconnect screen can name what hit you. That message is deliberately worded as a precaution rather than a death notice, and names the source by attacker or damage type instead of borrowing the game's obituary phrasing. It complements the autopilot's own dead-man switch, which only fires when the autopilot disengages: this covers damage taken while it's still flying you, or while you're on foot.
+
 ### Combat and movement
 
 Projectile targeting predicts where an incoming or outgoing projectile is going and can either draw a lead reticle or aim for you (aimbot, off by default), with optional glowing outlines on projectiles. A separate dodge feature reads each incoming projectile's closest approach and nudges you laterally out of the way. Fall prevention stops you walking off drops taller than three blocks unless you jump first.
