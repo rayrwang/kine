@@ -45,8 +45,9 @@ public class RangeEndurance {
 
     // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding
     // one cycle is approx 14.2s (284 ticks)
-    private static final int SPEED_WINDOW = 4*284; // 4 cycles, ~56.8s
-    private static final int MIN_SAMPLES  = 284; // wait one cycle (~14.2s) for a stable mean
+    private static final int CYCLE        = 284;        // porpoise period (ticks) — keep in step with the flight director
+    private static final int SPEED_WINDOW = 4 * CYCLE;  // 4 cycles, ~56.8s
+    private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
@@ -128,9 +129,17 @@ public class RangeEndurance {
     }
 
     private static double cruiseSpeed() {
+        if (speedCount <= 0) return 0;
+        // Average over a whole number of porpoise cycles only: the dive (fast) and climb (slow) halves
+        // then cancel exactly. A partial cycle biases the mean toward whichever half it ends on, which
+        // is what makes the figure ripple at the porpoise frequency while the buffer is still filling.
+        int n = speedCount >= CYCLE ? (speedCount / CYCLE) * CYCLE : speedCount;
         double sum = 0;
-        for (int i = 0; i < speedCount; i++) sum += speedBuf[i];
-        return speedCount > 0 ? sum / speedCount : 0;
+        for (int k = 1; k <= n; k++) {
+            int i = ((speedIdx - k) % SPEED_WINDOW + SPEED_WINDOW) % SPEED_WINDOW;
+            sum += speedBuf[i];
+        }
+        return sum / n;
     }
 
     /** Multi-cycle mean ground speed (m/s) — stable across the porpoise. 0 until {@link #speedReady}. */
