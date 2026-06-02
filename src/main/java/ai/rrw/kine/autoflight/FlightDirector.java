@@ -17,12 +17,14 @@ public class FlightDirector {
   public static boolean isActive()      { return active; }
   public static float   commandedPitch() { return commandedPitch; }
 
-  // --- commanded technique (from the optimizer) ---
-  private static final float DIVE       = 34f;   // nose-down hold angle (xRot +)
-  private static final float UP         = -48f;  // nose-up snap angle (xRot -)
-  private static final double TRIGGER   = 44.0;  // snap up once horiz speed (m/s) reaches this
-  private static final int   TOP_HOLD   = 12;    // ticks to hold the snap (~0.6 s)
-  private static final float SWEEP_RATE = 13f / 20f;  // deg per tick easing back down
+  // --- commanded technique: two tuned profiles from the steady-state optimizer sweep ---
+  private record Profile(float dive, float up, double trigger, int topHold, float sweep) {}
+  // MAX CLIMB: ~25 m/s ground speed, climbs ~+1 block/s
+  private static final Profile MAX_CLIMB = new Profile(34f, -42f, 50.0, 16, 0.55f);
+  // MAX SPEED: ~33 m/s ground speed, holds altitude
+  private static final Profile MAX_SPEED = new Profile(41f, -42f, 60.0, 28, 1.00f);
+  private static Profile profile() { return Settings.flightMaxSpeed ? MAX_SPEED : MAX_CLIMB; }
+
   private static final int   AGL_MIN    = 64;    // need this many clear blocks below (dive budget ~50)
 
   private static final int MAGENTA = 0xFFFF00FF;
@@ -30,7 +32,7 @@ public class FlightDirector {
   // --- state machine ---
   private static final int HOLD = 0, TOP = 1, SWEEP = 2;
   private static int phase = HOLD;
-  private static float commandedPitch = DIVE;
+  private static float commandedPitch = MAX_CLIMB.dive();
   private static int topTicks = 0;
   private static boolean active = false;
 
@@ -47,25 +49,26 @@ public class FlightDirector {
     LocalPlayer p = mc.player;
     if (p == null || mc.level == null || !p.isFallFlying() || !hasAltitude(mc, p)) {
       active = false;
-      phase = HOLD; commandedPitch = DIVE; topTicks = 0;   // reset for next engagement
+      phase = HOLD; commandedPitch = profile().dive(); topTicks = 0;   // reset for next engagement
       return;
     }
 
     double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
     double hSpeed = Math.sqrt(dx * dx + dz * dz) * 20.0;   // m/s, matches the velocity HUD
 
+    Profile pr = profile();
     switch (phase) {
       case HOLD -> {
-        commandedPitch = DIVE;
-        if (hSpeed >= TRIGGER) { phase = TOP; topTicks = 0; commandedPitch = UP; }
+        commandedPitch = pr.dive();
+        if (hSpeed >= pr.trigger()) { phase = TOP; topTicks = 0; commandedPitch = pr.up(); }
       }
       case TOP -> {
-        commandedPitch = UP;
-        if (++topTicks >= TOP_HOLD) phase = SWEEP;
+        commandedPitch = pr.up();
+        if (++topTicks >= pr.topHold()) phase = SWEEP;
       }
       case SWEEP -> {
-        commandedPitch += SWEEP_RATE;
-        if (commandedPitch >= DIVE) { commandedPitch = DIVE; phase = HOLD; }
+        commandedPitch += pr.sweep();
+        if (commandedPitch >= pr.dive()) { commandedPitch = pr.dive(); phase = HOLD; }
       }
     }
     active = true;
@@ -107,5 +110,11 @@ public class FlightDirector {
     g.fill(cx - half, barY - thick, cx - gap,  barY + thick, MAGENTA);
     g.fill(cx + gap,  barY - thick, cx + half, barY + thick, MAGENTA);
     // vertical director bar
-    g.fill(cx - thick, cy - half, cx + thick, cy + half, MAGENTA);  }
+    g.fill(cx - thick, cy - half, cx + thick, cy + half, MAGENTA);
+
+    // mode annunciator, just above the horizontal bar's maximum upward deflection (cy - maxOff)
+    String mode = Settings.flightMaxSpeed ? "MAX SPEED" : "MAX CLIMB";
+    int annY = cy - maxOff - mc.font.lineHeight - 3;
+    g.text(mc.font, mode, cx - mc.font.width(mode) / 2, annY, MAGENTA, true);
+  }
 }

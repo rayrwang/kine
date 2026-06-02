@@ -87,7 +87,7 @@ public class ElytraGuard {
         Kine.LOGGER.warn("kine: elytra durability failsafe — disconnecting to avoid a fall death");
         ClientPacketListener cpl = mc.getConnection();
         if (cpl != null) {
-            cpl.getConnection().disconnect(Component.literal("kine: low elytra durability failsafe"));
+            cpl.getConnection().disconnect(Component.literal("Kine: low elytra durability failsafe"));
         }
     }
 
