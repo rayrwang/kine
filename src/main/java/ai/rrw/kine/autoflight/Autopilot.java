@@ -8,10 +8,14 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import org.joml.Matrix3x2fStack;
 import org.lwjgl.glfw.GLFW;
 
 public class Autopilot {
@@ -22,11 +26,20 @@ public class Autopilot {
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D held (deg) = old 1.5/tick
     private static final float NAV_TURN_DPS = 35f;// max heading change per second while a nav mode steers
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
+    private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
+    private static final int   KICK_TICKS  = 100; // 5 s after an unattended disengage before we disconnect
+    private static final float TAKEOVER_EPS = 3f; // look change (deg) that counts as the pilot taking control
 
     private static KeyMapping toggleKey;
     private static boolean engaged = false;
     private static float cmdPitch, cmdYaw;          // what we're commanding, advanced per frame
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
+    private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
+
+    // "AUTOPILOT OFF" warning + dead-man kick after an in-flight disengage
+    private static boolean warnActive = false;
+    private static int     kickTicks = 0;
+    private static float   warnBaseYaw, warnBasePitch;
 
     public static boolean isEngaged() { return engaged; }
 
@@ -44,12 +57,18 @@ public class Autopilot {
     // control() so it tracks at the framerate instead of stepping 20 times a second.
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (p == null) { disengage(); return; }   // left the world — never persist the lock
+        if (p == null) { disengage(); resetWarn(); return; }   // left the world — never persist the lock
         while (toggleKey.consumeClick()) {
             if (engaged) disengage();
-            else if (FlightDirector.isActive()) engage(p);
+            else if (p.isFallFlying()) engage(p);   // engage even if too low — it trips off below, not silently
         }
-        if (engaged && !FlightDirector.isActive() && !Nav.landing()) disengage();   // too low / not gliding (but landing overrides)
+        // too low / not gliding: let the engage stand briefly (so it's visibly acknowledged) then trip it
+        if (engaged && !FlightDirector.isActive() && !Nav.landing()) {
+            if (++tripTicks >= TRIP_DELAY) disengage();
+        } else {
+            tripTicks = 0;
+        }
+        if (warnActive) updateWarn(mc, p);
     }
 
     // Driven per-frame from the HUD render callback. Eases pitch toward the flight director and turns
@@ -98,12 +117,45 @@ public class Autopilot {
 
     private static void engage(LocalPlayer p) {
         engaged = true;
+        warnActive = false;   // engaging clears any pending "off" warning
+        tripTicks = 0;
         cmdPitch = p.getXRot();
         cmdYaw   = p.getYRot();
         lastFrameNanos = System.nanoTime();
     }
 
-    public static void disengage() { engaged = false; lastFrameNanos = 0L; }
+    public static void disengage() {
+        if (engaged) {
+            LocalPlayer p = Minecraft.getInstance().player;
+            if (p != null && p.isFallFlying()) startWarn(p);   // dropped out mid-glide — warn + arm the kick
+        }
+        engaged = false; lastFrameNanos = 0L; tripTicks = 0;
+    }
+
+    private static void startWarn(LocalPlayer p) {
+        warnActive = true; kickTicks = 0;
+        warnBaseYaw = p.getYRot(); warnBasePitch = p.getXRot();
+    }
+
+    private static void resetWarn() { warnActive = false; kickTicks = 0; }
+
+    // While the warning is up: clear it the moment the pilot takes control; otherwise disconnect at 5 s.
+    private static void updateWarn(Minecraft mc, LocalPlayer p) {
+        if (engaged || !p.isFallFlying()) { resetWarn(); return; }   // re-engaged, or no longer airborne
+        boolean keys = mc.options.keyUp.isDown() || mc.options.keyDown.isDown()
+                    || mc.options.keyLeft.isDown() || mc.options.keyRight.isDown()
+                    || mc.options.keyJump.isDown() || mc.options.keyShift.isDown();
+        boolean look = Math.abs(Mth.wrapDegrees(p.getYRot() - warnBaseYaw)) > TAKEOVER_EPS
+                    || Math.abs(p.getXRot() - warnBasePitch) > TAKEOVER_EPS;
+        if (keys || look) { resetWarn(); return; }                  // pilot took control
+        if (++kickTicks >= KICK_TICKS) { resetWarn(); kick(mc); }
+    }
+
+    private static void kick(Minecraft mc) {
+        Kine.LOGGER.warn("kine: autopilot disengaged with no pilot input — disconnecting");
+        ClientPacketListener cpl = mc.getConnection();
+        if (cpl != null) cpl.getConnection().disconnect(Component.literal("Kine: autopilot disengaged — no pilot input"));
+    }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         control();   // HUD render is per-frame — drive smooth pitch + yaw here
@@ -121,5 +173,27 @@ public class Autopilot {
         } else {
             g.text(mc.font, s, tx, ty, 0xFFFF0000, true); // red
         }
+
+        if (warnActive) {
+            Font font = mc.font;
+            boolean flash = (System.currentTimeMillis() / 400) % 2 == 0;
+            int color = flash ? 0xFFFF2020 : 0xFFFFD000;
+            int wy = H / 3;
+            int big = (int) (font.lineHeight * 2.0f);
+            drawCentered(g, font, "AUTOPILOT OFF", W / 2, wy, color, 2.0f);
+            int secs = Math.max(0, (KICK_TICKS - kickTicks + 19) / 20);
+            drawCentered(g, font, "disconnect in " + secs + "s \u2014 take control",
+                W / 2, wy + big + 6, 0xFFFFFFFF, 1.0f);
+        }
+    }
+
+    private static void drawCentered(GuiGraphicsExtractor g, Font font, String text,
+                                     int cx, int cy, int color, float scale) {
+        Matrix3x2fStack pose = g.pose();
+        pose.pushMatrix();
+        pose.translate(cx, cy);
+        pose.scale(scale, scale);
+        g.text(font, text, -font.width(text) / 2, -font.lineHeight / 2, color, true);
+        pose.popMatrix();
     }
 }

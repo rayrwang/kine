@@ -132,6 +132,10 @@ public class RangeEndurance {
         return speedCount > 0 ? sum / speedCount : 0;
     }
 
+    /** Multi-cycle mean ground speed (m/s) — stable across the porpoise. 0 until {@link #speedReady}. */
+    public static double meanGroundSpeed() { return speedReady() ? cruiseSpeed() : 0; }
+    public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
+
     private static String fmtTime(double seconds) {
         int t = (int) Math.round(seconds);
         int m = t / 60, s = t % 60;

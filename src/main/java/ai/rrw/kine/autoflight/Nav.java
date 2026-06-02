@@ -1,6 +1,7 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.hud.RangeEndurance;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -60,7 +61,6 @@ public class Nav {
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
-    private static double  speed = 0;              // smoothed ground speed (m/s) for ETA
 
     private static KeyMapping navKey;
 
@@ -103,10 +103,6 @@ public class Nav {
         if (p == null || mc.level == null) return;
         while (navKey.consumeClick()) mc.setScreen(new ai.rrw.kine.ui.KineNavScreen());
         if (mode == Mode.OFF) { clearLanding(); return; }
-
-        // smoothed ground speed for ETA
-        double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
-        speed = speed * 0.9 + Math.sqrt(dx * dx + dz * dz) * 20.0 * 0.1;
 
         if (mode == Mode.MANAGED) {
             double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
@@ -181,11 +177,14 @@ public class Nav {
             String eta;
             if (landing) {
                 eta = "LANDING";
-            } else if (speed > 0.5) {
-                double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
-                eta = "ETA " + fmtTime(Math.sqrt(hdx * hdx + hdz * hdz) / speed);
             } else {
-                eta = "ETA --";
+                double v = RangeEndurance.meanGroundSpeed();   // averaged over several porpoise cycles → stable
+                if (v > 0.5) {
+                    double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
+                    eta = "ETA " + fmtTime(Math.sqrt(hdx * hdx + hdz * hdz) / v);
+                } else {
+                    eta = "ETA --";
+                }
             }
             g.text(mc.font, eta, cx - mc.font.width(eta) / 2, etaY, GREEN, true);
         }
