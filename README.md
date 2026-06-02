@@ -2,8 +2,12 @@
 # Kine
 
 <p align="center">
-	<img width="400" alt="Screenshot of elytra autopilot HUD" src="https://github.com/user-attachments/assets/2761a9ba-2d2c-406c-8f71-3f0ebf8993e8">
-	<img width="400" alt="Screenshot of aimbot targeting" src="https://github.com/user-attachments/assets/704d95d7-d264-4377-90c2-b2a50971053b">
+<table>
+<tr>
+<td><img width="400" alt="Screenshot of elytra autopilot HUD" src="https://github.com/user-attachments/assets/2761a9ba-2d2c-406c-8f71-3f0ebf8993e8"></td>
+<td><img width="400" alt="Screenshot of aimbot targeting" src="https://github.com/user-attachments/assets/704d95d7-d264-4377-90c2-b2a50971053b"></td>
+</tr>
+</table>
 </p>
 
 Minecraft utility mod with elytra autopilot, aimbot, movement tweaks, and HUD displays.
