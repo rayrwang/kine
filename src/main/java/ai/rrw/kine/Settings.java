@@ -22,6 +22,7 @@ public class Settings {
     public static boolean autoAim                = false;
     public static boolean projectileDodge        = false;
     public static boolean flightMaxSpeed         = false;  // false = max climb, true = max ground speed
+    public static boolean displayRangeEndurance  = true;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
@@ -30,7 +31,8 @@ public class Settings {
         boolean displaySpeed = true, displayGroundSpeed = true, displayFlightDirectors = true,
                 elytraDuraFailsafe = true, crashProtection = true, fallPrevention = true,
                 displayMobHealths = true, displayMobNames = false, projectileReticle = true,
-                projectileGlow = true, autoAim = false, projectileDodge = false, flightMaxSpeed = false;
+                projectileGlow = true, autoAim = false, projectileDodge = false, flightMaxSpeed = false,
+                displayRangeEndurance = true;
     }
 
     public static void load() {
@@ -51,6 +53,7 @@ public class Settings {
             autoAim = d.autoAim;
             projectileDodge = d.projectileDodge;
             flightMaxSpeed = d.flightMaxSpeed;
+            displayRangeEndurance = d.displayRangeEndurance;
         } catch (Exception e) {
             Kine.LOGGER.warn("kine: could not load config, using defaults", e);
         }
@@ -71,6 +74,7 @@ public class Settings {
         d.autoAim = autoAim;
         d.projectileDodge = projectileDodge;
         d.flightMaxSpeed = flightMaxSpeed;
+        d.displayRangeEndurance = displayRangeEndurance;
         try {
             Files.writeString(FILE, GSON.toJson(d));
         } catch (IOException e) {

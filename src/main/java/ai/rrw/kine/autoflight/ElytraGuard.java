@@ -50,7 +50,7 @@ public class ElytraGuard {
 
         int remaining = chest.getMaxDamage() - chest.getDamageValue();   // ~seconds of flight left
         double agl = altitude(mc, p);
-        warning = remaining < neededDurability(agl);
+        warning = remaining < landingReserveSeconds(agl);
 
         if (warning && Autopilot.isEngaged()) {
             graceTicks++;
@@ -62,7 +62,7 @@ public class ElytraGuard {
 
     // durability (≈seconds) we want in reserve to glide down from this altitude, with a margin that
     // thickens as you go higher.
-    private static double neededDurability(double agl) {
+    public static double landingReserveSeconds(double agl) {
         double descentSeconds = agl / DESCENT_RATE;
         double altitudeFactor = 1.5 + agl / 1000.0;
         return descentSeconds * altitudeFactor + BASE_MARGIN;

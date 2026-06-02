@@ -9,6 +9,7 @@ import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.hud.MobHealthHud;
 import ai.rrw.kine.hud.MiningHud;
 import ai.rrw.kine.hud.RadioAltimeter;
+import ai.rrw.kine.hud.RangeEndurance;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.ElytraGuard;
@@ -31,6 +32,7 @@ public class Kine implements ClientModInitializer {
 		MiningHud.register();
 		FlightDirector.register();
 		RadioAltimeter.register();
+		RangeEndurance.register();
 		Autopilot.register();
 		ElytraGuard.register();
 		ProjectileTargeting.register();

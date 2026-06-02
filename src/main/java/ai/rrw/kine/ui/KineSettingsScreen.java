@@ -52,10 +52,13 @@ public class KineSettingsScreen extends Screen {
 
     // ---- descriptions ----
     private static final String DESC_FLIGHTMODE =
-        "Sets what the autopilot and elytra flight directors optimize for. MAX CLIMB tunes the "
-        + "dive/pull-up cycle to gain the most altitude (~25 m/s ground speed, climbing ~1 block/s). "
-        + "MAX SPEED holds altitude while cruising as fast as possible (~33 m/s). The active mode is "
-        + "shown by the HUD annunciator above the director bars.";
+        "Sets what the autopilot and elytra flight directors optimize for \u2014 a direct tradeoff. "
+        + "MAX SPEED flies faster (~33 m/s) for greater range, but holds altitude and never climbs. "
+        + "MAX CLIMB gains altitude (~1 block/s), but is slower (~25 m/s) and has shorter range. The "
+        + "active mode shows in the HUD annunciator above the director bars and drives the range "
+        + "estimate below. MAX SPEED also needs much more altitude to engage \u2014 its deeper, faster "
+        + "dive sinks ~114 blocks per cycle (so directors appear only ~135 blocks up), versus ~68 for "
+        + "MAX CLIMB (~80 blocks up).";
     private static final String DESC_SPEED =
         "Shows your total movement speed in m/s (blocks per second), including vertical motion, "
         + "measured from your real per-tick position change rather than the game's under-reported "
@@ -70,10 +73,19 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_NAMES =
         "Floats each creature's name above it, next to the health readout. Off by default because "
         + "it adds clutter, especially on busy servers.";
+    private static final String DESC_RANGE =
+        "While wearing an elytra, estimates flight endurance (time) and range (distance) from "
+        + "everything you're carrying: the worn elytra plus every spare in your inventory, offhand, "
+        + "and inside shulker boxes. Accounts for each elytra's Unbreaking, and \u2014 if any has "
+        + "Mending \u2014 the durability your bottles of enchanting can repair. Range uses the active "
+        + "flight mode's cruise speed. Reserves are held back aviation-style: a 5% contingency plus a "
+        + "final reserve to glide down safely from your current height, so it hits zero right as the "
+        + "durability failsafe would. Shown near the hotbar.";
     private static final String DESC_FLIGHT =
         "While elytra-flying, overlays magenta guidance bars showing the pitch to hold for the "
         + "energy-pumping technique: dive to build speed, snap the nose up, then ease it back down. "
-        + "Guidance only \u2014 it never moves you.";
+        + "They appear only with enough clear air below to complete a dive \u2014 ~80 blocks in MAX "
+        + "CLIMB, ~135 in MAX SPEED. Guidance only \u2014 it never moves you.";
     private static final String DESC_ELYTRA =
         "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
         + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
@@ -123,6 +135,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Display ground speed", DESC_GROUND, () -> Settings.displayGroundSpeed, v -> Settings.displayGroundSpeed = v),
             Opt.of("Display mob healths", DESC_HEALTH, () -> Settings.displayMobHealths, v -> Settings.displayMobHealths = v),
             Opt.of("Display mob names", DESC_NAMES, () -> Settings.displayMobNames, v -> Settings.displayMobNames = v),
+            Opt.of("Range & endurance", DESC_RANGE, () -> Settings.displayRangeEndurance, v -> Settings.displayRangeEndurance = v),
         }),
         new Section("Flight & safety", new Opt[]{
             Opt.of("Display flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),

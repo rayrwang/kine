@@ -18,14 +18,18 @@ public class FlightDirector {
   public static float   commandedPitch() { return commandedPitch; }
 
   // --- commanded technique: two tuned profiles from the steady-state optimizer sweep ---
-  private record Profile(float dive, float up, double trigger, int topHold, float sweep) {}
-  // MAX CLIMB: ~25 m/s ground speed, climbs ~+1 block/s
-  private static final Profile MAX_CLIMB = new Profile(34f, -42f, 50.0, 16, 0.55f);
-  // MAX SPEED: ~33 m/s ground speed, holds altitude
-  private static final Profile MAX_SPEED = new Profile(41f, -42f, 60.0, 28, 1.00f);
+  private record Profile(float dive, float up, double trigger, int topHold, float sweep,
+                         double avgSpeed, int aglMin) {}
+  // MAX CLIMB: ~25 m/s, climbs ~+1 block/s; dive sinks ~68 blocks, so engage with margin at 80
+  private static final Profile MAX_CLIMB = new Profile(34f, -42f, 50.0, 16, 0.55f, 25.0, 80);
+  // MAX SPEED: ~33 m/s, holds altitude; steeper/faster dive sinks ~114 blocks, so engage at 135
+  private static final Profile MAX_SPEED = new Profile(41f, -42f, 60.0, 28, 1.00f, 33.0, 135);
   private static Profile profile() { return Settings.flightMaxSpeed ? MAX_SPEED : MAX_CLIMB; }
 
-  private static final int   AGL_MIN    = 64;    // need this many clear blocks below (dive budget ~50)
+  /** Mean horizontal cruise speed (m/s) of the active profile, for range/endurance planning. */
+  public static double averageGroundSpeed() { return profile().avgSpeed(); }
+  /** Clear blocks needed straight down before the directors engage (mode-dependent dive budget). */
+  public static int requiredAltitude() { return profile().aglMin(); }
 
   private static final int MAGENTA = 0xFFFF00FF;
 
@@ -74,11 +78,11 @@ public class FlightDirector {
     active = true;
   }
 
-  /** True if there are at least AGL_MIN air blocks straight below — room to dive. */
+  /** True if there are at least the active profile's required clear blocks straight below. */
   private static boolean hasAltitude(Minecraft mc, LocalPlayer p) {
     int x = p.getBlockX(), z = p.getBlockZ();
     int top = (int) Math.floor(p.getY()) - 1;
-    int limit = Math.max(mc.level.getMinY(), top - AGL_MIN);
+    int limit = Math.max(mc.level.getMinY(), top - profile().aglMin());
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     for (int y = top; y > limit; y--) {
       pos.set(x, y, z);

@@ -16,6 +16,8 @@ public class RadioAltimeter {
     private static final int SCAN_CAP = 512;     // how far down we bother looking
     private static int agl = -1;                  // blocks above terrain; -1 = unknown
 
+    public static int agl() { return agl; }
+
     public static void register() {
         HudElementRegistry.attachElementAfter(
             VanillaHudElements.MISC_OVERLAYS,
