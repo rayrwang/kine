@@ -1,5 +1,5 @@
 
-# kine
+# Kine
 
 TODO add photos
 
