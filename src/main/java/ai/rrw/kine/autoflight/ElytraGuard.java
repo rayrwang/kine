@@ -4,7 +4,6 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -34,7 +33,7 @@ public class ElytraGuard {
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ElytraGuard::tick);
         HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
+            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "flightdir"), // draw on top of the flight director bars
             Identifier.fromNamespaceAndPath(Kine.MOD_ID, "elytra_guard"),
             ElytraGuard::render);
     }
