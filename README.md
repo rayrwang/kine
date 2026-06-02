@@ -30,11 +30,11 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Elytra low durability and collision protections, auto swap and endurance/range display.
 - Display player speed and altitude.
 - Show health of mobs.
+- Projectiles red outline.
 - Settings menu (press K to open).
 
 ## Planned
 
-- Projectile outline only red no black.
 - Fix projectile targeting reticle hidden by blocks.
 - AFK damage protection
 - Elytra collision avoidance, not just prevention, integrate with autopilot.
