@@ -62,12 +62,11 @@ public class KineSettingsScreen extends Screen {
         + "it adds clutter, especially on busy servers.";
     private static final String DESC_RANGE =
         "While wearing an elytra, estimates flight endurance (time) and range (distance) from "
-        + "everything you're carrying: the worn elytra plus every spare in your inventory, offhand, "
-        + "and inside shulker boxes. Accounts for each elytra's Unbreaking, and \u2014 if any has "
-        + "Mending \u2014 the durability your bottles of enchanting can repair. Range uses your own "
-        + "recent average flight speed, so it tracks how you actually fly. Reserves are held back "
-        + "aviation-style: a 5% contingency plus a final reserve to glide down safely from your "
-        + "current height, so it hits zero right as the durability failsafe would. Shown near the hotbar.";
+        + "everything you can reach in the air: the worn elytra plus every spare in your inventory and "
+        + "offhand (not shulker boxes \u2014 you'd have to land). Accounts for each elytra's Unbreaking. "
+        + "Range uses your own recent average flight speed, so it tracks how you actually fly. Reserves "
+        + "are held back aviation-style: a 5% contingency plus a final reserve to glide down safely from "
+        + "your current height, so it hits zero right as the durability failsafe would. Shown near the hotbar.";
     private static final String DESC_FLIGHT =
         "While elytra-flying, overlays magenta guidance bars showing the pitch to hold for the "
         + "energy-pumping technique: dive to build speed, snap the nose up, then ease it back down. "
@@ -76,10 +75,12 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_ELYTRA =
         "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
         + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
-        + "current altitude (higher = larger reserve, with healthy margins). On autopilot, if you don't "
-        + "take control within 5s of the warning, it disconnects you \u2014 logging out before the "
-        + "elytra breaks so you don't fall to your death. Flying manually, it only warns, never "
-        + "disconnects.";
+        + "current altitude (higher = larger reserve, with healthy margins). When that warning trips, "
+        + "if you've got a spare elytra fresh enough to clear it, it hot-swaps automatically; if not, "
+        + "the warning stays up so you land. Once a wing is about to break it'll swap to any fresher "
+        + "spare you have left, just to keep you airborne. If nothing's left to swap to, then on "
+        + "autopilot \u2014 if you don't take control within 5s \u2014 it disconnects you, logging out "
+        + "before the elytra breaks so you don't fall to your death. Flying manually, it only warns.";
     private static final String DESC_CRASH =
         "While elytra-flying, sheds speed when you're about to hit a wall, ceiling, or ground \u2014 "
         + "halting you short of walls and cushioning descents so you land safely instead of dying on "
