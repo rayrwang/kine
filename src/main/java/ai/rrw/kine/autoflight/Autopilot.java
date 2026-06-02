@@ -20,6 +20,7 @@ public class Autopilot {
     private static final float SMOOTH    = 0.15f; // pitch ease fraction per TICK toward the director
     private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg) = old 7/tick
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D held (deg) = old 1.5/tick
+    private static final float NAV_TURN_DPS = 35f;// max heading change per second while a nav mode steers
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
 
     private static KeyMapping toggleKey;
@@ -48,7 +49,7 @@ public class Autopilot {
             if (engaged) disengage();
             else if (FlightDirector.isActive()) engage(p);
         }
-        if (engaged && !FlightDirector.isActive()) disengage();   // too low / not gliding
+        if (engaged && !FlightDirector.isActive() && !Nav.landing()) disengage();   // too low / not gliding (but landing overrides)
     }
 
     // Driven per-frame from the HUD render callback. Eases pitch toward the flight director and turns
@@ -59,7 +60,7 @@ public class Autopilot {
         if (!engaged) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || !FlightDirector.isActive()) return;   // tick() performs the actual disengage
+        if (p == null || (!FlightDirector.isActive() && !Nav.landing())) return;   // tick() performs the actual disengage
 
         long now = System.nanoTime();
         if (lastFrameNanos == 0L) { lastFrameNanos = now; cmdPitch = p.getXRot(); cmdYaw = p.getYRot(); return; }
@@ -72,16 +73,22 @@ public class Autopilot {
         if (Math.abs(p.getXRot() - cmdPitch) > drift
             || Math.abs(Mth.wrapDegrees(p.getYRot() - cmdYaw)) > drift) { disengage(); return; }
 
-        // pitch: ease toward the director (per-tick fraction converted to continuous), rate-capped
-        float target = FlightDirector.commandedPitch();
+        // pitch: during the landing program follow the gentle descent; otherwise follow the director
+        float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
         float factor = (float) (1.0 - Math.pow(1.0 - SMOOTH, dt * 20.0));
         float step   = (target - cmdPitch) * factor;
         float cap    = MAX_DPS * dt;
         cmdPitch += Math.max(-cap, Math.min(cap, step));
 
-        // yaw: A/D nudge
-        if (mc.options.keyLeft.isDown())  cmdYaw -= TURN_DPS * dt;
-        if (mc.options.keyRight.isDown()) cmdYaw += TURN_DPS * dt;
+        // yaw: a nav mode steers toward its heading/bearing; otherwise manual A/D
+        if (Nav.steering()) {
+            float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
+            float maxTurn = NAV_TURN_DPS * dt;
+            cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
+        } else {
+            if (mc.options.keyLeft.isDown())  cmdYaw -= TURN_DPS * dt;
+            if (mc.options.keyRight.isDown()) cmdYaw += TURN_DPS * dt;
+        }
 
         p.setXRot(cmdPitch);
         p.setYRot(cmdYaw);

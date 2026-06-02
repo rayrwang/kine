@@ -123,13 +123,15 @@ public class FlightDirector {
     int maxOff = (int) (H * 0.25f);
 
     if (tooLow) {
-      // red advisory, placed where the bar's maximum upward deflection would reach
-      String s = "TOO LOW TO ACTIVATE AUTOPILOT";
-      int y = cy - maxOff - mc.font.lineHeight - 6;
-      g.text(mc.font, s, cx - mc.font.width(s) / 2, y, RED, true);
+      // red advisory — but yield this slot to the nav readout when a nav mode is set
+      if (Nav.mode() == Nav.Mode.OFF) {
+        String s = "TOO LOW TO ACTIVATE AUTOPILOT";
+        int y = cy - maxOff - mc.font.lineHeight - 6;
+        g.text(mc.font, s, cx - mc.font.width(s) / 2, y, RED, true);
+      }
       return;
     }
-    if (!active) return;
+    if (!active || Nav.landing()) return;   // landing program owns pitch — don't draw the porpoise bar
 
     // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
     // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is
