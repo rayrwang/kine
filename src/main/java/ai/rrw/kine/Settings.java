@@ -38,22 +38,32 @@ public class Settings {
             if (!Files.exists(FILE)) { save(); return; }
             Data d = GSON.fromJson(Files.readString(FILE), Data.class);
             if (d == null) return;
-            displaySpeed = d.displaySpeed;
-            displayGroundSpeed = d.displayGroundSpeed;
-            displayFlightDirectors = d.displayFlightDirectors;
-            elytraDuraFailsafe = d.elytraDuraFailsafe;
-            crashProtection = d.crashProtection;
-            fallPrevention = d.fallPrevention;
-            displayMobHealths = d.displayMobHealths;
-            displayMobNames = d.displayMobNames;
-            projectileReticle = d.projectileReticle;
-            projectileGlow = d.projectileGlow;
-            autoAim = d.autoAim;
-            projectileDodge = d.projectileDodge;
-            displayRangeEndurance = d.displayRangeEndurance;
+            apply(d);
         } catch (Exception e) {
             Kine.LOGGER.warn("kine: could not load config, using defaults", e);
         }
+    }
+
+    /** Restore every setting to its built-in default and persist. */
+    public static void resetDefaults() {
+        apply(new Data());   // a fresh Data holds the defaults
+        save();
+    }
+
+    private static void apply(Data d) {
+        displaySpeed = d.displaySpeed;
+        displayGroundSpeed = d.displayGroundSpeed;
+        displayFlightDirectors = d.displayFlightDirectors;
+        elytraDuraFailsafe = d.elytraDuraFailsafe;
+        crashProtection = d.crashProtection;
+        fallPrevention = d.fallPrevention;
+        displayMobHealths = d.displayMobHealths;
+        displayMobNames = d.displayMobNames;
+        projectileReticle = d.projectileReticle;
+        projectileGlow = d.projectileGlow;
+        autoAim = d.autoAim;
+        projectileDodge = d.projectileDodge;
+        displayRangeEndurance = d.displayRangeEndurance;
     }
 
     public static void save() {

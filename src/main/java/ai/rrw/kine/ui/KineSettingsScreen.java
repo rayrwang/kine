@@ -29,6 +29,7 @@ public class KineSettingsScreen extends Screen {
     private int[] baseRowY;       // content-space y of each toggle row
     private Opt[] rowOpt;
     private Button[] rowButton;
+    private int descTextTop;   // where the right-hand description text starts (below the reset button)
 
     public KineSettingsScreen(Screen parent) {
         super(Component.literal("Kine settings"));
@@ -169,6 +170,23 @@ public class KineSettingsScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
             .bounds(rowX, this.height - doneH - 6, colW, doneH).build());
+
+        // reset-to-defaults, pinned to the top-right of the scrolling area (doesn't scroll)
+        int resetH = 18, resetW = 150;
+        int minResetX = rowX + colW + 8;
+        int resetX = this.width - MARGIN - resetW;
+        if (resetX < minResetX) { resetX = minResetX; resetW = Math.max(60, this.width - MARGIN - minResetX); }
+        descTextTop = viewTop + resetH + 6;
+        addRenderableWidget(Button.builder(Component.literal("Reset to defaults"), b -> resetAll())
+            .bounds(resetX, viewTop, resetW, resetH).build());
+    }
+
+    /** Restore defaults and refresh every toggle label to match. */
+    private void resetAll() {
+        Settings.resetDefaults();
+        for (int i = 0; i < rowButton.length; i++) {
+            rowButton[i].setMessage(label(rowOpt[i], rowOpt[i].get().getAsBoolean()));
+        }
     }
 
     /** Reposition rows for the current scroll offset and hide any not fully inside the viewport. */
@@ -248,7 +266,7 @@ public class KineSettingsScreen extends Screen {
         String text = hovered != null ? hovered.desc() : "Hover an option for details.";
         int color = hovered != null ? 0xFFFFFFFF : 0xFF909090;
         List<FormattedCharSequence> lines = this.font.split(Component.literal(text), descW);
-        int ty = viewTop;
+        int ty = descTextTop;
         for (FormattedCharSequence line : lines) {
             graphics.text(this.font, line, descX, ty, color);
             ty += this.font.lineHeight + 2;
