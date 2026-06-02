@@ -39,6 +39,7 @@ public class Nav {
     public enum Mode { OFF, SELECTED, MANAGED }
 
     private static final int    GREEN          = 0xFF44FF44;
+    private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
     private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
@@ -50,6 +51,8 @@ public class Nav {
     private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
+    private static final double ETA_ANCHOR     = 21.0;   // nominal cruise groundspeed (m/s) the ETA is anchored to (sim: ~20.6 for the deployed porpoise)
+    private static final double ETA_ADJUST     = 0.003;  // per-tick drift of the anchor toward the measured mean (slow)
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     private static final Set<Block> DANGER = Set.of(
@@ -64,6 +67,7 @@ public class Nav {
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
+    private static double  etaSpeed = ETA_ANCHOR;  // anchored, slowly-adapted groundspeed used for the ETA readout
 
     private static KeyMapping navKey;
 
@@ -112,6 +116,12 @@ public class Nav {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         while (navKey.consumeClick()) mc.setScreen(new ai.rrw.kine.ui.KineNavScreen());
+        // ETA anchor: hold a stable cruise speed and drift it slowly toward the measured multi-cycle mean,
+        // rather than dividing distance by the porpoise-noisy speed directly. Runs whenever we're flying.
+        if (p.isFallFlying()) {
+            double measured = RangeEndurance.meanGroundSpeed();
+            if (measured > 0.5) etaSpeed += (measured - etaSpeed) * ETA_ADJUST;
+        }
         if (mode == Mode.OFF) { clearLanding(); return; }
 
         if (mode == Mode.MANAGED) {
@@ -183,20 +193,22 @@ public class Nav {
             : "COORD " + targetX + " " + targetZ;
         g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
 
-        if (mode == Mode.MANAGED) {
-            String eta;
-            if (landing) {
-                eta = "LANDING";
-            } else {
-                double v = RangeEndurance.meanGroundSpeed();   // averaged over several porpoise cycles → stable
-                if (v > 0.5) {
-                    double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
-                    eta = "ETA " + KineTime.format(Math.sqrt(hdx * hdx + hdz * hdz) / v);
-                } else {
-                    eta = "ETA --";
-                }
-            }
-            g.text(mc.font, eta, cx - mc.font.width(eta) / 2, etaY, GREEN, true);
+        if (mode != Mode.MANAGED) return;   // SELECTED has no destination, so no distance/ETA/range
+
+        double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
+        double dist = Math.sqrt(hdx * hdx + hdz * hdz);
+
+        String line2 = landing
+            ? "LANDING"
+            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(dist / etaSpeed);
+        g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
+
+        // If the elytra can't take us that far, flag it to the right of the two readout lines.
+        double range = RangeEndurance.rangeMeters();
+        if (!landing && range >= 0 && range < dist) {
+            int wx = cx + Math.max(mc.font.width(top), mc.font.width(line2)) / 2 + 12;
+            g.text(mc.font, "INSUFFICIENT", wx, lineY, RED, true);
+            g.text(mc.font, "DURABILITY",   wx, etaY,  RED, true);
         }
     }
 
@@ -243,4 +255,5 @@ public class Nav {
     private static float wrap360(float d) { d %= 360f; return d < 0 ? d + 360f : d; }
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
+    private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
 }

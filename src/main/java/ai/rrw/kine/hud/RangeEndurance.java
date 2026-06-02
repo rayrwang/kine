@@ -137,6 +137,9 @@ public class RangeEndurance {
     public static double meanGroundSpeed() { return speedReady() ? cruiseSpeed() : 0; }
     public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
 
+    /** Estimated reachable distance (m) right now, or -1 if unknown (no elytra worn, or speed not ready yet). */
+    public static double rangeMeters() { return (show && speedReady()) ? enduranceSec * cruiseSpeed() : -1.0; }
+
     private static String fmtDist(double blocks) {
         return blocks >= 1000 ? String.format("%.1f km", blocks / 1000.0)
                               : String.format("%.0f m", blocks);
