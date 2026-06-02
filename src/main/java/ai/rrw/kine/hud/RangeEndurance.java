@@ -56,6 +56,8 @@ public class RangeEndurance {
     private static boolean show = false;
     private static final double AGL_TC = 12.0;          // s; smooths the porpoise bob out of the reserve so range/END don't pulse
     private static double smoothedAgl = Double.NaN;     // low-passed height-above-ground feeding the readout reserve
+    private static final double RANGE_TC = 12.0;        // s; complementary-filter time constant for the displayed range (twin of the ETA filter)
+    private static double rangeShown = Double.NaN;      // smoothed range (m) actually displayed
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(RangeEndurance::tick);
@@ -76,7 +78,7 @@ public class RangeEndurance {
         if (p == null || mc.level == null) return;
 
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.is(Items.ELYTRA)) { smoothedAgl = Double.NaN; return; }   // only while actually wearing an elytra
+        if (!chest.is(Items.ELYTRA)) { smoothedAgl = Double.NaN; rangeShown = Double.NaN; return; }   // only while actually wearing an elytra
 
         if (p.isFallFlying()) {
             double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
@@ -99,6 +101,21 @@ public class RangeEndurance {
         double reserve = ElytraGuard.landingReserveSeconds(smoothedAgl);
         enduranceSec = Math.max(0, acc.flightSeconds * (1.0 - CONTINGENCY) - reserve);
         show = true;
+
+        // Smooth the displayed range with a complementary filter — the twin of the ETA one. The clock
+        // term counts it down at the rate reach is actually consumed (~speed × contingency while flying),
+        // so the steady decline carries no lag; the drift term eases toward the true endurance × speed,
+        // ironing the durability staircase, the speed ripple, and the reserve's slow terrain drift into a
+        // steady glide. Because the decline rides the clock, not the lag, there's no upward "you can reach
+        // further than you can" bias a plain low-pass would introduce.
+        double v = speedEstimate();
+        double rangeRaw = enduranceSec * v;
+        if (Double.isNaN(rangeShown) || Math.abs(rangeRaw - rangeShown) > Math.max(600.0, rangeShown * 0.4)) {
+            rangeShown = rangeRaw;                                              // first sample, or a big jump (elytra swap)
+        } else {
+            if (p.isFallFlying()) rangeShown -= v * (1.0 - CONTINGENCY) * 0.05; // reach consumed this 0.05s tick
+            rangeShown = Math.max(0, rangeShown + (rangeRaw - rangeShown) * (1.0 - Math.exp(-0.05 / RANGE_TC)));
+        }
     }
 
     private static void process(ItemStack s, Acc acc) {
@@ -123,7 +140,7 @@ public class RangeEndurance {
         Minecraft mc = Minecraft.getInstance();
 
         String end = "END " + KineTime.format(enduranceSec);
-        String rng = "RNG " + fmtDist(enduranceSec * speedEstimate());
+        String rng = "RNG " + fmtDist(rangeShown);
 
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
@@ -160,7 +177,7 @@ public class RangeEndurance {
     public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
 
     /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */
-    public static double rangeMeters() { return show ? enduranceSec * speedEstimate() : -1.0; }
+    public static double rangeMeters() { return show ? rangeShown : -1.0; }
 
     private static String fmtDist(double blocks) {
         return blocks >= 1000 ? String.format("%.1f km", blocks / 1000.0)
