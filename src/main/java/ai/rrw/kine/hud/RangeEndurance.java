@@ -48,7 +48,7 @@ public class RangeEndurance {
 
     // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding
     private static final int SPEED_WINDOW = 300;   // ~15 s, longer than one pump cycle
-    private static final int MIN_SAMPLES  = 40;    // ~2 s of flight before range is meaningful
+    private static final int MIN_SAMPLES  = 240;   // wait ~12 s (a full pump cycle) for a stable mean
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
