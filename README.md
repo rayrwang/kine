@@ -32,12 +32,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Pathfinding
 - Combat
 
-## Technical Details
-
-The elytra flight directors / autopilot has two modes, toggleable in settings. Both make use of the up and down pumping motion.
-- Max climb: Around 1 m/s height increase, 25 m/s average horizontal ground speed. Pitches between 34° nose down and 42° nose up.
-- Max speed: Roughly level flight, 33 m/s ground speed. Pitches between 41° nose down and 42° nose up.
-
 ---
 
 Client side only, cheats are disabled by default, enable in settings (press K to open).

@@ -19,14 +19,12 @@ public class KineSettingsScreen extends Screen {
     private static final int ROW_H    = 20;
     private static final int ROW_STEP = 22;
     private static final int GAP      = 8;     // between sections
-    private static final int MODE_DIV = 10;    // space for divider under the mode row
 
     private final Screen parent;
 
     // layout
     private int rowX, colW, headH;
     private int viewTop, viewBottom, contentHeight, maxScroll, scrollOffset;
-    private int baseModeDivY;
     private int[] baseHeaderY;
     private int[] baseRowY;       // content-space y of each toggle row
     private Opt[] rowOpt;
@@ -43,22 +41,11 @@ public class KineSettingsScreen extends Screen {
         static Opt of(String n, String d, BooleanSupplier g, Consumer<Boolean> s) {
             return new Opt(n, d, g, s, "ON", "OFF");
         }
-        static Opt mode(String n, String d, BooleanSupplier g, Consumer<Boolean> s, String on, String off) {
-            return new Opt(n, d, g, s, on, off);
-        }
     }
 
     private record Section(String title, Opt[] opts) {}
 
     // ---- descriptions ----
-    private static final String DESC_FLIGHTMODE =
-        "Sets what the autopilot and elytra flight directors optimize for \u2014 a direct tradeoff. "
-        + "MAX SPEED flies faster (~33 m/s) for greater range, but holds altitude and never climbs. "
-        + "MAX CLIMB gains altitude (~1 block/s), but is slower (~25 m/s) and has shorter range. The "
-        + "active mode shows in the HUD annunciator above the director bars and drives the range "
-        + "estimate below. MAX SPEED also needs much more altitude to engage \u2014 its deeper, faster "
-        + "dive sinks ~114 blocks per cycle (so directors appear only ~135 blocks up), versus ~68 for "
-        + "MAX CLIMB (~80 blocks up).";
     private static final String DESC_SPEED =
         "Shows your total movement speed in m/s (blocks per second), including vertical motion, "
         + "measured from your real per-tick position change rather than the game's under-reported "
@@ -77,15 +64,15 @@ public class KineSettingsScreen extends Screen {
         "While wearing an elytra, estimates flight endurance (time) and range (distance) from "
         + "everything you're carrying: the worn elytra plus every spare in your inventory, offhand, "
         + "and inside shulker boxes. Accounts for each elytra's Unbreaking, and \u2014 if any has "
-        + "Mending \u2014 the durability your bottles of enchanting can repair. Range uses the active "
-        + "flight mode's cruise speed. Reserves are held back aviation-style: a 5% contingency plus a "
-        + "final reserve to glide down safely from your current height, so it hits zero right as the "
-        + "durability failsafe would. Shown near the hotbar.";
+        + "Mending \u2014 the durability your bottles of enchanting can repair. Range uses your own "
+        + "recent average flight speed, so it tracks how you actually fly. Reserves are held back "
+        + "aviation-style: a 5% contingency plus a final reserve to glide down safely from your "
+        + "current height, so it hits zero right as the durability failsafe would. Shown near the hotbar.";
     private static final String DESC_FLIGHT =
         "While elytra-flying, overlays magenta guidance bars showing the pitch to hold for the "
         + "energy-pumping technique: dive to build speed, snap the nose up, then ease it back down. "
-        + "They appear only with enough clear air below to complete a dive \u2014 ~80 blocks in MAX "
-        + "CLIMB, ~135 in MAX SPEED. Guidance only \u2014 it never moves you.";
+        + "They appear only with enough clear air below to complete a dive. Guidance only \u2014 it "
+        + "never moves you.";
     private static final String DESC_ELYTRA =
         "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
         + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
@@ -125,10 +112,6 @@ public class KineSettingsScreen extends Screen {
         + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
         + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
 
-    // top-of-menu mode selector (functional toggle, not enable/disable)
-    private static final Opt FLIGHT_MODE = Opt.mode("Autopilot / flight directors", DESC_FLIGHTMODE,
-        () -> Settings.flightMaxSpeed, v -> Settings.flightMaxSpeed = v, "MAX SPEED", "MAX CLIMB");
-
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
             Opt.of("Display speed", DESC_SPEED, () -> Settings.displaySpeed, v -> Settings.displaySpeed = v),
@@ -160,7 +143,7 @@ public class KineSettingsScreen extends Screen {
         int doneH = 18;
         viewBottom = this.height - doneH - 12;
 
-        int nOpts = 1;
+        int nOpts = 0;
         for (Section s : SECTIONS) nOpts += s.opts().length;
         rowOpt = new Opt[nOpts];
         baseRowY = new int[nOpts];
@@ -168,12 +151,6 @@ public class KineSettingsScreen extends Screen {
         baseHeaderY = new int[SECTIONS.length];
 
         int cY = 0, idx = 0;
-        // mode selector at the top, then a divider
-        rowOpt[idx] = FLIGHT_MODE; baseRowY[idx] = cY;
-        rowButton[idx] = addToggle(rowX, viewTop + cY, colW, ROW_H, FLIGHT_MODE);
-        idx++; cY += ROW_STEP;
-        baseModeDivY = cY + 1; cY += MODE_DIV;
-
         for (int s = 0; s < SECTIONS.length; s++) {
             baseHeaderY[s] = cY;
             cY += headH;
@@ -235,8 +212,6 @@ public class KineSettingsScreen extends Screen {
 
         // section headers + dividers, clipped to the scrolling viewport
         graphics.enableScissor(0, viewTop, this.width, viewBottom);
-        int my = viewTop + baseModeDivY - scrollOffset;
-        graphics.fill(rowX, my, rowX + colW, my + 1, DIVIDER);
         for (int s = 0; s < SECTIONS.length; s++) {
             int hy = viewTop + baseHeaderY[s] - scrollOffset;
             graphics.text(this.font, Component.literal(SECTIONS[s].title()), rowX, hy, HEADER);

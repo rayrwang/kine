@@ -3,7 +3,6 @@ package ai.rrw.kine.hud;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.ElytraGuard;
-import ai.rrw.kine.autoflight.FlightDirector;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -30,8 +29,9 @@ import net.minecraft.world.item.enchantment.ItemEnchantments;
  * point); and, if any elytra has Mending, adds the durability that bottles of enchanting can repair.
  * Reserves are then held back aviation-style: a 5% contingency plus a final reserve sized to glide
  * down safely from the current altitude (the durability failsafe's reserve), so the readout reaches
- * zero just as that failsafe would trigger. Range uses the active flight-director profile's mean
- * ground speed, so it changes with MAX SPEED / MAX CLIMB.
+ * zero just as that failsafe would trigger. Range = endurance x your own recent average flight
+ * speed (a rolling mean of actual ground speed while gliding), so it self-calibrates to how you
+ * really fly rather than to any model.
  *
  * All estimates: Unbreaking and XP-per-bottle are averages, so treat the numbers as ballpark.
  */
@@ -45,6 +45,12 @@ public class RangeEndurance {
     private static final double CONTINGENCY = 0.05;
 
     private static final int AMBER = 0xFFFFC400;       // matches the radio altimeter
+
+    // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding
+    private static final int SPEED_WINDOW = 300;   // ~15 s, longer than one pump cycle
+    private static final int MIN_SAMPLES  = 40;    // ~2 s of flight before range is meaningful
+    private static final double[] speedBuf = new double[SPEED_WINDOW];
+    private static int speedIdx = 0, speedCount = 0;
 
     private static double enduranceSec = 0;
     private static boolean show = false;
@@ -72,6 +78,13 @@ public class RangeEndurance {
 
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
         if (!chest.is(Items.ELYTRA)) return;   // only while actually wearing an elytra
+
+        if (p.isFallFlying()) {
+            double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
+            speedBuf[speedIdx] = Math.sqrt(dx * dx + dz * dz) * 20.0;
+            speedIdx = (speedIdx + 1) % SPEED_WINDOW;
+            if (speedCount < SPEED_WINDOW) speedCount++;
+        }
 
         Acc acc = new Acc();
         process(chest, acc);
@@ -117,10 +130,11 @@ public class RangeEndurance {
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!show) return;
         Minecraft mc = Minecraft.getInstance();
-        double rangeBlocks = enduranceSec * FlightDirector.averageGroundSpeed();
 
         String end = "END " + fmtTime(enduranceSec);
-        String rng = "RNG " + fmtDist(rangeBlocks);
+        String rng = speedCount >= MIN_SAMPLES
+            ? "RNG " + fmtDist(enduranceSec * cruiseSpeed())
+            : "RNG --";
 
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
@@ -130,6 +144,12 @@ public class RangeEndurance {
 
         g.text(mc.font, end, cx - half - mc.font.width(end) / 2, y, AMBER, true);
         g.text(mc.font, rng, cx + half - mc.font.width(rng) / 2, y, AMBER, true);
+    }
+
+    private static double cruiseSpeed() {
+        double sum = 0;
+        for (int i = 0; i < speedCount; i++) sum += speedBuf[i];
+        return speedCount > 0 ? sum / speedCount : 0;
     }
 
     private static String fmtTime(double seconds) {
