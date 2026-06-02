@@ -85,9 +85,20 @@ public class AfkGuard {
     private static void kick(Minecraft mc, LocalPlayer p) {
         reset();
         DamageSource src = p.getLastDamageSource();
-        MutableComponent reason = Component.literal(
-            "Kine: AFK damage protection \u2014 logged out after taking damage while idle\n");
-        reason.append(src != null ? src.getLocalizedDeathMessage(p) : Component.literal("unknown damage source"));
+        // A concise, neutral source — the attacker's name if there is one, otherwise the damage
+        // type's short id (e.g. "lava", "fall", "cactus"). Deliberately NOT getLocalizedDeathMessage,
+        // which reads like an obituary and would make a precautionary logout look like a death.
+        Component source = src == null
+            ? Component.literal("an unknown source")
+            : (src.getEntity() != null ? src.getEntity().getName() : Component.literal(src.getMsgId()));
+
+        MutableComponent reason = Component.literal("Kine \u2014 AFK damage protection\n\n")
+            .append("You were logged out safely because you took damage (from ")
+            .append(source)
+            .append(") after " + (IDLE_TICKS / 20) + " seconds with no input.\n\n")
+            .append("You did not die \u2014 this is a precaution so nothing finishes you off while you're "
+                + "away. Just reconnect to carry on.");
+
         Kine.LOGGER.warn("kine: AFK damage protection \u2014 disconnecting (idle {}s, source {})",
             IDLE_TICKS / 20, src != null ? src.getMsgId() : "unknown");
         ClientPacketListener cpl = mc.getConnection();
