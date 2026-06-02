@@ -3,23 +3,26 @@ package ai.rrw.kine.ui;
 import ai.rrw.kine.Settings;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 public class KineSettingsScreen extends Screen {
 
+    private static final int MARGIN = 16;
+
     private final Screen parent;
+    private int rowX, rowY = 32, rowH = 20, rowStep = 22, colW;   // layout, set in init()
 
     public KineSettingsScreen(Screen parent) {
         super(Component.literal("kine settings"));
         this.parent = parent;
     }
 
-    // --- descriptions (declared BEFORE OPTS so the array can reference them) ---
     private static final String DESC_SPEED =
         "Shows your total movement speed in m/s (blocks per second), including vertical motion, "
         + "measured from your real per-tick position change rather than the game's under-reported "
@@ -33,12 +36,12 @@ public class KineSettingsScreen extends Screen {
         + "energy-pumping climb: dive to build speed, snap the nose up, then ease it back down. "
         + "Follow the bars to gain altitude with no rockets. Guidance only \u2014 it never moves you.";
     private static final String DESC_ELYTRA =
-        "While elytra-flying, warns when your elytra is getting too low on durability to safely glide "
-        + "down from your current altitude \u2014 the higher you are, the larger the reserve required, "
-        + "with healthy margins. If the warning fires while autopilot is engaged and you don't take "
-        + "control within 5 seconds, you are automatically disconnected from the server, logging out "
-        + "before the elytra breaks so you don't fall to your death. Flying manually only shows the "
-        + "warning; it never disconnects you.";
+        "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
+        + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
+        + "current altitude (higher = larger reserve, with healthy margins). On autopilot, if you don't "
+        + "take control within 5s of the warning, it disconnects you \u2014 logging out before the "
+        + "elytra breaks so you don't fall to your death. Flying manually, it only warns, never "
+        + "disconnects.";
     private static final String DESC_FALL =
         "Stops you walking off ledges that would cause fall damage, the way sneaking does, but "
         + "automatically and only when the drop ahead is actually dangerous. Safe drops and "
@@ -92,15 +95,14 @@ public class KineSettingsScreen extends Screen {
 
     @Override
     protected void init() {
-        int w = 300, h = 20, step = h + 2;
-        int x = this.width / 2 - w / 2;
-        int y = 32;
+        rowX = MARGIN;
+        colW = Math.min(280, this.width / 2 - MARGIN - 8);
 
         for (int i = 0; i < OPTS.length; i++) {
-            addToggle(x, y + i * step, w, h, OPTS[i]);
+            addToggle(rowX, rowY + i * rowStep, colW, rowH, OPTS[i]);
         }
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-            .bounds(this.width / 2 - 100, y + OPTS.length * step + 8, 200, h).build());
+            .bounds(rowX, rowY + OPTS.length * rowStep + 8, colW, rowH).build());
     }
 
     private void addToggle(int x, int y, int w, int h, Opt opt) {
@@ -109,7 +111,7 @@ public class KineSettingsScreen extends Screen {
             opt.set().accept(nv);
             btn.setMessage(label(opt.name(), nv));
             Settings.save();
-        }).bounds(x, y, w, h).tooltip(Tooltip.create(Component.literal(opt.desc()))).build();
+        }).bounds(x, y, w, h).build();
         addRenderableWidget(b);
     }
 
@@ -121,6 +123,29 @@ public class KineSettingsScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
         super.extractRenderState(graphics, mouseX, mouseY, a);
         graphics.centeredText(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
+
+        int descX = rowX + colW + MARGIN;
+        int descW = this.width - descX - MARGIN;
+        if (descW < 80) return;   // window too narrow for a side panel
+
+        int hovered = -1;
+        for (int i = 0; i < OPTS.length; i++) {
+            int by = rowY + i * rowStep;
+            if (mouseX >= rowX && mouseX <= rowX + colW && mouseY >= by && mouseY <= by + rowH) {
+                hovered = i;
+                break;
+            }
+        }
+
+        String text = hovered >= 0 ? OPTS[hovered].desc() : "Hover an option for details.";
+        int color = hovered >= 0 ? 0xFFFFFFFF : 0xFF909090;
+
+        List<FormattedCharSequence> lines = this.font.split(Component.literal(text), descW);
+        int ty = rowY;
+        for (FormattedCharSequence line : lines) {
+            graphics.text(this.font, line, descX, ty, color);
+            ty += this.font.lineHeight + 2;
+        }
     }
 
     @Override
