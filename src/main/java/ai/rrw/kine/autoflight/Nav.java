@@ -2,6 +2,7 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.hud.RangeEndurance;
+import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -181,7 +182,7 @@ public class Nav {
                 double v = RangeEndurance.meanGroundSpeed();   // averaged over several porpoise cycles → stable
                 if (v > 0.5) {
                     double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
-                    eta = "ETA " + fmtTime(Math.sqrt(hdx * hdx + hdz * hdz) / v);
+                    eta = "ETA " + KineTime.format(Math.sqrt(hdx * hdx + hdz * hdz) / v);
                 } else {
                     eta = "ETA --";
                 }
@@ -233,9 +234,4 @@ public class Nav {
     private static float wrap360(float d) { d %= 360f; return d < 0 ? d + 360f : d; }
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
-    private static String fmtTime(double sec) {
-        if (sec < 0 || Double.isNaN(sec) || Double.isInfinite(sec)) return "--";
-        long s = Math.round(sec);
-        return s >= 60 ? (s / 60) + "m " + (s % 60) + "s" : s + "s";
-    }
 }

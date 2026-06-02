@@ -1,6 +1,7 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -182,7 +183,7 @@ public class Autopilot {
             int big = (int) (font.lineHeight * 2.0f);
             drawCentered(g, font, "AUTOPILOT OFF", W / 2, wy, color, 2.0f);
             int secs = Math.max(0, (KICK_TICKS - kickTicks + 19) / 20);
-            drawCentered(g, font, "disconnect in " + secs + "s \u2014 take control",
+            drawCentered(g, font, "disconnect in " + KineTime.format(secs) + " \u2014 take control",
                 W / 2, wy + big + 6, 0xFFFFFFFF, 1.0f);
         }
     }

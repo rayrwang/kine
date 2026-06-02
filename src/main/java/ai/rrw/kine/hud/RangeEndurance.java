@@ -2,6 +2,7 @@ package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.autoflight.ElytraGuard;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -111,7 +112,7 @@ public class RangeEndurance {
         if (!show) return;
         Minecraft mc = Minecraft.getInstance();
 
-        String end = "END " + fmtTime(enduranceSec);
+        String end = "END " + KineTime.format(enduranceSec);
         String rng = speedCount >= MIN_SAMPLES
             ? "RNG " + fmtDist(enduranceSec * cruiseSpeed())
             : "RNG --";
@@ -135,12 +136,6 @@ public class RangeEndurance {
     /** Multi-cycle mean ground speed (m/s) — stable across the porpoise. 0 until {@link #speedReady}. */
     public static double meanGroundSpeed() { return speedReady() ? cruiseSpeed() : 0; }
     public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
-
-    private static String fmtTime(double seconds) {
-        int t = (int) Math.round(seconds);
-        int m = t / 60, s = t % 60;
-        return m > 0 ? String.format("%dm %02ds", m, s) : String.format("%ds", s);
-    }
 
     private static String fmtDist(double blocks) {
         return blocks >= 1000 ? String.format("%.1f km", blocks / 1000.0)

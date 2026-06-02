@@ -1,6 +1,7 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -167,7 +168,7 @@ public class ElytraGuard {
 
         if (Autopilot.isEngaged()) {
             int secs = Math.max(0, (GRACE_TICKS - graceTicks + 19) / 20);
-            drawCentered(g, font, "autopilot disconnect in " + secs + "s \u2014 take control",
+            drawCentered(g, font, "autopilot disconnect in " + KineTime.format(secs) + " \u2014 take control",
                 W / 2, cy + 2 * big + 14, 0xFFFFFFFF, 1.0f);
         }
     }

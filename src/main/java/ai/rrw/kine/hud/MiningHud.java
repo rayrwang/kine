@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -58,7 +59,9 @@ public class MiningHud {
         Minecraft mc = Minecraft.getInstance();
 
         double secondsLeft = ratePerTick > 0 ? (1.0 - progress) / ratePerTick / 20.0 : 0.0;
-        String text = String.format("%.0f%%   %.1fs left", progress * 100.0, secondsLeft);
+        // sub-second precision for normal breaks; roll up to m/h when mining fatigue makes it long
+        String left = secondsLeft >= 60 ? KineTime.format(secondsLeft) : String.format("%.1fs", secondsLeft);
+        String text = String.format("%.0f%%   %s left", progress * 100.0, left);
 
         int w = mc.font.width(text);
         int x = mc.getWindow().getGuiScaledWidth() / 2 - w / 2;
