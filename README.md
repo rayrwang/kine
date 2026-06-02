@@ -1,6 +1,8 @@
 
 # kine
 
+TODO add photos
+
 Minecraft utility mod with elytra autopilot, aimbot, movement tweaks, and HUD displays.
 
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
@@ -17,7 +19,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.
-- Elytra low durability and collision protections.
+- Elytra low durability and collision protections, auto swap and endurance/range display.
 - Display player speed and altitude.
 - Show health of mobs.
 - Settings menu (press K to open).
