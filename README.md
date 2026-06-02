@@ -36,6 +36,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Water bucket clutch
 - Elytra collision avoidance, not just prevention, integrate with autopilot.
 - Warning sounds
 - Controls & displays list and explanations
