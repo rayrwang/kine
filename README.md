@@ -34,7 +34,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Pathfinding
 - Combat
 
-## Technical Details
+## Technical Details*
+
+\*written by Opus 4.8
 
 Built for Minecraft 26.1.2 — the first unobfuscated release — against Mojang mappings (not Yarn), on the Fabric loader. Client-side only; every cheat is off by default and toggled from the settings menu (press K). All gameplay state is read live from the client each tick and verified against the actual game classes, so the numbers below are the real in-game behaviour rather than estimates.
 
@@ -78,7 +80,5 @@ Projectile targeting predicts where an incoming or outgoing projectile is going 
 The HUD readouts are invisible to servers. The movement and inventory features — autopilot, fall prevention, crash protection, dodge, auto-swap — send normal-looking inputs and packets and are lower risk, but a strict anti-cheat could still flag things like an armor swap mid-flight. The aimbot is the one feature that's reliably bannable. Use accordingly.
 
 ---
-
-Client side only, cheats are disabled by default, enable in settings (press K to open).
 
 kinematics
