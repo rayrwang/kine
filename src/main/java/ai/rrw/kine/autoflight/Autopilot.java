@@ -26,6 +26,7 @@ public class Autopilot {
     private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg) = old 7/tick
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D held (deg) = old 1.5/tick
     private static final float NAV_TURN_DPS = 35f;// max heading change per second while a nav mode steers
+    private static final float LANDING_TURN_DPS = 80f;// sharper turn authority while landing, for a tight circle
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
     private static final int   KICK_TICKS  = 100; // 5 s after an unattended disengage before we disconnect
@@ -103,7 +104,7 @@ public class Autopilot {
         // yaw: a nav mode steers toward its heading/bearing; otherwise manual A/D
         if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
-            float maxTurn = NAV_TURN_DPS * dt;
+            float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         } else {
             if (mc.options.keyLeft.isDown())  cmdYaw -= TURN_DPS * dt;

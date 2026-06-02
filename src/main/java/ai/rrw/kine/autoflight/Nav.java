@@ -45,7 +45,9 @@ public class Nav {
     private static final double COLUMN_TOP_Y   = 320;
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
-    private static final float  DESCENT_PITCH  = 15f;    // gentle nose-down glide while landing (deg, +down)
+    private static final float  DESCENT_PITCH  = 12f;    // gentle nose-down glide while landing (deg, +down)
+    private static final double ORBIT_RADIUS   = 10.0;   // circle this tight around the landing spot
+    private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
 
@@ -86,7 +88,14 @@ public class Nav {
         double tx = (landing && haveSpot ? spotX + 0.5 : targetX + 0.5);
         double tz = (landing && haveSpot ? spotZ + 0.5 : targetZ + 0.5);
         double dx = tx - p.getX(), dz = tz - p.getZ();
-        return (float) Math.toDegrees(Math.atan2(-dx, dz));                  // bearing as MC yaw
+        float bearing = (float) Math.toDegrees(Math.atan2(-dx, dz));          // bearing to target as MC yaw
+        if (!landing) return bearing;                                        // en route: fly straight at it
+        // Landing: orbit the spot at a tight radius instead of flying through it (which overshoots and
+        // swings wide on the U-turn). Tangent = bearing+90; the radial term steers inward when we're
+        // outside ORBIT_RADIUS and outward when inside, so the path settles into a circle around the spot.
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        float correction = (float) Mth.clamp((dist - ORBIT_RADIUS) * RADIAL_GAIN, -90.0, 90.0);
+        return wrap180(bearing + 90f - correction);
     }
 
     public static void register() {
