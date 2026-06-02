@@ -10,6 +10,7 @@ public class CrashProtection {
     // --- tuning ---
     private static final double GAIN            = 0.4;   // allowed closing speed = (clearance - standoff) * GAIN
     private static final double WALL_STANDOFF   = 1.5;   // stop this far short of walls
+    private static final double WALL_DROP_CAP   = 5.0;   // how far below to look for walls we'll descend into
     private static final double CEIL_STANDOFF   = 0.5;   // stop this far below ceilings
     private static final double GROUND_STANDOFF = 1.0;
     private static final double SAFE_LAND    = 0.3;   // descend this slow near ground (well under the 0.5 cap threshold)
@@ -45,12 +46,17 @@ public class CrashProtection {
             if (vy > allowed) vy = allowed;
         }
 
-        // WALL — bleed horizontal closing speed so contact (if any) is gentle (no flyIntoWall damage)
+        // WALL — bleed horizontal closing speed so contact (if any) is gentle (no flyIntoWall damage).
+        // Elytra flight always sinks, so a level sweep misses walls whose face sits just below us until
+        // we've already descended into them at speed. Extend the swept box downward by however far we'll
+        // drop over the lookahead, so the sweep follows the actual descending path.
         double hs = Math.sqrt(vx * vx + vz * vz);
         if (hs > 1e-4) {
             double nx = vx / hs, nz = vz / hs;
             double look = Math.min(MAX_LOOK, hs / GAIN + WALL_STANDOFF + 2);
-            double clr = sweep(level, box, nx, 0, nz, look);
+            double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
+            AABB wallBox = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
+            double clr = sweep(level, wallBox, nx, 0, nz, look);
             double allowed = Math.max(0, (clr - WALL_STANDOFF) * GAIN);
             if (hs > allowed) {
                 double s = allowed / hs;
