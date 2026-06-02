@@ -43,6 +43,10 @@ public class FlightDirector {
   private static float commandedPitch = DIVE;
   private static float commandedPitchOld = DIVE;   // value at the previous tick, for per-frame interpolation
   private static int topTicks = 0;
+  // The heading director compares a per-tick-stepped desiredYaw against a per-frame-interpolated heading,
+  // which sawtooths at tick frequency during a fast turn. Low-pass the bar offset to settle that out.
+  private static final float YAW_BAR_SMOOTH = 0.18f;   // per-frame blend toward the raw offset
+  private static Float smoothYawOff = null;            // null = not currently steering
   private static boolean active = false;
   private static boolean tooLow = false;   // gliding, but below the altitude to arm
 
@@ -148,7 +152,12 @@ public class FlightDirector {
     int barX = cx;
     if (Nav.steering()) {
       float yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getViewYRot(partial));
-      barX = cx + (int) Math.max(-maxOff, Math.min(maxOff, yawErr * k));
+      float rawOff = Math.max(-maxOff, Math.min(maxOff, yawErr * k));
+      // smooth out the per-tick sawtooth; seed on the first frame of steering so it doesn't sweep in from center
+      smoothYawOff = (smoothYawOff == null) ? rawOff : smoothYawOff + (rawOff - smoothYawOff) * YAW_BAR_SMOOTH;
+      barX = cx + (int) (float) smoothYawOff;
+    } else {
+      smoothYawOff = null;
     }
 
     int thick = 1, half = 60, gap = 0;
