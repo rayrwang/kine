@@ -42,6 +42,7 @@ public class Nav {
     private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
     private static final double COLUMN_TOP_Y   = 320;
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
+    private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
     private static final float  DESCENT_PITCH  = 15f;    // gentle nose-down glide while landing (deg, +down)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
@@ -110,9 +111,13 @@ public class Nav {
         if (mode == Mode.MANAGED) {
             double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
             double dist = Math.sqrt(hdx * hdx + hdz * hdz);
-            if (!landing && dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.isEngaged()) {
-                landing = true;
-                findSafeSpot(mc, p);   // pick a safe touchdown column near the target, once
+            if (!landing) {
+                if (dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.isEngaged()) {
+                    landing = true;
+                    findSafeSpot(mc, p);   // pick a safe touchdown column near the target, once
+                }
+            } else if (!Autopilot.isEngaged() && dist > EXIT_RADIUS) {
+                landing = false; haveSpot = false;   // pilot took over and flew off — resume coord navigation
             }
         }
         if (landing && p.onGround() && !p.isFallFlying()) landing = false;   // touched down — stop the descent
@@ -161,6 +166,7 @@ public class Nav {
         int cx = W / 2, cy = H / 2;
 
         if (mode == Mode.MANAGED) drawTargetColumn(g, mc, W, H);
+        if (FlightDirector.isTooLow() && !landing) return;   // too-low warning owns this slot instead
         int maxOff = (int) (H * 0.25f);
         int lh = mc.font.lineHeight;
         int etaY  = cy - maxOff - lh - 6;   // the slot the "too low" warning otherwise uses

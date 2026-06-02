@@ -98,6 +98,8 @@ public class FlightDirector {
     phase = HOLD; commandedPitch = DIVE; topTicks = 0;
   }
 
+  public static boolean isTooLow() { return tooLow; }
+
   /** Clear blocks straight below the player, scanning down to ENGAGE_AGL (returns ENGAGE_AGL if more). */
   private static int clearBelow(Minecraft mc, LocalPlayer p) {
     int x = p.getBlockX(), z = p.getBlockZ();
@@ -124,12 +126,10 @@ public class FlightDirector {
 
     boolean landing = Nav.landing();
     if (tooLow && !landing) {
-      // red advisory — but yield this slot to the nav readout when a nav mode is set
-      if (Nav.mode() == Nav.Mode.OFF) {
-        String s = "TOO LOW TO ACTIVATE AUTOPILOT";
-        int y = cy - maxOff - mc.font.lineHeight - 6;
-        g.text(mc.font, s, cx - mc.font.width(s) / 2, y, RED, true);
-      }
+      // too-low advisory and the nav readout are mutually exclusive — too-low always wins here
+      String s = "TOO LOW TO ACTIVATE AUTOPILOT";
+      int y = cy - maxOff - mc.font.lineHeight - 6;
+      g.text(mc.font, s, cx - mc.font.width(s) / 2, y, RED, true);
       return;
     }
     if (!active && !landing) return;
