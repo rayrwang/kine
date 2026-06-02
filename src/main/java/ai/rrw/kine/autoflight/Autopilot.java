@@ -26,6 +26,8 @@ public class Autopilot {
     private static boolean engaged = false;
     private static float lastSetPitch, lastSetYaw;  // what we last commanded, to spot manual override
 
+    public static boolean isEngaged() { return engaged; }
+
     public static void register() {
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
             "key.kine.autopilot", GLFW.GLFW_KEY_P, KeyMapping.Category.MISC));
@@ -38,12 +40,12 @@ public class Autopilot {
 
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-
-        while (toggleKey.consumeClick()) {                 // press P toggles
+        if (p == null) { disengage(); return; }   // left the world (e.g. disconnect) — never persist the lock
+        while (toggleKey.consumeClick()) {
             if (engaged) disengage();
-            else if (p != null && FlightDirector.isActive()) engage(p);
+            else if (FlightDirector.isActive()) engage(p);
         }
-        if (!engaged || p == null) return;
+        if (!engaged) return;
 
         if (!FlightDirector.isActive()) { disengage(); return; }   // too low / not gliding
         if (pilotOverride(mc, p))      { disengage(); return; }    // any mouse input
@@ -67,7 +69,7 @@ public class Autopilot {
         lastSetYaw   = p.getYRot();
     }
 
-    private static void disengage() { engaged = false; }
+    public static void disengage() { engaged = false; }
 
     private static boolean pilotOverride(Minecraft mc, LocalPlayer p) {
         float dPitch = Math.abs(p.getXRot() - lastSetPitch);
