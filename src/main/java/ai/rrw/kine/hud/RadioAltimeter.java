@@ -13,7 +13,6 @@ import net.minecraft.resources.Identifier;
 
 public class RadioAltimeter {
 
-    private static final int SCAN_CAP = 512;     // how far down we bother looking
     private static int agl = -1;                  // blocks above terrain; -1 = unknown
 
     public static int agl() { return agl; }
@@ -33,14 +32,15 @@ public class RadioAltimeter {
 
         int x = p.getBlockX(), z = p.getBlockZ();
         int start = (int) Math.floor(p.getY()) - 1;          // first block below feet
-        int limit = Math.max(mc.level.getMinY(), start - SCAN_CAP);
+        int bottom = mc.level.getMinY();                     // nothing can exist below the world floor — that's the natural bound
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        int groundY = limit;
-        for (int y = start; y >= limit; y--) {
+        int groundY = Integer.MIN_VALUE;                     // sentinel: nothing found yet
+        for (int y = start; y >= bottom; y--) {
             pos.set(x, y, z);
             if (!mc.level.getBlockState(pos).isAir()) { groundY = y; break; }
         }
+        if (groundY == Integer.MIN_VALUE) { agl = -1; return; }   // no surface in the whole column (void) — unknown, so hide it
         agl = Math.max(0, (int) Math.round(p.getY() - (groundY + 1)));   // surface is groundY+1
     }
 
