@@ -32,6 +32,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Display player speed and altitude.
 - Show health of mobs.
 - Projectiles red outline.
+- Tune endurance and ETA estimates.
 - Settings menu (press K to open).
 
 ## Planned
