@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(EntityRenderer.class)
 public class EntityRendererMixin {
 
-    // fully-opaque ARGB; bright orange-red. Tweak this for a different glow color.
-    private static final int KINE_GLOW_COLOR = 0xFFFF4500;
+    // fully-opaque ARGB; pure red. The outline-blur override keeps it from darkening at the edges.
+    private static final int KINE_GLOW_COLOR = 0xFFFF0000;
 
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void kine$colorProjectileGlow(Entity entity, EntityRenderState state, float partialTick, CallbackInfo ci) {
