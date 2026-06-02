@@ -41,6 +41,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Warning sounds
 - Controls & displays list and explanations
 - Collision detection for aimbot
+- Efficiency: aimbot solver start with analytical estimate
 - Support multiple versions & forge
 
 ## Long Term
