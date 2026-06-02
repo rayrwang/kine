@@ -43,8 +43,9 @@ public class RangeEndurance {
     private static final int AMBER = 0xFFFFC400;       // matches the radio altimeter
 
     // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding
-    private static final int SPEED_WINDOW = 1200; // ~60s
-    private static final int MIN_SAMPLES  = 200; // wait ~10s for a stable mean
+    // one cycle is approx 14.2s (284 ticks)
+    private static final int SPEED_WINDOW = 4*284; // 4 cycles, ~56.8s
+    private static final int MIN_SAMPLES  = 284; // wait one cycle (~14.2s) for a stable mean
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
