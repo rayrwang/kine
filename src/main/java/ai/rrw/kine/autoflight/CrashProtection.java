@@ -12,10 +12,9 @@ public class CrashProtection {
     private static final double WALL_STANDOFF   = 1.5;   // stop this far short of walls
     private static final double WALL_DROP_CAP   = 5.0;   // how far below to look for walls we'll descend into
     private static final double CEIL_STANDOFF   = 0.5;   // stop this far below ceilings
-    private static final double GROUND_STANDOFF = 1.0;
-    private static final double SAFE_LAND    = 0.3;   // descend this slow near ground (well under the 0.5 cap threshold)
-    private static final double GROUND_FLARE  = 6.0;   // hard-limit descent to SAFE_LAND within this many blocks
-    private static final double GROUND_GAIN   = 0.3;   // gentler ramp above the flare zone
+    private static final double SAFE_LAND       = 0.3;   // descend this slow near ground (well under the 0.5 cap threshold)
+    private static final double GROUND_FLARE    = 6.0;   // hard-limit descent to SAFE_LAND within this many blocks
+    private static final double GROUND_GAIN     = 0.3;   // gentler ramp above the flare zone
     private static final double STEP            = 0.25;  // sweep granularity (blocks)
     private static final double MAX_LOOK        = 20.0;  // never sweep further than this
     private static final double CUSHION_RANGE   = 8.0;   // hard-clamp fallDistance when ground is within this
@@ -46,25 +45,52 @@ public class CrashProtection {
             if (vy > allowed) vy = allowed;
         }
 
-        // WALL — bleed horizontal closing speed so contact (if any) is gentle (no flyIntoWall damage).
-        // Elytra flight always sinks, so a level sweep misses walls whose face sits just below us until
-        // we've already descended into them at speed. Extend the swept box downward by however far we'll
-        // drop over the lookahead, so the sweep follows the actual descending path.
+        // WALL — bleed horizontal closing speed so any contact is gentle (no flyIntoWall damage).
+        // Each horizontal axis is clamped on its own, so hitting a face kills only the component INTO
+        // that face and leaves the along-face component intact: you slide along the wall and keep the
+        // airspeed (and therefore the lift) instead of braking the whole vector and stalling — which is
+        // what made diagonal approaches and corners fail. Every sweep box is extended downward by the
+        // distance we'll sink over its lookahead, so a wall sitting just below the current level (which
+        // a level sweep skims straight over as we descend into it) is still caught.
         double hs = Math.sqrt(vx * vx + vz * vz);
         if (hs > 1e-4) {
-            double nx = vx / hs, nz = vz / hs;
-            double look = Math.min(MAX_LOOK, hs / GAIN + WALL_STANDOFF + 2);
-            double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
-            AABB wallBox = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
-            double clr = sweep(level, wallBox, nx, 0, nz, look);
-            double allowed = Math.max(0, (clr - WALL_STANDOFF) * GAIN);
-            if (hs > allowed) {
-                double s = allowed / hs;
-                vx *= s; vz *= s;
+            boolean blocked = false;
+            if (vx != 0) {
+                double ok = axisAllowed(level, box, Math.signum(vx), true, Math.abs(vx), vy, hs);
+                if (Math.abs(vx) > ok) { vx = Math.signum(vx) * ok; blocked = true; }
+            }
+            if (vz != 0) {
+                double ok = axisAllowed(level, box, Math.signum(vz), false, Math.abs(vz), vy, hs);
+                if (Math.abs(vz) > ok) { vz = Math.signum(vz) * ok; blocked = true; }
+            }
+            // Backstop: a block dead ahead on the diagonal slips between the two axis checks (each axis
+            // alone is clear). Only when neither axis clamped do we sweep along the actual heading and
+            // brake the whole vector for a closing corner — never while we're already sliding, so it
+            // can't re-introduce the very stall it exists to avoid.
+            if (!blocked) {
+                double nx = vx / hs, nz = vz / hs;
+                double look = Math.min(MAX_LOOK, hs / GAIN + WALL_STANDOFF + 2);
+                double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
+                AABB b = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
+                double clr = sweep(level, b, nx, 0, nz, look);
+                double allowed = Math.max(0, (clr - WALL_STANDOFF) * GAIN);
+                if (hs > allowed) { double s = allowed / hs; vx *= s; vz *= s; }
             }
         }
 
         return new Vec3(vx, vy, vz);
+    }
+
+    // Largest closing speed allowed on one horizontal axis before we'd breach the standoff. The swept
+    // box is extended downward by however far we'll sink over the lookahead, so descending into a wall
+    // is caught the same way a level approach is.
+    private static double axisAllowed(Level level, AABB box, double sign, boolean xAxis,
+                                      double speed, double vy, double hs) {
+        double look = Math.min(MAX_LOOK, speed / GAIN + WALL_STANDOFF + 2);
+        double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
+        AABB b = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
+        double clr = xAxis ? sweep(level, b, sign, 0, 0, look) : sweep(level, b, 0, 0, sign, look);
+        return Math.max(0, (clr - WALL_STANDOFF) * GAIN);
     }
 
     // swept-AABB clearance: distance the box can travel along (dx,dy,dz) before hitting terrain
