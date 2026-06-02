@@ -52,7 +52,7 @@ public class Nav {
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
     private static final double ETA_ANCHOR     = 21.0;   // nominal cruise groundspeed (m/s) the ETA is anchored to (sim: ~20.6 for the deployed porpoise)
-    private static final double ETA_ADJUST     = 0.003;  // per-tick drift of the anchor toward the measured mean (slow)
+    private static final double ETA_ADJUST     = 0.001;  // per-tick drift of the anchor toward the measured mean (very slow, ~50s time constant)
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     private static final Set<Block> DANGER = Set.of(

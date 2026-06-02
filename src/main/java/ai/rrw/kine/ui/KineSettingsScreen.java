@@ -114,6 +114,12 @@ public class KineSettingsScreen extends Screen {
         + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
         + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
 
+    private static final String DESC_AFK =
+        "If you take any damage while you've given no input \u2014 no movement keys, mouse, or open screen "
+        + "\u2014 for fifteen seconds, you're logged out before something can kill you unattended. The "
+        + "disconnect screen names what hit you. The autopilot moving the camera doesn't count as input, "
+        + "so it still protects you on a hands-off flight; while a menu is open you're treated as present.";
+
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
             Opt.of("Display speed", DESC_SPEED, () -> Settings.displaySpeed, v -> Settings.displaySpeed = v),
@@ -127,6 +133,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
+            Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),
         }),
         new Section("Combat", new Opt[]{
             Opt.of("Projectile targeting reticle", DESC_RETICLE, () -> Settings.projectileReticle, v -> Settings.projectileReticle = v),

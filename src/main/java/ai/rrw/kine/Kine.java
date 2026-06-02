@@ -37,6 +37,7 @@ public class Kine implements ClientModInitializer {
 		Autopilot.register();
 		Nav.register();
 		ElytraGuard.register();
+		ai.rrw.kine.combat.AfkGuard.register();
 		ProjectileTargeting.register();
 		ProjectileDodge.register();
 		ai.rrw.kine.ui.KineMenu.register();

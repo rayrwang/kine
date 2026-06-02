@@ -22,6 +22,7 @@ public class Settings {
     public static boolean autoAim                = false;
     public static boolean projectileDodge        = false;
     public static boolean displayRangeEndurance  = true;
+    public static boolean afkDamageProtection    = true;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
@@ -30,7 +31,8 @@ public class Settings {
         boolean displaySpeed = true, displayGroundSpeed = true, displayFlightDirectors = true,
                 elytraDuraFailsafe = true, crashProtection = true, fallPrevention = true,
                 displayMobHealths = true, displayMobNames = false, projectileReticle = true,
-                projectileGlow = true, autoAim = false, projectileDodge = false, displayRangeEndurance = true;
+                projectileGlow = true, autoAim = false, projectileDodge = false, displayRangeEndurance = true,
+                afkDamageProtection = true;
     }
 
     public static void load() {
@@ -64,6 +66,7 @@ public class Settings {
         autoAim = d.autoAim;
         projectileDodge = d.projectileDodge;
         displayRangeEndurance = d.displayRangeEndurance;
+        afkDamageProtection = d.afkDamageProtection;
     }
 
     public static void save() {
@@ -81,6 +84,7 @@ public class Settings {
         d.autoAim = autoAim;
         d.projectileDodge = projectileDodge;
         d.displayRangeEndurance = displayRangeEndurance;
+        d.afkDamageProtection = afkDamageProtection;
         try {
             Files.writeString(FILE, GSON.toJson(d));
         } catch (IOException e) {
