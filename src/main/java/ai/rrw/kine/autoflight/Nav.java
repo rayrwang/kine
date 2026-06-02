@@ -51,9 +51,7 @@ public class Nav {
     private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
-    private static final double ETA_ANCHOR     = 21.0;   // nominal cruise groundspeed (m/s) the ETA is anchored to (sim: ~20.6 for the deployed porpoise)
-    private static final double ETA_ADJUST     = 0.0001; // per-tick drift of the anchor toward the measured mean (~100s time constant)
-    private static final double ETA_TC         = 12.0;   // time constant (s) for smoothing the *displayed* ETA, on top of the speed smoothing
+    private static final double ETA_TC         = 12.0;   // time constant (s) for ironing the porpoise wobble out of the displayed ETA
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     private static final Set<Block> DANGER = Set.of(
@@ -70,7 +68,6 @@ public class Nav {
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
-    private static double  etaSpeed = ETA_ANCHOR;  // anchored, slowly-adapted groundspeed used for the ETA readout
     private static double  etaShown = Double.NaN;  // low-passed ETA value actually displayed (s)
     private static long    etaNanos = 0L;          // wall-clock of the last ETA display update
 
@@ -91,7 +88,7 @@ public class Nav {
     public static void enterSelected() { mode = Mode.SELECTED; clearLanding(); }   // mode only — heading stays unset
     public static void enterManaged()  { mode = Mode.MANAGED;  clearLanding(); }   // mode only — target stays unset
     public static void setHeading(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; clearLanding(); }
-    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; clearLanding(); }
+    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; resetEta(); clearLanding(); }
     public static void off()                         { mode = Mode.OFF; clearLanding(); }
     private static void clearLanding()               { landing = false; haveSpot = false; }
 
@@ -125,12 +122,6 @@ public class Nav {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         while (navKey.consumeClick()) mc.setScreen(new ai.rrw.kine.ui.KineNavScreen());
-        // ETA anchor: hold a stable cruise speed and drift it slowly toward the measured multi-cycle mean,
-        // rather than dividing distance by the porpoise-noisy speed directly. Runs whenever we're flying.
-        if (p.isFallFlying()) {
-            double measured = RangeEndurance.meanGroundSpeed();
-            if (measured > 0.5) etaSpeed += (measured - etaSpeed) * ETA_ADJUST;
-        }
         if (mode == Mode.OFF) { clearLanding(); return; }
 
         if (mode == Mode.MANAGED && hasTarget) {
@@ -209,7 +200,7 @@ public class Nav {
 
         String line2 = landing
             ? "LANDING"
-            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(smoothEta(dist / etaSpeed));
+            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(smoothEta(dist / RangeEndurance.speedEstimate()));
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
         // If the elytra can't take us that far, flag it to the right of the two readout lines.
@@ -274,6 +265,9 @@ public class Nav {
      * changes. The slow drift averages the porpoise surge/stall away. Snaps on a big jump (new target,
      * teleport) or after a render gap (screen open, F1) so it never crawls in from a stale value.
      */
+    /** Forget the smoothed ETA so a new destination starts fresh instead of easing off the old estimate. */
+    private static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }
+
     private static double smoothEta(double raw) {
         long now = System.nanoTime();
         double dt = (etaNanos == 0L) ? 0.0 : (now - etaNanos) / 1.0e9;

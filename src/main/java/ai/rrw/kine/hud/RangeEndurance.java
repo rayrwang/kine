@@ -48,11 +48,14 @@ public class RangeEndurance {
     private static final int CYCLE        = 284;        // porpoise period (ticks) — keep in step with the flight director
     private static final int SPEED_WINDOW = 4 * CYCLE;  // 4 cycles, ~56.8s
     private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
+    private static final double CRUISE_ANCHOR = 21.0;   // nominal cruise speed (m/s) used by BOTH range and ETA until a real mean exists
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
     private static double enduranceSec = 0;
     private static boolean show = false;
+    private static final double AGL_TC = 12.0;          // s; smooths the porpoise bob out of the reserve so range/END don't pulse
+    private static double smoothedAgl = Double.NaN;     // low-passed height-above-ground feeding the readout reserve
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(RangeEndurance::tick);
@@ -73,7 +76,7 @@ public class RangeEndurance {
         if (p == null || mc.level == null) return;
 
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.is(Items.ELYTRA)) return;   // only while actually wearing an elytra
+        if (!chest.is(Items.ELYTRA)) { smoothedAgl = Double.NaN; return; }   // only while actually wearing an elytra
 
         if (p.isFallFlying()) {
             double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
@@ -87,7 +90,13 @@ public class RangeEndurance {
         for (ItemStack s : p.getInventory().getNonEquipmentItems()) process(s, acc);
         process(p.getItemBySlot(EquipmentSlot.OFFHAND), acc);
 
-        double reserve = ElytraGuard.landingReserveSeconds(Math.max(0, RadioAltimeter.agl()));
+        // Reserve off a smoothed altitude: the reserve plans a glide-down from your operating height,
+        // and the porpoise bob isn't a real change in that — chasing it just made range and END pulse.
+        // (The durability failsafe still reads the instantaneous AGL, where the conservative value is wanted.)
+        int aglNow = Math.max(0, RadioAltimeter.agl());
+        smoothedAgl = Double.isNaN(smoothedAgl) ? aglNow
+            : smoothedAgl + (aglNow - smoothedAgl) * (1.0 - Math.exp(-0.05 / AGL_TC));
+        double reserve = ElytraGuard.landingReserveSeconds(smoothedAgl);
         enduranceSec = Math.max(0, acc.flightSeconds * (1.0 - CONTINGENCY) - reserve);
         show = true;
     }
@@ -114,9 +123,7 @@ public class RangeEndurance {
         Minecraft mc = Minecraft.getInstance();
 
         String end = "END " + KineTime.format(enduranceSec);
-        String rng = speedCount >= MIN_SAMPLES
-            ? "RNG " + fmtDist(enduranceSec * cruiseSpeed())
-            : "RNG --";
+        String rng = "RNG " + fmtDist(enduranceSec * speedEstimate());
 
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
@@ -142,12 +149,18 @@ public class RangeEndurance {
         return sum / n;
     }
 
-    /** Multi-cycle mean ground speed (m/s) — stable across the porpoise. 0 until {@link #speedReady}. */
-    public static double meanGroundSpeed() { return speedReady() ? cruiseSpeed() : 0; }
+    /**
+     * The one estimated quantity in the whole range/ETA picture: cruise ground speed (m/s). Both the
+     * range readout and the nav ETA derive from THIS, so they share one smoothing and recalibrate
+     * together. It's the phase-balanced multi-cycle mean once we have a cycle of samples, and the
+     * nominal anchor before that, so both readouts work from the first second instead of one of them
+     * sitting blank.
+     */
+    public static double speedEstimate() { return speedReady() ? cruiseSpeed() : CRUISE_ANCHOR; }
     public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
 
-    /** Estimated reachable distance (m) right now, or -1 if unknown (no elytra worn, or speed not ready yet). */
-    public static double rangeMeters() { return (show && speedReady()) ? enduranceSec * cruiseSpeed() : -1.0; }
+    /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */
+    public static double rangeMeters() { return show ? enduranceSec * speedEstimate() : -1.0; }
 
     private static String fmtDist(double blocks) {
         return blocks >= 1000 ? String.format("%.1f km", blocks / 1000.0)
