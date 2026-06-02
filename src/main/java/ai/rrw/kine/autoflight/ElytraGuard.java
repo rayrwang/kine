@@ -3,6 +3,7 @@ package ai.rrw.kine.autoflight;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.hud.RadioAltimeter;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.DeltaTracker;
@@ -12,7 +13,6 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -27,7 +27,6 @@ public class ElytraGuard {
     // --- tuning (all deliberately conservative; healthy margins) ---
     private static final double DESCENT_RATE = 6.0;    // assumed safe descent rate (blocks/sec) when budgeting
     private static final double BASE_MARGIN  = 15.0;   // flat reserve (sec) for approach / mistakes
-    private static final int    SCAN_CAP     = 384;    // how far down we scan for ground
     private static final int    GRACE_TICKS  = 100;    // 5 s for the pilot to take control before the failsafe fires
     private static final int    ALMOST_BREAK_DUR = 3;  // at/under this, swap to ANY fresher wing — just don't die
     private static final int    CRITICAL_DUR = 2;      // bail instantly at/under this durability (about to break)
@@ -57,7 +56,12 @@ public class ElytraGuard {
         if (!chest.is(Items.ELYTRA) || !chest.isDamageableItem()) { graceTicks = 0; return; }
 
         int remaining = chest.getMaxDamage() - chest.getDamageValue();   // ~seconds of flight left
-        double agl = altitude(mc, p);
+        // Altitude above the nearest ground, from the shared radio-altimeter scan. Over the void it
+        // returns -1 (no ground in the column); here the failsafe's policy is to treat that as
+        // conservatively high — the full height above the world floor — so it warns and bails early
+        // rather than letting the wing break over a bottomless drop.
+        int rawAgl = RadioAltimeter.agl();
+        double agl = (rawAgl >= 0) ? rawAgl : Math.max(0, p.getY() - mc.level.getMinY());
         warning = remaining < landingReserveSeconds(agl);
 
         // Two swap tiers, with a deliberate dead zone between them:
@@ -129,18 +133,6 @@ public class ElytraGuard {
     }
 
     // straight-down distance to the first solid block (blocks above ground)
-    private static double altitude(Minecraft mc, LocalPlayer p) {
-        int x = p.getBlockX(), z = p.getBlockZ();
-        int start = (int) Math.floor(p.getY()) - 1;
-        int limit = Math.max(mc.level.getMinY(), start - SCAN_CAP);
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (int y = start; y >= limit; y--) {
-            pos.set(x, y, z);
-            if (!mc.level.getBlockState(pos).isAir()) return Math.max(0, p.getY() - (y + 1));
-        }
-        return p.getY() - limit;   // no ground within scan (e.g. over the void) -> treat as very high
-    }
-
     private static void bailOut(Minecraft mc) {
         graceTicks = 0;
         Autopilot.disengage();
