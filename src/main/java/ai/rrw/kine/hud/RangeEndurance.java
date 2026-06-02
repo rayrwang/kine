@@ -180,7 +180,15 @@ public class RangeEndurance {
     public static double rangeMeters() { return show ? rangeShown : -1.0; }
 
     private static String fmtDist(double blocks) {
-        return blocks >= 1000 ? String.format("%.1f km", blocks / 1000.0)
-                              : String.format("%.0f m", blocks);
+        // Round DOWN to two significant figures: never overstate reach, and two digits is all that's
+        // meaningful in a smoothed estimate. Scales with magnitude (840 m, 6.4 km, 880 km) instead of
+        // a fixed decimal precision, so big numbers don't sprout spurious digits.
+        double v = Math.max(0, blocks);
+        if (v < 10) return (long) v + " m";
+        double mag = Math.pow(10, Math.floor(Math.log10(v) + 1e-9) - 1);
+        v = Math.floor(v / mag) * mag;
+        if (v < 1000) return (long) v + " m";
+        double km = v / 1000.0;
+        return km < 10 ? String.format("%.1f km", km) : String.format("%.0f km", km);
     }
 }
