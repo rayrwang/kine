@@ -16,15 +16,15 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.
+- Elytra low durability and collision protections.
 - Display player speed and altitude.
 - Show health of mobs.
 - Settings menu (press K to open).
 
 ## Planned
 
-- Collision detection for both elytra & aimbot
 - Dodge incoming projectiles.
-- Elytra soft landing.
+- Collision detection for aimbot
 - Support multiple versions & forge
 
 ## Long Term

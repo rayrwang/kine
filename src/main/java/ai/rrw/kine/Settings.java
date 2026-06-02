@@ -13,6 +13,7 @@ public class Settings {
     public static boolean displayGroundSpeed     = true;
     public static boolean displayFlightDirectors = true;
     public static boolean elytraDuraFailsafe     = true;
+    public static boolean crashProtection        = true;
     public static boolean fallPrevention         = true;
     public static boolean displayMobHealths      = true;
     public static boolean displayMobNames        = false;
@@ -25,8 +26,9 @@ public class Settings {
 
     private static class Data {
         boolean displaySpeed = true, displayGroundSpeed = true, displayFlightDirectors = true,
-                elytraDuraFailsafe = true, fallPrevention = true, displayMobHealths = true,
-                displayMobNames = false, projectileReticle = true, projectileGlow = true, autoAim = false;
+                elytraDuraFailsafe = true, crashProtection = true, fallPrevention = true,
+                displayMobHealths = true, displayMobNames = false, projectileReticle = true,
+                projectileGlow = true, autoAim = false;
     }
 
     public static void load() {
@@ -38,6 +40,7 @@ public class Settings {
             displayGroundSpeed = d.displayGroundSpeed;
             displayFlightDirectors = d.displayFlightDirectors;
             elytraDuraFailsafe = d.elytraDuraFailsafe;
+            crashProtection = d.crashProtection;
             fallPrevention = d.fallPrevention;
             displayMobHealths = d.displayMobHealths;
             displayMobNames = d.displayMobNames;
@@ -55,6 +58,7 @@ public class Settings {
         d.displayGroundSpeed = displayGroundSpeed;
         d.displayFlightDirectors = displayFlightDirectors;
         d.elytraDuraFailsafe = elytraDuraFailsafe;
+        d.crashProtection = crashProtection;
         d.fallPrevention = fallPrevention;
         d.displayMobHealths = displayMobHealths;
         d.displayMobNames = displayMobNames;

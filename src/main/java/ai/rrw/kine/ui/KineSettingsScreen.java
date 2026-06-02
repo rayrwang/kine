@@ -42,6 +42,12 @@ public class KineSettingsScreen extends Screen {
         + "take control within 5s of the warning, it disconnects you \u2014 logging out before the "
         + "elytra breaks so you don't fall to your death. Flying manually, it only warns, never "
         + "disconnects.";
+    private static final String DESC_CRASH =
+        "While elytra-flying, sheds speed when you're about to hit a wall, ceiling, or ground \u2014 "
+        + "halting you short of walls and cushioning descents so you land safely instead of dying on "
+        + "impact. It only ever removes velocity heading into a surface, never turning or throwing you, "
+        + "so a false trigger just briefly slows you. Works within your client's control; a server with "
+        + "strict movement anti-cheat could override it.";
     private static final String DESC_FALL =
         "Stops you walking off ledges that would cause fall damage, the way sneaking does, but "
         + "automatically and only when the drop ahead is actually dangerous. Safe drops and "
@@ -79,6 +85,8 @@ public class KineSettingsScreen extends Screen {
             () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
         new Opt("Elytra durability failsafe", DESC_ELYTRA,
             () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
+        new Opt("Terrain crash protection", DESC_CRASH,
+            () -> Settings.crashProtection, v -> Settings.crashProtection = v),
         new Opt("Fall prevention", DESC_FALL,
             () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
         new Opt("Display mob healths", DESC_HEALTH,
