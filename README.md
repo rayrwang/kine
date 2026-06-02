@@ -34,8 +34,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Planned
 
 - Navigation screen / controls
+- Fix projectile targeting reticle hidden by blocks.
 - AFK damage protection
-- Elytra collision avoidance not just prevention, integrate with autopilot.
+- Elytra collision avoidance, not just prevention, integrate with autopilot.
 - Collision detection for aimbot
 - Support multiple versions & forge
 
