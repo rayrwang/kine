@@ -35,7 +35,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Fix projectile targeting reticle hidden by blocks.
 - AFK damage protection
 - Elytra collision avoidance, not just prevention, integrate with autopilot.
 - Warning sounds
