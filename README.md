@@ -20,8 +20,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
-	- Press N to open the navigation controls.
-- **Aimbot and targeting reticles for projectiles.**
+	- Press N to enter a destination.
+- **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
 - **Dodge arrows and other projectiles.**
 - **Fall protection.**
