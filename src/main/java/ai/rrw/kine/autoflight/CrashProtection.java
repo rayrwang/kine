@@ -12,7 +12,9 @@ public class CrashProtection {
     private static final double WALL_STANDOFF   = 1.5;   // stop this far short of walls
     private static final double CEIL_STANDOFF   = 0.5;   // stop this far below ceilings
     private static final double GROUND_STANDOFF = 1.0;
-    private static final double SAFE_LAND       = 0.4;   // max descent speed near ground (<0.5 -> vanilla caps fallDistance)
+    private static final double SAFE_LAND    = 0.3;   // descend this slow near ground (well under the 0.5 cap threshold)
+    private static final double GROUND_FLARE  = 6.0;   // hard-limit descent to SAFE_LAND within this many blocks
+    private static final double GROUND_GAIN   = 0.3;   // gentler ramp above the flare zone
     private static final double STEP            = 0.25;  // sweep granularity (blocks)
     private static final double MAX_LOOK        = 20.0;  // never sweep further than this
     private static final double CUSHION_RANGE   = 8.0;   // hard-clamp fallDistance when ground is within this
@@ -24,13 +26,15 @@ public class CrashProtection {
         AABB box = p.getBoundingBox();
         double vx = v.x, vy = v.y, vz = v.z;
 
-        // GROUND — cushion the descent and guarantee a damage-free landing
+        // GROUND — flare early and descend slowly so the server's own fall-distance cap reliably triggers
         if (vy < 0) {
-            double look = Math.min(MAX_LOOK, -vy / GAIN + GROUND_STANDOFF + 2);
+            double look = Math.min(MAX_LOOK, -vy / GROUND_GAIN + GROUND_FLARE + 2);
             double clr = sweep(level, box, 0, -1, 0, look);
-            double allowed = Math.max(SAFE_LAND, (clr - GROUND_STANDOFF) * GAIN);
+            double allowed = clr <= GROUND_FLARE
+                ? SAFE_LAND
+                : SAFE_LAND + (clr - GROUND_FLARE) * GROUND_GAIN;
             if (-vy > allowed) vy = -allowed;
-            if (clr < CUSHION_RANGE && p.fallDistance > 1.0) p.fallDistance = 1.0; // backstop
+            if (clr < CUSHION_RANGE && p.fallDistance > 1.0) p.fallDistance = 1.0;   // client-side backstop
         }
 
         // CEILING — stop short (harmless anyway; just avoids bonking/sticking)
