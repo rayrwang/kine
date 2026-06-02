@@ -257,6 +257,9 @@ public class Nav {
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
     private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
 
+    /** Forget the smoothed ETA so a new destination starts fresh instead of easing off the old estimate. */
+    private static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }
+
     /**
      * Smooths the displayed ETA. The raw figure (distance / cruise speed) is right on average but ticks
      * down unevenly because ground speed surges in the dive and stalls at the top of each porpoise.
@@ -265,9 +268,6 @@ public class Nav {
      * changes. The slow drift averages the porpoise surge/stall away. Snaps on a big jump (new target,
      * teleport) or after a render gap (screen open, F1) so it never crawls in from a stale value.
      */
-    /** Forget the smoothed ETA so a new destination starts fresh instead of easing off the old estimate. */
-    private static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }
-
     private static double smoothEta(double raw) {
         long now = System.nanoTime();
         double dt = (etaNanos == 0L) ? 0.0 : (now - etaNanos) / 1.0e9;
