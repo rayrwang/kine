@@ -44,8 +44,11 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Predictions & projections, maybe display
 	- Terrain display by highlighting blocks
 	- Warnings?
-- Fix elytra durability protection to be cumulative, not single
-- Fix ETA estimate not resetting on landing when above anchor.
+- Fix:
+	- Elytra durability protection should be cumulative, not single
+	- ETA estimate isn't resetting on landing when above anchor
+	- Autopilot movement should stop when paused singleplayer
+	- Damage auto kick not working when window unfocused
 - Spear elytra
 - Mace fall
 - Kill aura
