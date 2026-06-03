@@ -209,7 +209,7 @@ public class Nav {
 
         String line2 = landing
             ? "LANDING"
-            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(smoothEta(dist / RangeEndurance.speedEstimate()));
+            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(roundUpSig2(smoothEta(dist / RangeEndurance.speedEstimate())));
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
         // If the elytra can't take us that far, flag it to the right of the two readout lines.
@@ -265,6 +265,13 @@ public class Nav {
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
     private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
+
+    /** Round a duration (s) UP to 2 significant figures, so the displayed ETA never reads shorter than it is. */
+    private static double roundUpSig2(double v) {
+        if (!(v > 0)) return 0;
+        double mag = Math.pow(10, Math.floor(Math.log10(v) + 1e-9) - 1);   // unit of the 2nd significant figure
+        return Math.ceil(v / mag - 1e-9) * mag;
+    }
 
     /** Forget the smoothed ETA so a new destination starts fresh instead of easing off the old estimate. */
     private static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }
