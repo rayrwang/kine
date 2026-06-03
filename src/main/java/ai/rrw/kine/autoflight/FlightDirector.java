@@ -43,10 +43,13 @@ public class FlightDirector {
   private static float commandedPitch = DIVE;
   private static float commandedPitchOld = DIVE;   // value at the previous tick, for per-frame interpolation
   private static int topTicks = 0;
-  // The heading director compares a per-tick-stepped desiredYaw against a per-frame-interpolated heading,
-  // which sawtooths at tick frequency during a fast turn. Low-pass the bar offset to settle that out.
-  private static final float YAW_BAR_SMOOTH = 0.18f;   // per-frame blend toward the raw offset
-  private static Float smoothYawOff = null;            // null = not currently steering
+  // The heading director compares desiredYaw against the player heading on the same per-tick time base.
+  // (Mixing it with the per-frame-interpolated view yaw used to sawtooth at tick frequency, worst during a
+  // fast turn — the source of the bar's shimmer.) A frame-rate-independent low-pass then settles the
+  // per-tick steps into fluid motion, the same regardless of FPS.
+  private static final float YAW_BAR_TC = 0.08f;   // heading-bar low-pass time constant (s); ~matches the old 0.18/frame at 60fps
+  private static Float smoothYawOff = null;         // null = not currently steering
+  private static long  yawNanos = 0L;               // wall-clock of the last bar update, for the dt-based filter
   private static boolean active = false;
   private static boolean tooLow = false;   // gliding, but below the altitude to arm
 
@@ -151,13 +154,21 @@ public class FlightDirector {
     // vertical bar is the heading/lateral director: deflects when a nav mode commands a turn
     int barX = cx;
     if (Nav.steering()) {
-      float yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getViewYRot(partial));
+      // compare against the per-tick heading, not the interpolated view yaw, so the offset doesn't sawtooth
+      float yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getYRot());
       float rawOff = Math.max(-maxOff, Math.min(maxOff, yawErr * k));
-      // smooth out the per-tick sawtooth; seed on the first frame of steering so it doesn't sweep in from center
-      smoothYawOff = (smoothYawOff == null) ? rawOff : smoothYawOff + (rawOff - smoothYawOff) * YAW_BAR_SMOOTH;
+      long now = System.nanoTime();
+      double dt = (yawNanos == 0L) ? 0.0 : (now - yawNanos) / 1.0e9;
+      yawNanos = now;
+      if (smoothYawOff == null || dt <= 0 || dt > 0.5) {
+        smoothYawOff = rawOff;   // seed on the first steering frame (or after a hitch) so it doesn't sweep in from center
+      } else {
+        smoothYawOff = (float) (smoothYawOff + (rawOff - smoothYawOff) * (1.0 - Math.exp(-dt / YAW_BAR_TC)));
+      }
       barX = cx + (int) (float) smoothYawOff;
     } else {
       smoothYawOff = null;
+      yawNanos = 0L;
     }
 
     int thick = 1, half = 60, gap = 0;
