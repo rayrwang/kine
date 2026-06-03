@@ -48,7 +48,7 @@ public class RadioAltimeter {
         if (agl < 0) return;
         Minecraft mc = Minecraft.getInstance();
 
-        String text = "RA " + agl;
+        String text = "" + agl;
         int w = mc.font.width(text);
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
