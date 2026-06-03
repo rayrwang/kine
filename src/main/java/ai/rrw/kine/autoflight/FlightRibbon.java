@@ -40,8 +40,8 @@ public final class FlightRibbon {
     private static final double SKIP_BLOCKS   = 0.0;    // forward start (behind-extension covers under the player)
     private static final double BEHIND_BLOCKS = 6.0;    // extend the rails this far behind the aircraft
     private static final double BEHIND_STEP   = 3.0;    // spacing of the behind extrapolation points
-    private static final double RAIL_HALF     = 3.5;    // half the rail separation in blocks (rails ~7 apart)
-    private static final double RAIL_W         = 0.30;  // rail strip width in blocks
+    private static final double RAIL_HALF     = 3.7;    // half the rail separation in blocks (rails ~7.4 apart)
+    private static final double RAIL_W         = 0.60;  // rail strip width in blocks
     private static final double STAND_EYE     = 1.62;   // standing eye height; the rails sit this far below the camera
 
     private static final int RAIL_COLOR = (0xE0 << 24) | 0x2864FF;   // solid blue (no gradient)
