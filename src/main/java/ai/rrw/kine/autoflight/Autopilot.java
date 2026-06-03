@@ -26,6 +26,7 @@ public class Autopilot {
     private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg) = old 7/tick
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D held (deg) = old 1.5/tick
     private static final float NAV_TURN_DPS = 35f;// max heading change per second while a nav mode steers
+    private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
     private static final float LANDING_TURN_DPS = 80f;// sharper turn authority while landing, for a tight circle
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
@@ -103,13 +104,25 @@ public class Autopilot {
 
         // yaw: terrain avoidance steers (faithful look placement) > nav mode > manual A/D
         if (ai.rrw.kine.Settings.terrainAvoidance && TurnGuard.steering()) {
-            // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
-            // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
-            double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
-            float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
-            float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
-            float dmax = (float) FlightModel3D.DELTA_MAX;
-            cmdYaw = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+            if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
+                // imminent wall: hard bank toward the open side at elevated authority, the look slewed
+                // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
+                double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
+                float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
+                float off  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
+                float ed   = (float) FlightModel3D.EMERGENCY_DELTA;
+                float bankTarget = velYaw + Math.max(-ed, Math.min(ed, off));
+                float maxStep = EMERGENCY_FLICK_DPS * dt;
+                cmdYaw += Math.max(-maxStep, Math.min(maxStep, Mth.wrapDegrees(bankTarget - cmdYaw)));
+            } else {
+                // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
+                // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
+                double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
+                float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
+                float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
+                float dmax = (float) FlightModel3D.DELTA_MAX;
+                cmdYaw = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+            }
         } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
             float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;

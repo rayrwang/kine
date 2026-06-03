@@ -29,6 +29,9 @@ public final class FlightModel3D {
 
     /** Max look-offset (deg) the steering will command in one tick: caps turn aggressiveness. */
     public static final double DELTA_MAX = 20.0;
+    /** Elevated look-offset for the emergency hard bank (sharper turn; bleeds speed but doesn't stall
+     *  like a full reversal). A 90-deg banked turn away from a wall, not a look-flip to reverse. */
+    public static final double EMERGENCY_DELTA = 45.0;
 
     // ---- heading helpers (MC yaw convention: 0=+Z, 90=-X, clockwise from above) ----
     /** Velocity heading (yaw, deg) of a horizontal velocity (vx,vz). */
@@ -124,12 +127,10 @@ public final class FlightModel3D {
         }
     }
 
-    /** Advance one tick steering toward `targetHeading` (yaw, deg), rate-limited by DELTA_MAX:
-     *  ease pitch -> steer + physics -> integrate -> law. Returns the pitch flown. */
-    public static double step(State s, double targetHeading) {
-        double vy0 = velYaw(s.vx, s.vz);
-        double delta = Math.max(-DELTA_MAX, Math.min(DELTA_MAX, wrap180(targetHeading - vy0)));
-        double lookYaw = vy0 + delta;
+    /** Advance one tick with an EXPLICIT look yaw (no steering clamp): ease pitch -> physics ->
+     *  integrate -> law. Used by the emergency maneuver, which points the look harder than the normal
+     *  steering cap allows. Returns the pitch flown. */
+    public static double stepLook(State s, double lookYaw) {
         s.pitch = ease(s.pitch, s.cmd);
         double[] v = { s.vx, s.vy, s.vz };
         physicsStep(lookYaw, s.pitch, v);
@@ -137,5 +138,13 @@ public final class FlightModel3D {
         s.x += s.vx; s.y += s.vy; s.z += s.vz;
         update(s);
         return s.pitch;
+    }
+
+    /** Advance one tick steering toward `targetHeading` (yaw, deg), rate-limited by DELTA_MAX:
+     *  the look is placed at velYaw + clamp(targetHeading - velYaw, +-DELTA_MAX). */
+    public static double step(State s, double targetHeading) {
+        double vy0 = velYaw(s.vx, s.vz);
+        double delta = Math.max(-DELTA_MAX, Math.min(DELTA_MAX, wrap180(targetHeading - vy0)));
+        return stepLook(s, vy0 + delta);
     }
 }

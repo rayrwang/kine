@@ -206,9 +206,9 @@ public class FlightDirector {
         if (commandedPitch >= aDive) { commandedPitch = aDive; phase = HOLD; }
       }
     }
-    // lateral terrain avoidance: choose this tick's steer heading (toward the Nav target or the
-    // current course) while dodging terrain. The Autopilot yaw channel consumes TurnGuard's heading.
-    // If it cannot find any way around a tall obstacle, hand control back rather than fly straight in.
+    // lateral terrain avoidance: choose this tick's steer heading while dodging terrain. An imminent
+    // obstacle becomes an emergency hard bank; only if that bank can't escape an endless wall does it
+    // escalate to a hand-off (disengage) rather than bank into the ground.
     if (Settings.terrainAvoidance && Autopilot.isEngaged()) {
       TurnGuard.evaluate(mc, p, targetAlt);
       if (TurnGuard.handOff()) Autopilot.disengage();

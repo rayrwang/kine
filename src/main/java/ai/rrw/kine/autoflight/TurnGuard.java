@@ -35,7 +35,7 @@ public final class TurnGuard {
     public static boolean steering()       { return steering; }
     public static double  desiredHeading() { return desiredHeading; }
     public static int     action()         { return action; }
-    /** True when the planner cannot avoid a tall obstacle and control should be handed back. */
+    /** True when an emergency bank couldn't escape an endless wall and control should be handed back. */
     public static boolean handOff()        { return steering && action == TurnPlanner.DISENGAGE; }
 
     /** Drop the steering latch and the committed-leg state (call on disengage / not gliding). */

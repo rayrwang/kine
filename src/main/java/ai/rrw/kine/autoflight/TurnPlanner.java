@@ -20,7 +20,7 @@ package ai.rrw.kine.autoflight;
 public final class TurnPlanner {
     private TurnPlanner() {}
 
-    public static final int CLB = 0, TURN = 1, DISENGAGE = 2;
+    public static final int CLB = 0, TURN = 1, EMERGENCY = 2, DISENGAGE = 3;
     static final int CLEARS = 1, HITS = 0, INSUFFICIENT = -1;
     static final int CAUSE_NONE = 0, CAUSE_CORRIDOR = 1, CAUSE_GROUND = 2;
 
@@ -86,9 +86,16 @@ public final class TurnPlanner {
         if (straight.status == CLEARS) {
             return new Plan(destBearing, CLB);
         }
-        // A tall obstacle closer than the turn radius can't be avoided by turning -- hand off now.
+        // A tall obstacle closer than the turn radius can't be avoided by a normal turn -- commit to a
+        // hard turn-around (~180) toward the more-open side. The look is held only EMERGENCY_DELTA off
+        // the (rotating) velocity each tick, so it ARCS around to reverse rather than pointing backward
+        // and stalling. Target just under 180 on the chosen side to fix the arc direction unambiguously.
         if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
-            return new Plan(destBearing, DISENGAGE);
+            double course = FlightModel3D.velYaw(base.vx, base.vz);
+            boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
+            boolean leftBlocked  = imminentAhead(base, course - 90.0, terrain);
+            double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
+            return new Plan(course + side * 179.0, EMERGENCY);
         }
         // Straight would clip terrain. Scan headings smallest-offset first and keep two candidates:
         //  - progressing: smallest offset that clears AND still makes real progress toward the dest
@@ -109,14 +116,16 @@ public final class TurnPlanner {
         }
         if (!Double.isNaN(progHeading)) return new Plan(progHeading, TURN);   // productive dodge
         if (!Double.isNaN(anyHeading))  return new Plan(anyHeading, TURN);    // evasive turn (avoid the wall)
-        // No clear heading in any direction. Distinguish WHY straight is blocked:
-        //  - a tall obstacle ahead (corridor) with no way around -> we cannot avoid it; hand control
-        //    back to the pilot rather than fly straight in (graceful disengage, the last resort).
-        //  - merely too low (the porpoise dive over low ground) or can't see far enough -> keep
-        //    climbing straight; being low is an altitude problem, not something to hand off for.
-        if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR) {
-            return new Plan(destBearing, DISENGAGE);
-        }
+        // No clear heading, but the obstacle isn't imminent yet: keep climbing straight (we may yet
+        // top it or find a gap as it nears; if it becomes imminent the emergency turn-around fires).
+        // If it's only low ground / can't-see-far, climbing straight is likewise right.
         return new Plan(destBearing, CLB);
+    }
+
+    /** True if flying `heading` runs into a tall obstacle within the emergency (turn-radius) distance.
+     *  The emergency maneuver holds until the current course is no longer imminently blocked. */
+    public static boolean imminentAhead(FlightModel3D.State base, double heading, Terrain2D terrain) {
+        Roll r = rollout(base, heading, terrain, HORIZON, MIN_LOOKAHEAD, base.x, base.z);
+        return r.status == HITS && r.cause == CAUSE_CORRIDOR && r.hitDist < IMMINENT;
     }
 }
