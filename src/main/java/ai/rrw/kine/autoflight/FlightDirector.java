@@ -140,17 +140,16 @@ public class FlightDirector {
       return;
     }
 
-    // Decide whether the situation ahead is flyable. With terrain avoidance on, the model-predictive
-    // planner picks the lowest target floor that clears terrain ahead (or hands off); otherwise the
-    // legacy AGL window arms/holds the autopilot. Either way, infeasible -> tooLow -> same trip path.
+    // Decide whether the situation ahead is flyable. The arming gate always applies -- arming with no
+    // safe way forward is unsafe regardless of mode. With avoidance on, "flyable" means the planner finds
+    // a path from here (which, because the climb law dives, naturally refuses to arm too low to clear that
+    // dive, and refuses when boxed in). Once armed, terrain ahead is the lateral planner's job, so we stay
+    // armed. Without avoidance, the legacy absolute-AGL window arms/holds the autopilot.
+    floorAlt = targetAlt;
     boolean room;
     if (Settings.terrainAvoidance) {
-      // Turn planner is the primary terrain authority: never disengage for terrain. Climb to the
-      // cruise floor and let the lateral planner (TurnGuard, end of tick) dodge / back off instead.
-      floorAlt = targetAlt;
-      room = true;
+      room = active || TurnGuard.feasibleToArm(mc, p, targetAlt);
     } else {
-      floorAlt = targetAlt;                                 // no avoidance: the law flies the user's target
       int clear = clearBelow(mc, p);
       boolean absSafe = lastTroughY >= ABS_FLOOR;
       // arm needs ENGAGE_AGL clear below; once armed, stay armed while either the AGL floor holds OR the

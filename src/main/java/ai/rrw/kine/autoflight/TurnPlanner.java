@@ -28,7 +28,8 @@ public final class TurnPlanner {
     static final double[] OFFSETS = {10, 20, 30, 45, 60, 75, 90, 110, 130, 150};
     static final double PROG_MIN = 40.0;    // a turn must close at least this far along the bearing
     public static final int HORIZON = 900;
-    public static final double MIN_LOOKAHEAD = 96.0;  // must verify-clear this far (below render dist) to proceed
+    public static final double MIN_LOOKAHEAD = 96.0;  // must verify-clear this far (loaded) to call a path clear
+    public static final double SCAN_DIST = 480.0;     // check terrain this far ahead (~ the ribbon's predicted length)
     // Climb-corridor collision test. An obstacle is terrain that rises into the altitude we will be
     // climbing through -- NOT the low ground the porpoise momentarily dives toward. Modelling the
     // corridor as a steady climb (decoupled from the dive) makes obstacle detection phase-independent,
@@ -57,23 +58,26 @@ public final class TurnPlanner {
         double ux = dx / dlen, uz = dz / dlen;
         Roll r = new Roll(); r.status = CLEARS;
         double pathLen = 0.0;
+        double maxLoaded = 0.0;          // furthest along-path distance we actually had terrain data for
+        boolean hit = false;
         for (int i = 0; i < horizon; i++) {
             double prx = s.x, prz = s.z;
             FlightModel3D.step(s, targetHeading);
             pathLen += Math.hypot(s.x - prx, s.z - prz);
+            if (pathLen > SCAN_DIST) break;                 // only look as far as the ribbon predicts
             double g = terrain.heightAt(s.x, s.z);
-            if (Double.isNaN(g)) {
-                double travelled = Math.hypot(s.x - sx, s.z - sz);
-                r.status = travelled >= minLookahead ? CLEARS : INSUFFICIENT;
-                break;
-            }
+            if (Double.isNaN(g)) continue;                  // unloaded sample: skip it, keep scanning ahead
+            maxLoaded = pathLen;
             // obstacle = terrain rising into the climbing corridor (a wall/mountain ahead). Separately,
             // the actual porpoise path must not skim into the floor -- a small buffer so only a real
             // impending ground hit flags, not a normal mid-altitude dive (which would falsely block).
             double corridorY = y0 + grad * pathLen;
-            if (g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; break; }
-            if (s.y - g < GROUND_MIN)            { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; break; }
+            if (g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; hit = true; break; }
+            if (s.y - g < GROUND_MIN)            { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; hit = true; break; }
         }
+        // Only declare a path CLEAR if we actually saw loaded terrain far enough out; otherwise we simply
+        // can't see (render edge close, or all-NaN ahead) -- report INSUFFICIENT rather than a false clear.
+        if (!hit) r.status = (maxLoaded >= minLookahead) ? CLEARS : INSUFFICIENT;
         r.progress = (s.x - sx) * ux + (s.z - sz) * uz;
         return r;
     }
@@ -120,6 +124,23 @@ public final class TurnPlanner {
         // top it or find a gap as it nears; if it becomes imminent the emergency turn-around fires).
         // If it's only low ground / can't-see-far, climbing straight is likewise right.
         return new Plan(destBearing, CLB);
+    }
+
+    /** Is there a flyable path from here? True if flying straight at the destination doesn't hit (it
+     *  clears, or we simply can't see far enough), or failing that some heading clears. Used to gate
+     *  ENGAGEMENT instead of a fixed altitude: the climb law's own dive scrapes the ground in every
+     *  direction when too low, so every rollout HITS -> infeasible -> don't arm. It also refuses to arm
+     *  when boxed by terrain with no clear heading, and allows arming facing a wall there's room to turn
+     *  around. This adapts the arming floor to the actual situation rather than a guessed AGL. */
+    public static boolean feasible(FlightModel3D.State base, double destBearing,
+                                   double destX, double destZ, Terrain2D terrain) {
+        Roll straight = rollout(base, destBearing, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+        if (straight.status != HITS) return true;            // clear ahead, or can't see a problem
+        for (double off : OFFSETS)
+            for (int sgn = +1; sgn >= -1; sgn -= 2)
+                if (rollout(base, destBearing + sgn * off, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
+                    return true;                             // some heading is flyable
+        return false;                                        // no way out from here -> don't arm
     }
 
     /** True if flying `heading` runs into a tall obstacle within the emergency (turn-radius) distance.
