@@ -48,7 +48,7 @@ public class RangeEndurance {
     private static final int CYCLE        = 284;        // porpoise period (ticks) — keep in step with the flight director
     private static final int SPEED_WINDOW = 4 * CYCLE;  // 4 cycles, ~56.8s
     private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
-    private static final double CRUISE_ANCHOR = 21.0;   // nominal cruise speed (m/s) used by BOTH range and ETA until a real mean exists
+    private static final double CRUISE_ANCHOR = 23.0;   // nominal cruise speed (m/s) used by BOTH range and ETA until a real mean exists
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
