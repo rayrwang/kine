@@ -47,7 +47,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Per block pathing instead of heightmap highest block
 	- Fly climbing pattern if boxed in
 	- Adjust lookahead distance
-	- Descent gradually before reaching destination
+	- Descend gradually before reaching destination
 	- Fly landing instead of disengaging on unable to escape terrain?
 	- Warnings?
 - Fix:
@@ -55,6 +55,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- ETA estimate isn't resetting on landing when above anchor
 	- Autopilot movement should stop when paused singleplayer
 	- Damage auto kick not working when window unfocused
+- Update readme technical, make more concise; change pictures, add logo
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall
