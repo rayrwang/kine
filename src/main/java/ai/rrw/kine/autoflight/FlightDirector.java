@@ -23,6 +23,7 @@ public class FlightDirector {
   public static void    setTargetAltitude(int y) { targetAlt = Math.max(ALT_MIN, Math.min(ALT_MAX, y)); }
   /** Model-derived cruise ground speed (m/s) for the active mode; seeds the range/endurance estimate. */
   public static float   expectedGroundSpeed() { return climbing ? C_SPEED : L_SPEED; }
+  public static int     periodTicks()    { return measuredPeriod; }   // live porpoise period (ticks), for the speed mean
   /** Vertical FMA mode for the annunciator. CLB/DESC = orange, ALT* (capture) = yellow, ALT (hold) = green. */
   public static int     verticalMode() { return vmode; }
   public static final int VM_CLB = 0, VM_ALT_STAR = 1, VM_ALT = 2, VM_DESC = 3;
@@ -47,16 +48,16 @@ public class FlightDirector {
   private static final float  L_SPEED = 30.1f;       // closed-loop hold average (held by dive-extension, ~0 climb-catches)
 
   // --- altitude hold (closed-loop on the dive trough = "bottom of the porpoise") ---
-  // The trough is sampled once per cycle (at the pull-up, the lowest/fastest point). Below the target
-  // we climb; at/above it we hold, and shed any excess by EXTENDING THE DIVE proportional to how far
-  // above target we are — extra ticks of nose-down before the pull-up convert the surplus height into
-  // speed and walk the trough back down to target. (Raising the trigger speed can't do this: the level
-  // profile already triggers near the max reachable speed, so a higher trigger just never fires.)
+  // The trough is sampled once per cycle at the pull-up. Below the target we climb (climb profile); at or
+  // above it we hold/descend by simply DIVING UNTIL WE REACH THE TARGET ALTITUDE and only then pulling up,
+  // so the bottom of every porpoise lands on the target — a descent from any height bottoms out at the
+  // target in a single dive. DESC_MARGIN is how far above target the pull-up begins (the nose-down coast
+  // through the pull-up carries the true trough ~3 blocks lower, parking it just above target).
   private static int          targetAlt    = 400;     // selectable in the nav menu; the bottom we hold
   private static final int    ALT_MIN      = -60;
   private static final int    ALT_MAX      = 2000;
-  private static final double K_ALT        = 0.8;     // extra dive-hold ticks per block above target
-  private static final int    MAX_EXT      = 40;      // cap on extra dive-hold ticks (~2 s)
+  private static final int    DESC_MARGIN  = 6;       // hold/descend: begin the pull-up this many blocks above target
+  private static final int    DESC_LIVE    = 150;     // while diving above target+this, annunciate DESC (clears the ~109 steady ceiling)
   private static final double ABS_FLOOR    = 390.0;   // trough above this is terrain-cleared: skip the AGL floor
 
   // active profile values (selected by the mode); the state machine reads these
@@ -67,9 +68,16 @@ public class FlightDirector {
   private static int    vmode = VM_CLB;              // vertical FMA mode (annunciator only; control uses climbing)
   private static final double ALT_HOLD_BAND = 10.0;  // |trough - target| within this -> ALT (settled hold)
   private static final double ALT_CAP_BAND  = 40.0;  // ...within this -> ALT* (capturing); beyond -> CLB / DESC
-  private static int    extLeft = 0;                 // remaining extra dive-hold ticks this cycle
   private static double cycMinY = Double.MAX_VALUE;  // running trough of the current cycle
   private static double lastTroughY = -1.0e9;        // last sampled trough (for the terrain bypass)
+
+  // Porpoise period measured live (ticks between pull-ups), exposed to the range/endurance speed mean so
+  // its phase-balanced average truncates to whole *current* cycles (≈245 climbing, ≈325 holding) instead of
+  // a fixed guess. Only normal cycles update it; a big descent's single long dive-to-target falls outside
+  // the band and is ignored, leaving the last cruise/climb period in place.
+  private static int    cycleTicks     = 0;          // ticks since the last pull-up
+  private static int    measuredPeriod = 320;        // seeded near the hold cruise period until measured
+  private static final int PERIOD_MIN = 160, PERIOD_MAX = 420;
 
   // AGL gating for the CLIMB regime (low-altitude terrain safety). When holding altitude the trough is
   // kept safe by ABS_FLOOR instead, because the deep hold dive would otherwise trip the AGL floor near
@@ -79,9 +87,10 @@ public class FlightDirector {
 
   private static final int MAGENTA = 0xFFFF00FF;
   private static final int RED     = 0xFFFF3030;
+  private static final int GREEN   = 0xFF44FF44;   // current-altitude readout (matches the nav HUD green)
 
   // --- state machine ---
-  private static final int HOLD = 0, DIVE_EXT = 1, TOP = 2, SWEEP = 3;
+  private static final int HOLD = 0, TOP = 1, SWEEP = 2;
   private static int phase = HOLD;
   private static float commandedPitch = C_DIVE;
   private static float commandedPitchOld = C_DIVE;   // value at the previous tick, for per-frame interpolation
@@ -124,11 +133,12 @@ public class FlightDirector {
       tooLow = true;
       // below arming altitude: revert to the climb profile so re-arming starts climbing back up
       climbing = true; vmode = VM_CLB; loadProfile();
-      phase = HOLD; commandedPitch = aDive; topTicks = 0; extLeft = 0; cycMinY = Double.MAX_VALUE;
+      phase = HOLD; commandedPitch = aDive; topTicks = 0; cycMinY = Double.MAX_VALUE; cycleTicks = 0;
       return;
     }
     active = true;
     tooLow = false;
+    cycleTicks++;                                          // measuring the current porpoise period
 
     double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
     double hSpeed = Math.sqrt(dx * dx + dz * dz) * 20.0;   // m/s, matches the velocity HUD
@@ -139,21 +149,22 @@ public class FlightDirector {
     switch (phase) {
       case HOLD -> {
         commandedPitch = aDive;
-        if (hSpeed >= aTrig) {
-          // trigger == bottom of the cycle: sample the trough, choose climb/hold + dive extension
-          lastTroughY = cycMinY;
+        // Live DESC: while diving down from well above the steady porpoise ceiling, show the descent the
+        // whole way down (the per-cycle trough samples at the bottom, so it would otherwise read ALT the
+        // instant we arrive). Latches until the pull-up, where decideMode reclassifies from the trough.
+        if (!climbing && y > targetAlt + DESC_LIVE) vmode = VM_DESC;
+        // Pull-up trigger. Climbing toward the target: pull up at the climb profile's speed (max climb rate).
+        // Holding or descending to it: keep diving until we reach the target altitude, then pull up — so a
+        // descent from any height bottoms out right at the target in a single dive, no nibbling down.
+        boolean pull = climbing ? (hSpeed >= aTrig) : (y <= targetAlt + DESC_MARGIN);
+        if (pull) {
+          if (cycleTicks >= PERIOD_MIN && cycleTicks <= PERIOD_MAX) measuredPeriod = cycleTicks;
+          cycleTicks = 0;                      // start timing the next cycle
+          lastTroughY = cycMinY;               // bottom of the cycle: sample trough, choose climb vs hold
           decideMode(lastTroughY);
           cycMinY = Double.MAX_VALUE;
-          if (extLeft > 0) {
-            phase = DIVE_EXT;                  // keep diving to shed height above target
-          } else {
-            phase = TOP; topTicks = 0; commandedPitch = aUp;
-          }
+          phase = TOP; topTicks = 0; commandedPitch = aUp;
         }
-      }
-      case DIVE_EXT -> {
-        commandedPitch = aDive;                // hold the nose down for the extra ticks
-        if (--extLeft <= 0) { phase = TOP; topTicks = 0; commandedPitch = aUp; }
       }
       case TOP -> {
         commandedPitch = aUp;
@@ -166,13 +177,12 @@ public class FlightDirector {
     }
   }
 
-  /** From the sampled trough: climb if below target, else hold and extend the dive proportional to the
-   *  height above target. Loads the active profile and sets the extra dive-hold ticks for this cycle. */
+  /** From the sampled trough: climb if below target (climb profile), otherwise hold/descend (the dive runs
+   *  down to the target before pulling up). Also sets the vertical FMA mode for the annunciator. */
   private static void decideMode(double troughY) {
     double err = troughY - targetAlt;          // >0 means above target
     climbing = err < 0;
     loadProfile();
-    extLeft = climbing ? 0 : (int) Math.min(MAX_EXT, Math.round(K_ALT * err));
     double ae = Math.abs(err);                 // vertical FMA mode for the annunciator
     if      (ae <= ALT_HOLD_BAND) vmode = VM_ALT;        // settled at target
     else if (ae <= ALT_CAP_BAND)  vmode = VM_ALT_STAR;   // nearing -> capture
@@ -186,9 +196,9 @@ public class FlightDirector {
 
   private static void reset() {
     active = false; tooLow = false;
-    climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE; extLeft = 0;
+    climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
     loadProfile();
-    phase = HOLD; commandedPitch = C_DIVE; topTicks = 0;
+    phase = HOLD; commandedPitch = C_DIVE; topTicks = 0; cycleTicks = 0;
   }
 
   public static boolean isTooLow() { return tooLow; }
@@ -226,6 +236,11 @@ public class FlightDirector {
       return;
     }
     if (!active && !landing) return;
+
+    // current altitude (player Y), green, just the number — lined up with the crosshair and placed past the
+    // heading bar's full travel (cx ± maxOff) so it never sits under the moving vertical bar.
+    String altS = Integer.toString((int) Math.round(p.getY()));
+    g.text(mc.font, altS, cx + maxOff + 8, cy - mc.font.lineHeight / 2, GREEN, true);
 
     // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
     // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is the

@@ -44,11 +44,11 @@ public class RangeEndurance {
 
     private static final int AMBER = 0xFFFFC400;       // matches the radio altimeter
 
-    // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding
-    // one cycle is approx 14.2s (284 ticks)
-    private static final int CYCLE        = 284;        // porpoise period (ticks) — keep in step with the flight director
-    private static final int SPEED_WINDOW = 4 * CYCLE;  // 4 cycles, ~56.8s
-    private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
+    // rolling average of actual horizontal flight speed (m/s), sampled each tick while gliding. The mean is
+    // taken over a whole number of porpoise cycles so the fast (dive) and slow (climb) halves cancel; the
+    // cycle length is read live from the flight director (FlightDirector.periodTicks()), which differs by
+    // mode (~245 ticks climbing, ~325 holding) and is re-measured every cycle, rather than a fixed guess.
+    private static final int SPEED_WINDOW = 1400;       // ring buffer: >= 4 of the longest (hold) cycle, ~70 s
     // Initial cruise speed (m/s) used by BOTH range and ETA until a real mean exists now comes from the
     // flight model itself: FlightDirector.expectedGroundSpeed() returns the active mode's optimized ground
     // speed (~21.9 climbing, ~30.1 hold), so the readouts open on the right figure and the live mean only
@@ -158,10 +158,14 @@ public class RangeEndurance {
 
     private static double cruiseSpeed() {
         if (speedCount <= 0) return 0;
-        // Average over a whole number of porpoise cycles only: the dive (fast) and climb (slow) halves
-        // then cancel exactly. A partial cycle biases the mean toward whichever half it ends on, which
-        // is what makes the figure ripple at the porpoise frequency while the buffer is still filling.
-        int n = speedCount >= CYCLE ? (speedCount / CYCLE) * CYCLE : speedCount;
+        // Average over a whole number of porpoise cycles only, so the dive (fast) and climb (slow) halves
+        // cancel exactly; a partial cycle would bias the mean toward whichever half it ends on and make the
+        // figure ripple at the porpoise frequency. The cycle length is the flight director's live measured
+        // period, so the truncation tracks the current mode (climb vs hold) instead of a fixed guess.
+        int period = Math.max(1, FlightDirector.periodTicks());
+        int avail  = Math.min(speedCount, SPEED_WINDOW);
+        int n = (Math.min(4 * period, avail) / period) * period;   // up to ~4 whole cycles
+        if (n <= 0) n = avail;                                      // not even one full cycle yet: use what we have
         double sum = 0;
         for (int k = 1; k <= n; k++) {
             int i = ((speedIdx - k) % SPEED_WINDOW + SPEED_WINDOW) % SPEED_WINDOW;
@@ -178,7 +182,7 @@ public class RangeEndurance {
      * sitting blank.
      */
     public static double speedEstimate() { return speedReady() ? cruiseSpeed() : FlightDirector.expectedGroundSpeed(); }
-    public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
+    public static boolean speedReady() { return speedCount >= FlightDirector.periodTicks(); }
 
     /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */
     public static double rangeMeters() { return show ? rangeShown : -1.0; }
