@@ -13,8 +13,9 @@ package ai.rrw.kine.autoflight;
  * and hands control back rather than bank into the ground forever.
  */
 public final class TurnController {
-    static final int REPLAN_EVERY = 10, TURN_COMMIT = 30, STUCK_MAX = 40;
+    static final int REPLAN_EVERY = 10, TURN_COMMIT = 30, STUCK_MAX = 60;
     static final double MIN_MANEUVER_AGL = 25.0;   // if turning/banking this low, hand off (sinking out)
+    static final double TURN_DONE_TOL = 15.0;      // emergency turn-around finished within this many deg
 
     private int t = 0;
     private int committedUntil = -1;
@@ -40,19 +41,20 @@ public final class TurnController {
             return FlightModel3D.velYaw(live.vx, live.vz);
         }
 
-        // Emergency hard bank in progress: hold the captured escape heading until the course we are
-        // actually flying is no longer about to hit the obstacle.
+        // Emergency hard bank in progress: hold the captured reversed heading and keep arcing until the
+        // turn-around is actually complete (heading reached). Exiting the instant the immediate collision
+        // clears would only jink a few degrees -- this commits to the full ~180.
         if (emergency) {
             double course = FlightModel3D.velYaw(live.vx, live.vz);
-            if (TurnPlanner.imminentAhead(live, course, terrain)) {
-                if (++stuckTicks > STUCK_MAX) {          // banking isn't escaping -> hand off
-                    emergency = false; stuckTicks = 0; action = TurnPlanner.DISENGAGE; t++;
-                    return course;
-                }
+            if (Math.abs(FlightModel3D.wrap180(escapeHeading - course)) <= TURN_DONE_TOL) {
+                emergency = false; stuckTicks = 0;       // turn-around complete -> resume normal planning
+            } else if (++stuckTicks > STUCK_MAX) {        // never came around (boxed in) -> hand off
+                emergency = false; stuckTicks = 0; action = TurnPlanner.DISENGAGE; t++;
+                return course;
+            } else {
                 action = TurnPlanner.EMERGENCY; t++;
                 return escapeHeading;
             }
-            emergency = false;                           // course clear -> fall through to normal planning
         }
 
         if (t % REPLAN_EVERY == 0 && t >= committedUntil) {
