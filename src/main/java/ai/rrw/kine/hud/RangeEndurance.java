@@ -82,13 +82,16 @@ public class RangeEndurance {
         if (p == null || mc.level == null) return;
 
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.is(Items.ELYTRA)) { smoothedAgl = Double.NaN; rangeShown = Double.NaN; return; }   // only while actually wearing an elytra
+        if (!chest.is(Items.ELYTRA)) { smoothedAgl = Double.NaN; rangeShown = Double.NaN; resetSpeed(); return; }   // only while actually wearing an elytra
 
         if (p.isFallFlying()) {
             double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
             speedBuf[speedIdx] = Math.sqrt(dx * dx + dz * dz) * 20.0;
             speedIdx = (speedIdx + 1) % SPEED_WINDOW;
             if (speedCount < SPEED_WINDOW) speedCount++;
+        } else {
+            resetSpeed();   // on the ground / not gliding: drop the last flight's samples, so the next flight
+                            // starts fresh and range/ETA fall back to the model anchor until a new mean exists
         }
 
         Acc acc = new Acc();
@@ -183,6 +186,10 @@ public class RangeEndurance {
      */
     public static double speedEstimate() { return speedReady() ? cruiseSpeed() : FlightDirector.expectedGroundSpeed(); }
     public static boolean speedReady() { return speedCount >= FlightDirector.periodTicks(); }
+
+    /** Forget the rolling speed samples so a new flight starts fresh and, until then, the estimate falls
+     *  back to the model anchor (the on-ground / between-flights state). */
+    private static void resetSpeed() { speedCount = 0; speedIdx = 0; }
 
     /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */
     public static double rangeMeters() { return show ? rangeShown : -1.0; }
