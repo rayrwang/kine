@@ -55,6 +55,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Efficiency: solver start with analytical estimate
 	- Zoomed in targeting view
 	- Ender pearl target selection & protection
+	- Finer selection options: priority, whitelist
 - Auto combat
 - Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
 - Support multiple versions & forge
