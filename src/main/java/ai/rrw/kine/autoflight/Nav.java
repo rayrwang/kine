@@ -43,6 +43,7 @@ public class Nav {
     private static final int    GREEN          = 0xFF44FF44;
     private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
     private static final int    AMBER          = 0xFFFFC400; // matches the radio altimeter; used while climbing to target
+    private static final int    ALT_LEFT_GAP   = 100;        // fixed offset left of center for the CLB/ALT block
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
     private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
@@ -242,7 +243,9 @@ public class Nav {
         String l1 = clb ? "CLB" : "ALT";
         String l2 = Integer.toString(FlightDirector.targetAltitude());
         int blockW = Math.max(mc.font.width(l1), mc.font.width(l2));
-        int rightEdge = cx - (halfCenter > 0 ? halfCenter + 12 : 12);   // just left of the nav block, or just left of center
+        // Fixed offset to the left of center so it doesn't slide as the nav block's width changes; only
+        // pushed further left (never right, into the block) if an unusually wide COORD/ETA line needs it.
+        int rightEdge = Math.min(cx - ALT_LEFT_GAP, cx - halfCenter - 12);
         int x = rightEdge - blockW;
         int col = clb ? AMBER : GREEN;
         g.text(mc.font, l1, x + (blockW - mc.font.width(l1)) / 2, lineY, col, true);
