@@ -42,7 +42,8 @@ public class Nav {
 
     private static final int    GREEN          = 0xFF44FF44;
     private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
-    private static final int    AMBER          = 0xFFFFC400; // matches the radio altimeter; used while climbing to target
+    private static final int    AMBER          = 0xFFFFC400; // CLB / DESC (climbing or descending to target)
+    private static final int    YELLOW         = 0xFFFFEE00; // ALT* (altitude capture, nearing target)
     private static final int    ALT_LEFT_GAP   = 100;        // fixed offset left of center for the CLB/ALT block
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
@@ -239,15 +240,18 @@ public class Nav {
     /** Climb/altitude-hold annunciator (CLB or ALT over the target Y), two rows to the left of the nav block. */
     private static void drawAltAnnunciator(GuiGraphicsExtractor g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
         if (!Settings.displayFlightDirectors || !FlightDirector.isActive()) return;
-        boolean clb = FlightDirector.isClimbing();
-        String l1 = clb ? "CLB" : "ALT";
+        int vm = FlightDirector.verticalMode();
+        String l1; int col;
+        if      (vm == FlightDirector.VM_CLB)      { l1 = "CLB";  col = AMBER;  }   // climbing to target
+        else if (vm == FlightDirector.VM_DESC)     { l1 = "DESC"; col = AMBER;  }   // descending to target
+        else if (vm == FlightDirector.VM_ALT_STAR) { l1 = "ALT*"; col = YELLOW; }   // capture, nearing target
+        else                                       { l1 = "ALT";  col = GREEN;  }   // holding target
         String l2 = Integer.toString(FlightDirector.targetAltitude());
         int blockW = Math.max(mc.font.width(l1), mc.font.width(l2));
         // Fixed offset to the left of center so it doesn't slide as the nav block's width changes; only
         // pushed further left (never right, into the block) if an unusually wide COORD/ETA line needs it.
         int rightEdge = Math.min(cx - ALT_LEFT_GAP, cx - halfCenter - 12);
         int x = rightEdge - blockW;
-        int col = clb ? AMBER : GREEN;
         g.text(mc.font, l1, x + (blockW - mc.font.width(l1)) / 2, lineY, col, true);
         g.text(mc.font, l2, x + (blockW - mc.font.width(l2)) / 2, etaY, col, true);
     }

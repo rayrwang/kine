@@ -23,6 +23,9 @@ public class FlightDirector {
   public static void    setTargetAltitude(int y) { targetAlt = Math.max(ALT_MIN, Math.min(ALT_MAX, y)); }
   /** Model-derived cruise ground speed (m/s) for the active mode; seeds the range/endurance estimate. */
   public static float   expectedGroundSpeed() { return climbing ? C_SPEED : L_SPEED; }
+  /** Vertical FMA mode for the annunciator. CLB/DESC = orange, ALT* (capture) = yellow, ALT (hold) = green. */
+  public static int     verticalMode() { return vmode; }
+  public static final int VM_CLB = 0, VM_ALT_STAR = 1, VM_ALT = 2, VM_DESC = 3;
 
   // --- TWO PROFILES (lag-aware optimization; both confirmed in-flight) ---
   // CLIMB: gain altitude. ~+0.9 m/s climb at ~22 m/s ground, ~68-block dive per cycle.
@@ -61,6 +64,9 @@ public class FlightDirector {
   private static double aTrig = C_TRIG;
   private static int    aHold = C_HOLD;
   private static boolean climbing = true;            // true = climbing toward target, false = holding
+  private static int    vmode = VM_CLB;              // vertical FMA mode (annunciator only; control uses climbing)
+  private static final double ALT_HOLD_BAND = 10.0;  // |trough - target| within this -> ALT (settled hold)
+  private static final double ALT_CAP_BAND  = 40.0;  // ...within this -> ALT* (capturing); beyond -> CLB / DESC
   private static int    extLeft = 0;                 // remaining extra dive-hold ticks this cycle
   private static double cycMinY = Double.MAX_VALUE;  // running trough of the current cycle
   private static double lastTroughY = -1.0e9;        // last sampled trough (for the terrain bypass)
@@ -117,7 +123,7 @@ public class FlightDirector {
       active = false;
       tooLow = true;
       // below arming altitude: revert to the climb profile so re-arming starts climbing back up
-      climbing = true; loadProfile();
+      climbing = true; vmode = VM_CLB; loadProfile();
       phase = HOLD; commandedPitch = aDive; topTicks = 0; extLeft = 0; cycMinY = Double.MAX_VALUE;
       return;
     }
@@ -167,6 +173,10 @@ public class FlightDirector {
     climbing = err < 0;
     loadProfile();
     extLeft = climbing ? 0 : (int) Math.min(MAX_EXT, Math.round(K_ALT * err));
+    double ae = Math.abs(err);                 // vertical FMA mode for the annunciator
+    if      (ae <= ALT_HOLD_BAND) vmode = VM_ALT;        // settled at target
+    else if (ae <= ALT_CAP_BAND)  vmode = VM_ALT_STAR;   // nearing -> capture
+    else                          vmode = (err < 0) ? VM_CLB : VM_DESC;
   }
 
   private static void loadProfile() {
@@ -176,7 +186,7 @@ public class FlightDirector {
 
   private static void reset() {
     active = false; tooLow = false;
-    climbing = true; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE; extLeft = 0;
+    climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE; extLeft = 0;
     loadProfile();
     phase = HOLD; commandedPitch = C_DIVE; topTicks = 0;
   }
