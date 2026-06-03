@@ -44,6 +44,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Predictions & projections, maybe display
 	- Terrain display by highlighting blocks
 	- Warnings?
+- Fix elytra durability protection to be cumulative, not single
 - Spear elytra
 - Mace fall
 - Kill aura
