@@ -39,6 +39,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Kill aura
+- Mace and spear.
 - Elytra collision avoidance, not just prevention, integrate with autopilot (including fly around, descent management)
 	- Use simulator
 	- Predictions & projections, maybe display
@@ -50,12 +52,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Efficiency: solver start with analytical estimate
 	- Zoomed in targeting view
 	- Ender pearl target selection & protection
+- Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
 - Support multiple versions & forge
-
-## Long Term
-
-- Pathfinding
-- Combat
 
 ## Technical Details*
 
