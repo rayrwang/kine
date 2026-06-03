@@ -1,9 +1,11 @@
 package ai.rrw.kine.ui;
 
 import ai.rrw.kine.autoflight.Nav;
+import ai.rrw.kine.autoflight.FlightDirector;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -16,6 +18,9 @@ public class KineNavScreen extends Screen {
     private float heading;          // compass deg (0 = N); only meaningful when hasHeading
     private boolean hasHeading;     // has the dial been set this session / previously
     private EditBox xBox, zBox;
+    private EditBox altBox;
+    private Button altMinus, altPlus;
+    private static final int ALT_STEP = 25;
     private Button selBtn, manBtn, offBtn;
     private boolean draggingDial = false;
 
@@ -30,7 +35,27 @@ public class KineNavScreen extends Screen {
 
     @Override
     protected void init() {
-        int cx = this.width / 2, top = 36;
+        int cx = this.width / 2, top = 64;
+
+        // --- altitude selector (always active), above the mode options ---
+        int abh = 20, abw = 20, ebw = 56, agap = 4;
+        int rowW = abw + agap + ebw + agap + abw;
+        int ax = cx - rowW / 2, altY = 42;
+        altMinus = Button.builder(Component.literal("-"), b -> stepAlt(-ALT_STEP)).bounds(ax, altY, abw, abh).build();
+        altBox   = new EditBox(this.font, ax + abw + agap, altY, ebw, abh, Component.literal("Target altitude"));
+        altPlus  = Button.builder(Component.literal("+"), b -> stepAlt(ALT_STEP)).bounds(ax + abw + agap + ebw + agap, altY, abw, abh).build();
+        altBox.setMaxLength(5);
+        altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));
+        altBox.setResponder(s -> applyAlt());
+        Tooltip altTip = Tooltip.create(Component.literal(
+            "Target altitude: the bottom of the porpoise. The autopilot climbs while below it, and holds altitude (max speed) while above it."));
+        altBox.setTooltip(altTip);
+        altMinus.setTooltip(altTip);
+        altPlus.setTooltip(altTip);
+        addRenderableWidget(altMinus);
+        addRenderableWidget(altBox);
+        addRenderableWidget(altPlus);
+
         int bw = 80, bh = 20, gap = 6, totalW = bw * 3 + gap * 2, bx = cx - totalW / 2;
         selBtn = Button.builder(Component.literal("Selected"), b -> setMode(Nav.Mode.SELECTED)).bounds(bx, top, bw, bh).build();
         manBtn = Button.builder(Component.literal("Managed"),  b -> setMode(Nav.Mode.MANAGED)).bounds(bx + bw + gap, top, bw, bh).build();
@@ -39,9 +64,11 @@ public class KineNavScreen extends Screen {
         addRenderableWidget(manBtn);
         addRenderableWidget(offBtn);
 
-        dialR  = Math.max(54, Math.min(90, (this.height - top - bh - 110) / 2));
+        int dialTop = top + bh + 22;                       // just below the mode buttons
+        int avail   = (this.height - 30) - dialTop;        // room down to above the Done button, less the HDG label
+        dialR  = Math.max(40, Math.min(90, (avail - 18) / 2));
         dialCx = cx;
-        dialCy = top + bh + 28 + dialR;
+        dialCy = dialTop + dialR;
 
         int fw = 92, fh = 20, fy = top + bh + 40;
         xBox = new EditBox(this.font, cx - fw - 8, fy, fw, fh, Component.literal("X"));
@@ -72,6 +99,16 @@ public class KineNavScreen extends Screen {
     private void applyManaged() {
         Integer x = parseInt(xBox.getValue()), z = parseInt(zBox.getValue());
         if (x != null && z != null) Nav.setTarget(x, z);           // only commits once both coords are valid
+    }
+
+    private void applyAlt() {
+        Integer v = parseInt(altBox.getValue());
+        if (v != null) FlightDirector.setTargetAltitude(v);        // commit on edit; ignore empty / partial "-"
+    }
+
+    private void stepAlt(int d) {
+        FlightDirector.setTargetAltitude(FlightDirector.targetAltitude() + d);
+        altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));   // reflect the clamped value
     }
 
     private void updateVisibility() {
@@ -123,6 +160,7 @@ public class KineNavScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
         super.extractRenderState(g, mouseX, mouseY, partial);
         g.centeredText(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
+        g.centeredText(this.font, Component.literal("Target altitude"), this.width / 2, 30, LABEL);
 
         if (mode == Nav.Mode.SELECTED) {
             drawDial(g);

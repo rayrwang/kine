@@ -2,6 +2,7 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.hud.RangeEndurance;
+import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -41,6 +42,7 @@ public class Nav {
 
     private static final int    GREEN          = 0xFF44FF44;
     private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
+    private static final int    AMBER          = 0xFFFFC400; // matches the radio altimeter; used while climbing to target
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
     private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
@@ -181,7 +183,6 @@ public class Nav {
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (mode == Mode.OFF) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null) return;
@@ -189,36 +190,63 @@ public class Nav {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
         int cx = W / 2, cy = H / 2;
-
-        if (mode == Mode.MANAGED && hasTarget) drawTargetColumn(g, mc, W, H);
-        if (FlightDirector.isTooLow() && !landing) return;   // too-low warning owns this slot instead
         int maxOff = (int) (H * 0.25f);
         int lh = mc.font.lineHeight;
-        int etaY  = cy - maxOff - lh - 6;   // the slot the "too low" warning otherwise uses
-        int lineY = etaY - lh - 2;          // mode/target line, one line above
+        int etaY  = cy - maxOff - lh - 6;   // bottom annunciator row (the slot the "too low" warning uses)
+        int lineY = etaY - lh - 2;          // top annunciator row
 
-        String top = (mode == Mode.SELECTED)
-            ? (hasHeading ? "HDG " + pad3(Math.round(selectedHeading)) : "HDG ---")
-            : (hasTarget  ? "COORD " + targetX + " " + targetZ          : "COORD --");
+        if (mode == Mode.MANAGED && hasTarget) drawTargetColumn(g, mc, W, H);
+
+        // Is the centered nav block shown? (Not when nav is off, and not when the too-low warning owns the slot.)
+        boolean navCenter = mode != Mode.OFF && !(FlightDirector.isTooLow() && !landing);
+
+        String top = null, line2 = null;
+        double dist = 0;
+        if (navCenter) {
+            top = (mode == Mode.SELECTED)
+                ? (hasHeading ? "HDG " + pad3(Math.round(selectedHeading)) : "HDG ---")
+                : (hasTarget  ? "COORD " + targetX + " " + targetZ          : "COORD --");
+            if (mode == Mode.MANAGED && hasTarget) {
+                double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
+                dist = Math.sqrt(hdx * hdx + hdz * hdz);
+                line2 = landing
+                    ? "LANDING"
+                    : "DIST " + fmtDist(dist) + "    ETA " + fmtEta(smoothEta(dist / RangeEndurance.speedEstimate()));
+            }
+        }
+        int halfCenter = (top == null) ? 0
+            : Math.max(mc.font.width(top), line2 == null ? 0 : mc.font.width(line2)) / 2;
+
+        // altitude-hold annunciator: two rows to the LEFT of the nav block, shown whenever the director flies
+        drawAltAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
+
+        if (!navCenter) return;
+
         g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
-
-        if (mode != Mode.MANAGED || !hasTarget) return;   // no destination yet — no distance/ETA/range
-
-        double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
-        double dist = Math.sqrt(hdx * hdx + hdz * hdz);
-
-        String line2 = landing
-            ? "LANDING"
-            : "DIST " + fmtDist(dist) + "    ETA " + fmtEta(smoothEta(dist / RangeEndurance.speedEstimate()));
+        if (line2 == null) return;   // SELECTED, or no destination yet — no distance/ETA/range
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
         // If the elytra can't take us that far, flag it to the right of the two readout lines.
         double range = RangeEndurance.rangeMeters();
         if (!landing && range >= 0 && range < dist) {
-            int wx = cx + Math.max(mc.font.width(top), mc.font.width(line2)) / 2 + 12;
+            int wx = cx + halfCenter + 12;
             g.text(mc.font, "INSUFFICIENT", wx, lineY, RED, true);
             g.text(mc.font, "DURABILITY",   wx, etaY,  RED, true);
         }
+    }
+
+    /** Climb/altitude-hold annunciator (CLB or ALT over the target Y), two rows to the left of the nav block. */
+    private static void drawAltAnnunciator(GuiGraphicsExtractor g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
+        if (!Settings.displayFlightDirectors || !FlightDirector.isActive()) return;
+        boolean clb = FlightDirector.isClimbing();
+        String l1 = clb ? "CLB" : "ALT";
+        String l2 = Integer.toString(FlightDirector.targetAltitude());
+        int blockW = Math.max(mc.font.width(l1), mc.font.width(l2));
+        int rightEdge = cx - (halfCenter > 0 ? halfCenter + 12 : 12);   // just left of the nav block, or just left of center
+        int x = rightEdge - blockW;
+        int col = clb ? AMBER : GREEN;
+        g.text(mc.font, l1, x + (blockW - mc.font.width(l1)) / 2, lineY, col, true);
+        g.text(mc.font, l2, x + (blockW - mc.font.width(l2)) / 2, etaY, col, true);
     }
 
     // --- helpers ---
