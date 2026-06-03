@@ -17,8 +17,6 @@ public class FlightDirector {
 
   public static boolean isActive()       { return active; }
   public static float   commandedPitch() { return commandedPitch; }
-  /** True while climbing toward the target (below it); false while holding altitude (at/above it). */
-  public static boolean isClimbing()     { return climbing; }
   public static int     targetAltitude() { return targetAlt; }
   public static void    setTargetAltitude(int y) { targetAlt = Math.max(ALT_MIN, Math.min(ALT_MAX, y)); }
   /** Model-derived cruise ground speed (m/s) for the active mode; seeds the range/endurance estimate. */
@@ -36,16 +34,16 @@ public class FlightDirector {
   private static final int    C_HOLD  = 11;
   private static final float  C_SWEEP = 18f / 20f;   // 0.9 deg/tick
   private static final float  C_SPEED = 21.9f;       // model ground speed (m/s)
-  // HOLD: hold altitude at max speed. ~30.0 m/s raw, drifts UP slightly (+1.8 m/min) so the correction is
-  // done by the dive-extension (fast) instead of climb-catches (slow) -> ~30.1 m/s closed-loop AVERAGE,
-  // higher than a faster-on-paper descending profile that has to buy height back at climb speed (~10% of
-  // the time). Keeps the porpoise bottom at/above target. ~126-block dive per cycle.
+  // HOLD: hold altitude at max speed (~30.1 m/s closed-loop average, ~106-block amplitude, ~325-tick cycle).
+  // Unlike CLIMB this profile is NOT speed-triggered: the pull-up fires on ALTITUDE (dive until target +
+  // DESC_MARGIN), which pins the porpoise bottom to the target and makes a descent from any height bottom
+  // out at the target in a single dive. So it carries no trigger of its own — only the dive/up/hold/sweep
+  // shape matters here.
   private static final float  L_DIVE  = 38f;
   private static final float  L_UP    = -66f;        // over-commanded: ~-56 actual
-  private static final double L_TRIG  = 52.0;
   private static final int    L_HOLD  = 13;
   private static final float  L_SWEEP = 24f / 20f;   // 1.2 deg/tick
-  private static final float  L_SPEED = 30.1f;       // closed-loop hold average (held by dive-extension, ~0 climb-catches)
+  private static final float  L_SPEED = 30.1f;       // closed-loop hold cruise average (m/s)
 
   // --- altitude hold (closed-loop on the dive trough = "bottom of the porpoise") ---
   // The trough is sampled once per cycle at the pull-up. Below the target we climb (climb profile); at or
@@ -183,15 +181,18 @@ public class FlightDirector {
     double err = troughY - targetAlt;          // >0 means above target
     climbing = err < 0;
     loadProfile();
-    double ae = Math.abs(err);                 // vertical FMA mode for the annunciator
+    // FMA band on the trough. In steady flight the hold pins the trough just above target (err ~ +3), so the
+    // high side here is only reached on the transient right after engaging above target, where the first
+    // cycle is still speed-triggered: normally ALT* means climb-capture and DESC comes from the live check.
+    double ae = Math.abs(err);
     if      (ae <= ALT_HOLD_BAND) vmode = VM_ALT;        // settled at target
-    else if (ae <= ALT_CAP_BAND)  vmode = VM_ALT_STAR;   // nearing -> capture
+    else if (ae <= ALT_CAP_BAND)  vmode = VM_ALT_STAR;   // capturing (climb side, or first cycle from above)
     else                          vmode = (err < 0) ? VM_CLB : VM_DESC;
   }
 
   private static void loadProfile() {
     if (climbing) { aDive = C_DIVE; aUp = C_UP; aTrig = C_TRIG; aHold = C_HOLD; aSweep = C_SWEEP; }
-    else          { aDive = L_DIVE; aUp = L_UP; aTrig = L_TRIG; aHold = L_HOLD; aSweep = L_SWEEP; }
+    else          { aDive = L_DIVE; aUp = L_UP; aHold = L_HOLD; aSweep = L_SWEEP; }   // hold: pull-up is altitude-triggered, no aTrig
   }
 
   private static void reset() {
