@@ -4,6 +4,7 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.autoflight.ElytraGuard;
+import ai.rrw.kine.autoflight.FlightDirector;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -48,7 +49,10 @@ public class RangeEndurance {
     private static final int CYCLE        = 284;        // porpoise period (ticks) — keep in step with the flight director
     private static final int SPEED_WINDOW = 4 * CYCLE;  // 4 cycles, ~56.8s
     private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
-    private static final double CRUISE_ANCHOR = 23.0;   // nominal cruise speed (m/s) used by BOTH range and ETA until a real mean exists
+    // Initial cruise speed (m/s) used by BOTH range and ETA until a real mean exists now comes from the
+    // flight model itself: FlightDirector.expectedGroundSpeed() returns the active mode's optimized ground
+    // speed (~21.9 climbing, ~30.2 level), so the readouts open on the right figure and the live mean only
+    // has to refine it rather than walk in from a generic guess.
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
 
@@ -173,7 +177,7 @@ public class RangeEndurance {
      * nominal anchor before that, so both readouts work from the first second instead of one of them
      * sitting blank.
      */
-    public static double speedEstimate() { return speedReady() ? cruiseSpeed() : CRUISE_ANCHOR; }
+    public static double speedEstimate() { return speedReady() ? cruiseSpeed() : FlightDirector.expectedGroundSpeed(); }
     public static boolean speedReady() { return speedCount >= MIN_SAMPLES; }
 
     /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */

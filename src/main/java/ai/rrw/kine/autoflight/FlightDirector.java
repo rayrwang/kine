@@ -15,23 +15,48 @@ import net.minecraft.util.Mth;
 
 public class FlightDirector {
 
-  public static boolean isActive()      { return active; }
+  public static boolean isActive()       { return active; }
   public static float   commandedPitch() { return commandedPitch; }
+  public static boolean isLevelMode()    { return levelMode; }
+  /** Model-derived cruise ground speed (m/s) for the active mode; seeds the range/endurance estimate. */
+  public static float   expectedGroundSpeed() { return levelMode ? L_SPEED : C_SPEED; }
 
-  // --- commanded technique (hand-tuned and confirmed in-flight to hold/gain altitude) ---
-  // An offline sweep suggested "faster" profiles, but they lose altitude in practice once the real
-  // pitch-tracking lag is included, so we stick with the profile that actually works.
-  private static final float  DIVE       = 34f;        // nose-down hold angle (xRot +)
-  private static final float  UP         = -48f;       // nose-up snap angle (xRot -)
-  private static final double TRIGGER    = 44.0;       // snap up once horiz speed (m/s) reaches this
-  private static final int    TOP_HOLD   = 12;         // ticks to hold the snap (~0.6 s)
-  private static final float  SWEEP_RATE = 13f / 20f;  // deg per tick easing back down
+  // --- TWO PROFILES (lag-aware optimization; both confirmed in-flight) ---
+  // CLIMB: gain altitude. ~+0.9 m/s climb at ~22 m/s ground, ~68-block dive per cycle.
+  private static final float  C_DIVE  = 40f;
+  private static final float  C_UP    = -62f;        // over-commanded: the pitch lag means ~-52 actual
+  private static final double C_TRIG  = 44.0;
+  private static final int    C_HOLD  = 11;
+  private static final float  C_SWEEP = 18f / 20f;   // 0.9 deg/tick
+  private static final float  C_SPEED = 21.9f;       // model ground speed (m/s)
+  // LEVEL: hold altitude at max speed. ~30.2 m/s ground, ~flat (-1.8 m/min), ~126-block dive per cycle.
+  private static final float  L_DIVE  = 38f;
+  private static final float  L_UP    = -73f;        // over-commanded: ~-59 actual
+  private static final double L_TRIG  = 52.0;
+  private static final int    L_HOLD  = 12;
+  private static final float  L_SWEEP = 28f / 20f;   // 1.4 deg/tick
+  private static final float  L_SPEED = 30.2f;
 
-  // Altitude gating with hysteresis: need ENGAGE_AGL clear blocks below to ARM (room for a full dive
-  // plus margin), but once armed we stay armed until dropping below FLOOR_AGL. Without the gap, the
-  // dive — which is meant to eat altitude — would drop us under the arm threshold and disengage us
-  // mid-maneuver. The dive budget (ENGAGE - FLOOR) comfortably exceeds the profile's real dive depth.
-  private static final int ENGAGE_AGL = 120;
+  // --- altitude-based mode switch (absolute Y, sampled once per cycle at the dive trough) ---
+  // Highest terrain is 384, so keeping the porpoise bottom above ~400 clears all terrain everywhere:
+  // cruise level for speed. Below that, climb. Sampling the trough once per cycle (not continuously)
+  // plus hysteresis stops the mode flipping as Y swings ~100 blocks within each cycle.
+  private static final double ENTER_LEVEL = 415.0;   // trough rises to here -> switch to level
+  private static final double EXIT_LEVEL  = 398.0;   // trough sinks to here -> back to climb
+  private static final double ABS_FLOOR   = 390.0;   // trough above this is terrain-cleared: skip the AGL floor
+
+  // active profile values (selected by the mode); the state machine reads these
+  private static float  aDive = C_DIVE, aUp = C_UP, aSweep = C_SWEEP;
+  private static double aTrig = C_TRIG;
+  private static int    aHold = C_HOLD;
+  private static boolean levelMode = false;
+  private static double cycMinY = Double.MAX_VALUE;  // running trough of the current cycle
+  private static double lastTroughY = -1.0e9;        // last sampled trough (mode decision + terrain bypass)
+
+  // AGL gating for the CLIMB regime (low-altitude terrain safety). The level regime is kept safe by
+  // ABS_FLOOR instead, because its deep dive would otherwise trip the AGL floor near tall terrain.
+  // Need ENGAGE_AGL clear blocks below to ARM; once armed, stay armed until below FLOOR_AGL.
+  private static final int ENGAGE_AGL = 140;
   private static final int FLOOR_AGL  = 48;
 
   private static final int MAGENTA = 0xFFFF00FF;
@@ -40,8 +65,8 @@ public class FlightDirector {
   // --- state machine ---
   private static final int HOLD = 0, TOP = 1, SWEEP = 2;
   private static int phase = HOLD;
-  private static float commandedPitch = DIVE;
-  private static float commandedPitchOld = DIVE;   // value at the previous tick, for per-frame interpolation
+  private static float commandedPitch = C_DIVE;
+  private static float commandedPitchOld = C_DIVE;   // value at the previous tick, for per-frame interpolation
   private static int topTicks = 0;
   // The heading director compares desiredYaw against the player heading on the same per-tick time base.
   // (Mixing it with the per-frame-interpolated view yaw used to sawtooth at tick frequency, worst during a
@@ -71,11 +96,15 @@ public class FlightDirector {
     }
 
     int clear = clearBelow(mc, p);
-    // arm needs ENGAGE_AGL; once armed, stay armed until below FLOOR_AGL
-    if (active ? clear < FLOOR_AGL : clear < ENGAGE_AGL) {
+    boolean absSafe = lastTroughY >= ABS_FLOOR;
+    // arm needs ENGAGE_AGL clear below; once armed, stay armed while either the AGL floor holds OR the
+    // trough is high enough that terrain is moot. (absSafe lets the deep level dive keep flying over tall
+    // terrain, where AGL at the bottom is small even though absolute altitude is safe.)
+    boolean room = active ? (absSafe || clear >= FLOOR_AGL) : (clear >= ENGAGE_AGL);
+    if (!room) {
       active = false;
-      tooLow = true;                 // gliding but can't (or no longer can) operate safely
-      phase = HOLD; commandedPitch = DIVE; topTicks = 0;
+      tooLow = true;
+      phase = HOLD; commandedPitch = aDive; topTicks = 0; cycMinY = Double.MAX_VALUE;
       return;
     }
     active = true;
@@ -84,25 +113,44 @@ public class FlightDirector {
     double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
     double hSpeed = Math.sqrt(dx * dx + dz * dz) * 20.0;   // m/s, matches the velocity HUD
 
+    double y = p.getY();
+    if (y < cycMinY) cycMinY = y;                          // track the bottom of this cycle
+
     switch (phase) {
       case HOLD -> {
-        commandedPitch = DIVE;
-        if (hSpeed >= TRIGGER) { phase = TOP; topTicks = 0; commandedPitch = UP; }
+        commandedPitch = aDive;
+        if (hSpeed >= aTrig) {
+          // trigger == bottom of the cycle: sample the trough, choose the mode for the next cycle
+          lastTroughY = cycMinY;
+          updateMode(lastTroughY);
+          cycMinY = Double.MAX_VALUE;
+          phase = TOP; topTicks = 0; commandedPitch = aUp;
+        }
       }
       case TOP -> {
-        commandedPitch = UP;
-        if (++topTicks >= TOP_HOLD) phase = SWEEP;
+        commandedPitch = aUp;
+        if (++topTicks >= aHold) phase = SWEEP;
       }
       case SWEEP -> {
-        commandedPitch += SWEEP_RATE;
-        if (commandedPitch >= DIVE) { commandedPitch = DIVE; phase = HOLD; }
+        commandedPitch += aSweep;
+        if (commandedPitch >= aDive) { commandedPitch = aDive; phase = HOLD; }
       }
     }
   }
 
+  /** Pick climb/level from the sampled trough (hysteresis), then load that profile's constants. */
+  private static void updateMode(double troughY) {
+    if (!levelMode && troughY >= ENTER_LEVEL)      levelMode = true;
+    else if (levelMode && troughY <= EXIT_LEVEL)   levelMode = false;
+    if (levelMode) { aDive = L_DIVE; aUp = L_UP; aTrig = L_TRIG; aHold = L_HOLD; aSweep = L_SWEEP; }
+    else           { aDive = C_DIVE; aUp = C_UP; aTrig = C_TRIG; aHold = C_HOLD; aSweep = C_SWEEP; }
+  }
+
   private static void reset() {
     active = false; tooLow = false;
-    phase = HOLD; commandedPitch = DIVE; topTicks = 0;
+    levelMode = false; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
+    aDive = C_DIVE; aUp = C_UP; aTrig = C_TRIG; aHold = C_HOLD; aSweep = C_SWEEP;
+    phase = HOLD; commandedPitch = C_DIVE; topTicks = 0;
   }
 
   public static boolean isTooLow() { return tooLow; }
