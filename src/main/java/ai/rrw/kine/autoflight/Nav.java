@@ -209,7 +209,7 @@ public class Nav {
 
         String line2 = landing
             ? "LANDING"
-            : "DIST " + fmtDist(dist) + "    ETA " + KineTime.format(roundUpSig2(smoothEta(dist / RangeEndurance.speedEstimate())));
+            : "DIST " + fmtDist(dist) + "    ETA " + fmtEta(smoothEta(dist / RangeEndurance.speedEstimate()));
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
         // If the elytra can't take us that far, flag it to the right of the two readout lines.
@@ -265,6 +265,20 @@ public class Nav {
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
     private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
     private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
+
+    /**
+     * Format an ETA: round UP to 2 significant figures, then UP to the finest unit the readout will
+     * actually print — whole seconds under an hour, whole minutes at or above one (where KineTime drops
+     * the seconds field). Without that second step the h:m display floors the leftover seconds and quietly
+     * eats the conservative round-up (e.g. 3661 s rounded to 3700 prints "1h 01m" = 3660 s < true). This
+     * way the printed string is always ≥ the true ETA, and never finer than the precision actually kept.
+     */
+    private static String fmtEta(double seconds) {
+        if (!Double.isFinite(seconds) || seconds <= 0) return KineTime.format(seconds);
+        double r = roundUpSig2(seconds);
+        double unit = (r < 3600) ? 1.0 : 60.0;                 // finest unit KineTime will show at this magnitude
+        return KineTime.format(Math.ceil(r / unit - 1e-9) * unit);
+    }
 
     /** Round a duration (s) UP to 2 significant figures, so the displayed ETA never reads shorter than it is. */
     private static double roundUpSig2(double v) {
