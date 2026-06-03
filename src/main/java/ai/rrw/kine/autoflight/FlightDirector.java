@@ -145,9 +145,10 @@ public class FlightDirector {
     // legacy AGL window arms/holds the autopilot. Either way, infeasible -> tooLow -> same trip path.
     boolean room;
     if (Settings.terrainAvoidance) {
-      double f = TerrainGuard.evaluate(mc, p, targetAlt);   // targetAlt is the cruise floor (ladder base)
-      room = !Double.isNaN(f);
-      if (room) floorAlt = (int) Math.round(f);             // fly to the chosen floor
+      // Turn planner is the primary terrain authority: never disengage for terrain. Climb to the
+      // cruise floor and let the lateral planner (TurnGuard, end of tick) dodge / back off instead.
+      floorAlt = targetAlt;
+      room = true;
     } else {
       floorAlt = targetAlt;                                 // no avoidance: the law flies the user's target
       int clear = clearBelow(mc, p);
@@ -163,6 +164,7 @@ public class FlightDirector {
       // below arming altitude / no feasible floor: revert to the climb profile so re-arming climbs back up
       climbing = true; vmode = VM_CLB; loadProfile();
       phase = HOLD; commandedPitch = aDive; topTicks = 0; cycMinY = Double.MAX_VALUE; cycleTicks = 0;
+      TurnGuard.reset();
       return;
     }
     active = true;
@@ -204,6 +206,13 @@ public class FlightDirector {
         if (commandedPitch >= aDive) { commandedPitch = aDive; phase = HOLD; }
       }
     }
+    // lateral terrain avoidance: choose this tick's steer heading (toward the Nav target or the
+    // current course) while dodging terrain. The Autopilot yaw channel consumes TurnGuard's heading.
+    // If it cannot find any way around a tall obstacle, hand control back rather than fly straight in.
+    if (Settings.terrainAvoidance && Autopilot.isEngaged()) {
+      TurnGuard.evaluate(mc, p, targetAlt);
+      if (TurnGuard.handOff()) Autopilot.disengage();
+    } else TurnGuard.reset();
   }
 
   /** From the sampled trough: climb if below target (climb profile), otherwise hold/descend (the dive runs
@@ -228,6 +237,7 @@ public class FlightDirector {
 
   private static void reset() {
     active = false; tooLow = false;
+    TurnGuard.reset();
     climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
     floorAlt = targetAlt;
     loadProfile();

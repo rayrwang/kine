@@ -101,8 +101,16 @@ public class Autopilot {
         float cap    = MAX_DPS * dt;
         cmdPitch += Math.max(-cap, Math.min(cap, step));
 
-        // yaw: a nav mode steers toward its heading/bearing; otherwise manual A/D
-        if (Nav.steering()) {
+        // yaw: terrain avoidance steers (faithful look placement) > nav mode > manual A/D
+        if (ai.rrw.kine.Settings.terrainAvoidance && TurnGuard.steering()) {
+            // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
+            // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
+            double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
+            float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
+            float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
+            float dmax = (float) FlightModel3D.DELTA_MAX;
+            cmdYaw = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+        } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
             float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
