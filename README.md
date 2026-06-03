@@ -45,6 +45,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Terrain display by highlighting blocks
 	- Warnings?
 - Fix elytra durability protection to be cumulative, not single
+- Fix ETA estimate not resetting on landing when above anchor.
 - Spear elytra
 - Mace fall
 - Kill aura
