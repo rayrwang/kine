@@ -20,8 +20,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
+	- Terrain aware autopilot with fully optimized flight profiles.
 	- Press N to enter a destination, with auto landing.
-	- Including flight director bars and flight path vector.
+	- Visializations: flight director bars, path guiderails, and flight path vector.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
 - **Water bucket clutch automatically.**
@@ -39,10 +40,15 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Elytra collision avoidance, not just prevention, integrate with autopilot (including fly around obstacles, descent management)
-	- Use simulator
-	- Predictions & projections, maybe display
-	- Terrain display by highlighting blocks
+- Change autopilot disengage kick grace period to 1s
+- Change P autopilot keybind (conflict)
+- Elytra autopilot:
+	- Cool side view of path with terrain
+	- Per block pathing instead of heightmap highest block
+	- Fly climbing pattern if boxed in
+	- Adjust lookahead distance
+	- Descent gradually before reaching destination
+	- Fly landing instead of disengaging on unable to escape terrain?
 	- Warnings?
 - Fix:
 	- Elytra durability protection should be cumulative, not single
