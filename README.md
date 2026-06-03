@@ -21,6 +21,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
 	- Press N to enter a destination.
+	- Including flight director bars and flight path vector.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
 - **Water bucket clutch automatically.**

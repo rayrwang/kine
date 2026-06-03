@@ -73,6 +73,10 @@ public class KineSettingsScreen extends Screen {
         + "energy-pumping technique: dive to build speed, snap the nose up, then ease it back down. "
         + "They appear only with enough clear air below to complete a dive. Guidance only \u2014 it "
         + "never moves you.";
+    private static final String DESC_FPV =
+        "The winged ring marks where your velocity is actually taking you, not where you're looking: "
+        + "below the centre means descending, off to one side means drifting that way. Put it on the "
+        + "spot you want to reach. Shows while flying or in a real fall. Instrument only.";
     private static final String DESC_ELYTRA =
         "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
         + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
@@ -137,6 +141,7 @@ public class KineSettingsScreen extends Screen {
         }),
         new Section("Flight & safety", new Opt[]{
             Opt.of("Display flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
+            Opt.of("Flight path vector", DESC_FPV, () -> Settings.displayFlightPathVector, v -> Settings.displayFlightPathVector = v),
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
