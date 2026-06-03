@@ -25,6 +25,7 @@ public class Settings {
     public static boolean afkDamageProtection    = true;
     public static boolean waterBucketClutch      = true;
     public static boolean displayFlightPathVector= false;
+    public static boolean terrainAvoidance       = false;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
@@ -34,7 +35,8 @@ public class Settings {
                 elytraDuraFailsafe = true, crashProtection = true, fallPrevention = true,
                 displayMobHealths = true, displayMobNames = false, projectileReticle = true,
                 projectileGlow = true, autoAim = false, projectileDodge = false, displayRangeEndurance = true,
-                afkDamageProtection = true, waterBucketClutch = true, displayFlightPathVector = false;
+                afkDamageProtection = true, waterBucketClutch = true, displayFlightPathVector = false,
+                terrainAvoidance = false;
     }
 
     public static void load() {
@@ -71,6 +73,7 @@ public class Settings {
         afkDamageProtection = d.afkDamageProtection;
         waterBucketClutch = d.waterBucketClutch;
         displayFlightPathVector = d.displayFlightPathVector;
+        terrainAvoidance = d.terrainAvoidance;
     }
 
     public static void save() {
@@ -91,6 +94,7 @@ public class Settings {
         d.afkDamageProtection = afkDamageProtection;
         d.waterBucketClutch = waterBucketClutch;
         d.displayFlightPathVector = displayFlightPathVector;
+        d.terrainAvoidance = terrainAvoidance;
         try {
             Files.writeString(FILE, GSON.toJson(d));
         } catch (IOException e) {

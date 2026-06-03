@@ -25,6 +25,11 @@ public class FlightDirector {
   /** Vertical FMA mode for the annunciator. CLB/DESC = orange, ALT* (capture) = yellow, ALT (hold) = green. */
   public static int     verticalMode() { return vmode; }
   public static final int VM_CLB = 0, VM_ALT_STAR = 1, VM_ALT = 2, VM_DESC = 3;
+  // Live law state, exposed so the terrain-avoidance predictor seeds a rollout that continues the
+  // actual porpoise cycle (HOLD/TOP/SWEEP == FlightModel.PH_HOLD/PH_TOP/PH_SWEEP == 0/1/2).
+  public static int     phaseState()    { return phase; }
+  public static int     topTicksState() { return topTicks; }
+  public static boolean climbingState() { return climbing; }
 
   // --- TWO PROFILES (lag-aware optimization; both confirmed in-flight) ---
   // CLIMB: gain altitude. ~+0.9 m/s climb at ~22 m/s ground, ~68-block dive per cycle.
@@ -52,6 +57,10 @@ public class FlightDirector {
   // target in a single dive. DESC_MARGIN is how far above target the pull-up begins (the nose-down coast
   // through the pull-up carries the true trough ~3 blocks lower, parking it just above target).
   private static int          targetAlt    = 400;     // selectable in the nav menu; the bottom we hold
+  // The altitude the law actually flies to. Without terrain avoidance it tracks targetAlt; with it on,
+  // the planner raises it to the lowest floor that clears terrain ahead, leaving targetAlt as the cruise
+  // floor the aircraft resumes to. Split so the planner can command a floor without losing the user's pick.
+  private static int          floorAlt     = targetAlt;
   private static final int    ALT_MIN      = -60;
   private static final int    ALT_MAX      = 2000;
   private static final int    DESC_MARGIN  = 6;       // hold/descend: begin the pull-up this many blocks above target
@@ -120,16 +129,27 @@ public class FlightDirector {
       return;
     }
 
-    int clear = clearBelow(mc, p);
-    boolean absSafe = lastTroughY >= ABS_FLOOR;
-    // arm needs ENGAGE_AGL clear below; once armed, stay armed while either the AGL floor holds OR the
-    // trough is high enough that terrain is moot. (absSafe lets the deep hold dive keep flying over tall
-    // terrain, where AGL at the bottom is small even though absolute altitude is safe.)
-    boolean room = active ? (absSafe || clear >= FLOOR_AGL) : (clear >= ENGAGE_AGL);
+    // Decide whether the situation ahead is flyable. With terrain avoidance on, the model-predictive
+    // planner picks the lowest target floor that clears terrain ahead (or hands off); otherwise the
+    // legacy AGL window arms/holds the autopilot. Either way, infeasible -> tooLow -> same trip path.
+    boolean room;
+    if (Settings.terrainAvoidance) {
+      double f = TerrainGuard.evaluate(mc, p, targetAlt);   // targetAlt is the cruise floor (ladder base)
+      room = !Double.isNaN(f);
+      if (room) floorAlt = (int) Math.round(f);             // fly to the chosen floor
+    } else {
+      floorAlt = targetAlt;                                 // no avoidance: the law flies the user's target
+      int clear = clearBelow(mc, p);
+      boolean absSafe = lastTroughY >= ABS_FLOOR;
+      // arm needs ENGAGE_AGL clear below; once armed, stay armed while either the AGL floor holds OR the
+      // trough is high enough that terrain is moot. (absSafe lets the deep hold dive keep flying over tall
+      // terrain, where AGL at the bottom is small even though absolute altitude is safe.)
+      room = active ? (absSafe || clear >= FLOOR_AGL) : (clear >= ENGAGE_AGL);
+    }
     if (!room) {
       active = false;
       tooLow = true;
-      // below arming altitude: revert to the climb profile so re-arming starts climbing back up
+      // below arming altitude / no feasible floor: revert to the climb profile so re-arming climbs back up
       climbing = true; vmode = VM_CLB; loadProfile();
       phase = HOLD; commandedPitch = aDive; topTicks = 0; cycMinY = Double.MAX_VALUE; cycleTicks = 0;
       return;
@@ -150,11 +170,11 @@ public class FlightDirector {
         // Live DESC: while diving down from well above the steady porpoise ceiling, show the descent the
         // whole way down (the per-cycle trough samples at the bottom, so it would otherwise read ALT the
         // instant we arrive). Latches until the pull-up, where decideMode reclassifies from the trough.
-        if (!climbing && y > targetAlt + DESC_LIVE) vmode = VM_DESC;
+        if (!climbing && y > floorAlt + DESC_LIVE) vmode = VM_DESC;
         // Pull-up trigger. Climbing toward the target: pull up at the climb profile's speed (max climb rate).
         // Holding or descending to it: keep diving until we reach the target altitude, then pull up — so a
         // descent from any height bottoms out right at the target in a single dive, no nibbling down.
-        boolean pull = climbing ? (hSpeed >= aTrig) : (y <= targetAlt + DESC_MARGIN);
+        boolean pull = climbing ? (hSpeed >= aTrig) : (y <= floorAlt + DESC_MARGIN);
         if (pull) {
           if (cycleTicks >= PERIOD_MIN && cycleTicks <= PERIOD_MAX) measuredPeriod = cycleTicks;
           cycleTicks = 0;                      // start timing the next cycle
@@ -178,7 +198,7 @@ public class FlightDirector {
   /** From the sampled trough: climb if below target (climb profile), otherwise hold/descend (the dive runs
    *  down to the target before pulling up). Also sets the vertical FMA mode for the annunciator. */
   private static void decideMode(double troughY) {
-    double err = troughY - targetAlt;          // >0 means above target
+    double err = troughY - floorAlt;          // >0 means above target
     climbing = err < 0;
     loadProfile();
     // FMA band on the trough. In steady flight the hold pins the trough just above target (err ~ +3), so the
@@ -198,6 +218,7 @@ public class FlightDirector {
   private static void reset() {
     active = false; tooLow = false;
     climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
+    floorAlt = targetAlt;
     loadProfile();
     phase = HOLD; commandedPitch = C_DIVE; topTicks = 0; cycleTicks = 0;
   }
