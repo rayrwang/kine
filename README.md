@@ -41,8 +41,10 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - Elytra collision avoidance, not just prevention, integrate with autopilot
 	- Use simulator
+	- Predictions & projections, maybe display
+	- Terrain display by highlighting blocks
 - Warning sounds
-- Controls & displays list and explanations
+- User guide / help: controls & displays list and explanations
 - Aimbot:
 	- Collision detection
 	- Efficiency: solver start with analytical estimate
