@@ -139,6 +139,12 @@ public class KineSettingsScreen extends Screen {
         + "or it can't see far enough (low render distance), it disengages and hands control back to you. "
         + "Needs the autopilot engaged; off by default.";
 
+    private static final String DESC_RIBBON =
+        "Draws the autopilot's predicted path ahead of (and a little behind) you as two blue rails at "
+        + "ground level, so you can see where the porpoise will carry you and how it clears terrain. The "
+        + "rails are the actual rolled-out trajectory, so they also reveal any drift between the model and "
+        + "real flight. Only shown while the autopilot is engaged.";
+
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
             Opt.of("Display speed", DESC_SPEED, () -> Settings.displaySpeed, v -> Settings.displaySpeed = v),
@@ -150,6 +156,7 @@ public class KineSettingsScreen extends Screen {
         new Section("Flight & safety", new Opt[]{
             Opt.of("Display flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
             Opt.of("Terrain avoidance", DESC_TERRAIN, () -> Settings.terrainAvoidance, v -> Settings.terrainAvoidance = v),
+            Opt.of("Flight path rails", DESC_RIBBON, () -> Settings.flightRibbon, v -> Settings.flightRibbon = v),
             Opt.of("Flight path vector", DESC_FPV, () -> Settings.displayFlightPathVector, v -> Settings.displayFlightPathVector = v),
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),

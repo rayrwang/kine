@@ -60,7 +60,7 @@ public final class FlightRibbon {
 
     private static void tick(Minecraft mc) {
         count = 0;
-        if (!Settings.terrainAvoidance || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
+        if (!Settings.flightRibbon || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying()) return;
 
