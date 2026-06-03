@@ -48,6 +48,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Terrain display by highlighting blocks
 	- Warnings?
 - Warning sounds
+- More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
 - Aimbot:
 	- Collision detection
