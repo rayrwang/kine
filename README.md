@@ -39,14 +39,14 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Kill aura
-- Mace fall
-- Spear elytra
 - Elytra collision avoidance, not just prevention, integrate with autopilot (including fly around obstacles, descent management)
 	- Use simulator
 	- Predictions & projections, maybe display
 	- Terrain display by highlighting blocks
 	- Warnings?
+- Spear elytra
+- Mace fall
+- Kill aura
 - Warning sounds
 - More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
