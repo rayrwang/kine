@@ -49,6 +49,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- ETA estimate isn't resetting on landing when above anchor
 	- Autopilot movement should stop when paused singleplayer
 	- Damage auto kick not working when window unfocused
+- Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall
 - Kill aura
