@@ -53,6 +53,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Spear elytra
 - Mace fall
 - Kill aura
+- Activate elytra if fall (could be annoying)
 - Warning sounds
 - More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
