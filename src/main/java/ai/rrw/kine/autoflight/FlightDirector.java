@@ -32,13 +32,16 @@ public class FlightDirector {
   private static final int    C_HOLD  = 11;
   private static final float  C_SWEEP = 18f / 20f;   // 0.9 deg/tick
   private static final float  C_SPEED = 21.9f;       // model ground speed (m/s)
-  // LEVEL: hold altitude at max speed. ~30.2 m/s ground, ~flat (-1.8 m/min), ~126-block dive per cycle.
+  // HOLD: hold altitude at max speed. ~30.0 m/s raw, drifts UP slightly (+1.8 m/min) so the correction is
+  // done by the dive-extension (fast) instead of climb-catches (slow) -> ~30.1 m/s closed-loop AVERAGE,
+  // higher than a faster-on-paper descending profile that has to buy height back at climb speed (~10% of
+  // the time). Keeps the porpoise bottom at/above target. ~126-block dive per cycle.
   private static final float  L_DIVE  = 38f;
-  private static final float  L_UP    = -73f;        // over-commanded: ~-59 actual
+  private static final float  L_UP    = -66f;        // over-commanded: ~-56 actual
   private static final double L_TRIG  = 52.0;
-  private static final int    L_HOLD  = 12;
-  private static final float  L_SWEEP = 28f / 20f;   // 1.4 deg/tick
-  private static final float  L_SPEED = 30.2f;
+  private static final int    L_HOLD  = 13;
+  private static final float  L_SWEEP = 24f / 20f;   // 1.2 deg/tick
+  private static final float  L_SPEED = 30.1f;       // closed-loop hold average (held by dive-extension, ~0 climb-catches)
 
   // --- altitude hold (closed-loop on the dive trough = "bottom of the porpoise") ---
   // The trough is sampled once per cycle (at the pull-up, the lowest/fastest point). Below the target

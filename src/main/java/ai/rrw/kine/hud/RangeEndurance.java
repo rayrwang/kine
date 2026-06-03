@@ -51,7 +51,7 @@ public class RangeEndurance {
     private static final int MIN_SAMPLES  = CYCLE;      // wait one full cycle (~14.2s) for a phase-balanced mean
     // Initial cruise speed (m/s) used by BOTH range and ETA until a real mean exists now comes from the
     // flight model itself: FlightDirector.expectedGroundSpeed() returns the active mode's optimized ground
-    // speed (~21.9 climbing, ~30.2 level), so the readouts open on the right figure and the live mean only
+    // speed (~21.9 climbing, ~30.1 hold), so the readouts open on the right figure and the live mean only
     // has to refine it rather than walk in from a generic guess.
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
