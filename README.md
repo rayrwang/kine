@@ -51,6 +51,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
 - Aimbot:
+	- Correctness (still unreliable at very high pitch angles)
 	- Collision detection
 	- Efficiency: solver start with analytical estimate
 	- Zoomed in targeting view
