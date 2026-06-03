@@ -57,11 +57,12 @@ public class FlightDirector {
   // so the bottom of every porpoise lands on the target — a descent from any height bottoms out at the
   // target in a single dive. DESC_MARGIN is how far above target the pull-up begins (the nose-down coast
   // through the pull-up carries the true trough ~3 blocks lower, parking it just above target).
-  private static int          targetAlt    = 400;     // selectable in the nav menu; the bottom we hold
+  private static int          targetAlt    = 350;     // selectable in the nav menu; the bottom we hold (world build cap is 320)
   // The altitude the law actually flies to. Without terrain avoidance it tracks targetAlt; with it on,
   // the planner raises it to the lowest floor that clears terrain ahead, leaving targetAlt as the cruise
   // floor the aircraft resumes to. Split so the planner can command a floor without losing the user's pick.
   private static int          floorAlt     = targetAlt;
+  private static boolean      cruiseInit   = false;    // one-shot: pick the start cruise from initial facing
   private static final int    ALT_MIN      = -60;
   private static final int    ALT_MAX      = 2000;
   private static final int    DESC_MARGIN  = 6;       // hold/descend: begin the pull-up this many blocks above target
@@ -125,6 +126,15 @@ public class FlightDirector {
   private static void tick(Minecraft mc) {
     commandedPitchOld = commandedPitch;   // remember last tick's value so render can interpolate to it
     LocalPlayer p = mc.player;
+    // Once, when we first have a player: set the starting cruise from the initial facing and never again.
+    if (p != null && !cruiseInit) {
+      // Hemispheric cruising rule: eastbound (heading 0-179) flies odd levels, westbound (180-359) even.
+      // MC yaw is measured from south, so compass heading = yaw + 180 (mod 360).
+      double heading = (((p.getYRot() + 180.0) % 360.0) + 360.0) % 360.0;
+      targetAlt = (heading < 180.0) ? 350 : 360;   // eastbound -> FL350 (odd), westbound -> FL360 (even)
+      floorAlt = targetAlt;
+      cruiseInit = true;
+    }
     if (p == null || mc.level == null || !p.isFallFlying()) {
       reset();
       return;
