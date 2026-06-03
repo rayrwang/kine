@@ -18,6 +18,7 @@ public class FlightDirector {
   public static boolean isActive()       { return active; }
   public static float   commandedPitch() { return commandedPitch; }
   public static int     targetAltitude() { return targetAlt; }
+  public static int     floorAltitude()  { return floorAlt; }   // effective target the law is flying right now
   public static void    setTargetAltitude(int y) { targetAlt = Math.max(ALT_MIN, Math.min(ALT_MAX, y)); }
   /** Model-derived cruise ground speed (m/s) for the active mode; seeds the range/endurance estimate. */
   public static float   expectedGroundSpeed() { return climbing ? C_SPEED : L_SPEED; }

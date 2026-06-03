@@ -15,6 +15,7 @@ import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.ElytraGuard;
+import ai.rrw.kine.autoflight.FlightRibbon;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
@@ -34,6 +35,7 @@ public class Kine implements ClientModInitializer {
 		MobHealthHud.register();
 		MiningHud.register();
 		FlightDirector.register();
+		FlightRibbon.register();
 		FlightPathVector.register();
 		RadioAltimeter.register();
 		RangeEndurance.register();

@@ -30,21 +30,25 @@ public final class TerrainGuard {
     public static double evaluate(Minecraft mc, LocalPlayer p, int cruiseBase) {
         Terrain terrain = scan(mc, p);
         if (terrain == null) return Double.NaN;          // no ground track to scan along -> hand off
+        FlightModel.State seed = seedFromPlayer(p, cruiseBase);
+        return TerrainPlanner.plan(seed, terrain, cruiseBase, RAISE_MAX, RAISE_STEP,
+                                   HORIZON, BUFFER, MIN_LOOKAHEAD);
+    }
 
+    /** Seed a rollout from the live player kinematics + the live FlightDirector law state, so the
+     *  predicted path continues the actual porpoise cycle. Shared by the planner and the flight-path
+     *  ribbon so both roll the SAME trajectory (the ribbon is then a predicted-vs-flown drift check). */
+    public static FlightModel.State seedFromPlayer(LocalPlayer p, double target) {
         double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
         double vx = Math.sqrt(dx * dx + dz * dz);        // ground-track speed (blocks/tick)
         double vy = p.getY() - p.yOld;                   // vertical speed (blocks/tick)
         double pitch = p.getXRot();
-
-        // seed the predictor from the live law state so the rollout picks up the current cycle
         FlightModel.State seed = new FlightModel.State(0.0, p.getY(), vx, vy,
-                                                       cruiseBase, pitch, FlightDirector.climbingState());
+                                                       target, pitch, FlightDirector.climbingState());
         seed.phase = FlightDirector.phaseState();
         seed.cmd   = FlightDirector.commandedPitch();
         seed.topT  = FlightDirector.topTicksState();
-
-        return TerrainPlanner.plan(seed, terrain, cruiseBase, RAISE_MAX, RAISE_STEP,
-                                   HORIZON, BUFFER, MIN_LOOKAHEAD);
+        return seed;
     }
 
     /** Sample the MOTION_BLOCKING surface ahead along the ground track. Returns a Terrain whose
