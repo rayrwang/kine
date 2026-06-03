@@ -38,13 +38,14 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Elytra collision avoidance, not just prevention, integrate with autopilot.
+- Elytra collision avoidance, not just prevention, integrate with autopilot
 - Warning sounds
 - Controls & displays list and explanations
-- Collision detection for aimbot
-- Efficiency: aimbot solver start with analytical estimate
-- Ender pearl target selection & protection
-- Zoomed in targeting view
+- Aimbot:
+	- Collision detection
+	- Efficiency: solver start with analytical estimate
+	- Zoomed in targeting view
+	- Ender pearl target selection & protection
 - Support multiple versions & forge
 
 ## Long Term
