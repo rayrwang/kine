@@ -40,6 +40,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Initialize nav heading to current, add button for update to current
 - Change autopilot disengage kick grace period to 1s
 - Change P autopilot keybind (conflict)
 - Elytra autopilot:
@@ -60,6 +61,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Spear elytra
 - Mace fall
 - Kill aura
+	- Takes into account number of enemies (spam for more, cooldown for fewer)
 - Activate elytra if fall (could be annoying)
 - Warning sounds
 - More settings for enabling/disabling & finer control
