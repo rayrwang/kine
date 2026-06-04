@@ -26,6 +26,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
 - **Water bucket clutch automatically.**
+- **Kill aura.**
+	- Takes into account number of enemies (spam for more, cooldown for fewer)
 - **Dodge arrows and other projectiles.**
 - **AFK failsafes.**
 	- Logs you out if you gake damage while AFK, autopilot disconnects, or elytra has low durability.
@@ -58,8 +60,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall
-- Kill aura
-	- Takes into account number of enemies (spam for more, cooldown for fewer)
 - Activate elytra if fall (could be annoying)
 - Warning sounds
 - More settings for enabling/disabling & finer control
