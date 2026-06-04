@@ -314,11 +314,19 @@ public class FlightDirector {
     int off = (int) Math.max(-maxOff, Math.min(maxOff, (cmdNow - pitchNow) * k));
     int barY = cy + off;
 
-    // vertical bar is the heading/lateral director: deflects when a nav mode commands a turn
+    // vertical bar is the heading/lateral director: deflects toward the heading the autopilot is commanding
+    // -- the terrain-avoidance turn when it's steering (so its turns and emergency breaks show here, exactly
+    // the heading the aircraft is being flown to), otherwise the nav heading command. Same priority the
+    // autopilot itself uses to pick a steering target.
     int barX = cx;
-    if (Nav.steering()) {
+    Float yawErr = null;
+    if (Settings.terrainAvoidance && TurnGuard.steering()) {
+      yawErr = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - p.getYRot());
+    } else if (Nav.steering()) {
+      yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getYRot());
+    }
+    if (yawErr != null) {
       // compare against the per-tick heading, not the interpolated view yaw, so the offset doesn't sawtooth
-      float yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getYRot());
       float rawOff = Math.max(-maxOff, Math.min(maxOff, yawErr * k));
       long now = System.nanoTime();
       double dt = (yawNanos == 0L) ? 0.0 : (now - yawNanos) / 1.0e9;
