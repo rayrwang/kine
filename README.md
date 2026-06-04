@@ -10,7 +10,7 @@
 </table>
 </p>
 
-Minecraft utility mod with elytra autopilot, aimbot, movement tweaks, and HUD displays.
+Minecraft elytra autopilot, aimbot, movement tweaks, and HUD displays.
 
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
@@ -41,7 +41,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Planned
 
 - Elytra autopilot:
-	- Cool side view of path with terrain
 	- Per block pathing instead of heightmap highest block
 	- Fly climbing pattern if boxed in
 	- Descend gradually before reaching destination

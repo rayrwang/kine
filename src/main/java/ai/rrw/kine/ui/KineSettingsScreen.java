@@ -77,6 +77,11 @@ public class KineSettingsScreen extends Screen {
         "The winged ring marks where your velocity is actually taking you, not where you're looking: "
         + "below the centre means descending, off to one side means drifting that way. Put it on the "
         + "spot you want to reach. Shows while flying or in a real fall. Instrument only.";
+    private static final String DESC_PROFILE =
+        "A side-on cutaway in the top-right corner: you on the left, the blue trace where your held attitude "
+        + "would carry you over the next 240 blocks, and the real blocks under that track in their own colours "
+        + "(sky-blue for open air). Where the trace meets the colour is where you'd hit ground. Shows while "
+        + "flying; instrument only. Axes are fixed so the picture doesn't rescale as you move.";
     private static final String DESC_ELYTRA =
         "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
         + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
@@ -158,6 +163,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Terrain avoidance", DESC_TERRAIN, () -> Settings.terrainAvoidance, v -> Settings.terrainAvoidance = v),
             Opt.of("Flight path rails", DESC_RIBBON, () -> Settings.flightRibbon, v -> Settings.flightRibbon = v),
             Opt.of("Flight path vector", DESC_FPV, () -> Settings.displayFlightPathVector, v -> Settings.displayFlightPathVector = v),
+            Opt.of("Flight profile map", DESC_PROFILE, () -> Settings.displayFlightProfile, v -> Settings.displayFlightProfile = v),
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),

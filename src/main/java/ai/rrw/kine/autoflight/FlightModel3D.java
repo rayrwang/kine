@@ -140,6 +140,18 @@ public final class FlightModel3D {
         return s.pitch;
     }
 
+    /** Advance one tick holding an EXPLICIT look (yaw + pitch) with no steering clamp and no autopilot
+     *  law: pure elytra physics from the current state -- the arc you'd fly if you froze the controls right
+     *  now. (Unlike {@link #stepLook}, pitch is held, not eased toward a commanded value, and the porpoise
+     *  state machine isn't run.) Used by the side-profile HUD to project the player's own trajectory. */
+    public static void stepHold(State s, double lookYaw, double lookPitch) {
+        s.pitch = lookPitch;
+        double[] v = { s.vx, s.vy, s.vz };
+        physicsStep(lookYaw, lookPitch, v);
+        s.vx = v[0]; s.vy = v[1]; s.vz = v[2];
+        s.x += s.vx; s.y += s.vy; s.z += s.vz;
+    }
+
     /** Advance one tick steering toward `targetHeading` (yaw, deg), rate-limited by DELTA_MAX:
      *  the look is placed at velYaw + clamp(targetHeading - velYaw, +-DELTA_MAX). */
     public static double step(State s, double targetHeading) {
