@@ -68,6 +68,9 @@ public final class TurnController {
                     emergency = false; emergencyCount = 0; action = TurnPlanner.DISENGAGE;
                 }
                 t++; return escapeHeading;
+            } else if (pl.action == TurnPlanner.DISENGAGE) {
+                action = TurnPlanner.DISENGAGE;             // planner: no way out (can't climb out) -> hand off
+                committedHeading = destBearing;
             } else if (pl.action == TurnPlanner.TURN) {
                 committedHeading = pl.heading; action = TurnPlanner.TURN;   // routing dodge / escape leg
                 committedUntil = t + TURN_COMMIT;

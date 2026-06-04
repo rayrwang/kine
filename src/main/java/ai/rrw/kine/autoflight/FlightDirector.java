@@ -148,14 +148,11 @@ public class FlightDirector {
     floorAlt = targetAlt;
     boolean room;
     if (Settings.terrainAvoidance) {
-      // Stay armed only while a flyable path actually exists from here -- checked live every tick, not
-      // latched, so descending into a low-and-slow state with no way out drops the bars and refuses to
-      // engage. The one exception: an in-progress committed maneuver (turn / emergency bank), whose
-      // transient low speed would otherwise read as infeasible and yank a recoverable turn. A genuinely
-      // stuck maneuver ends itself through the controller's own DISENGAGE escalation.
-      boolean maneuvering = Autopilot.isEngaged()
-          && (TurnGuard.action() == TurnPlanner.TURN || TurnGuard.action() == TurnPlanner.EMERGENCY);
-      room = TurnGuard.feasibleToArm(mc, p, targetAlt) || maneuvering;
+      // Engaged: the planner/controller is the terrain authority -- it hands control back (DISENGAGE,
+      // routed via TurnGuard.handOff at end of tick) when there is no way out, including low-and-slow
+      // where the climb can't clear the ground, and skips that mid-maneuver so a committed turn isn't
+      // cut off. Not engaged: arm only if a flyable path exists from here. Same check, one code path.
+      room = Autopilot.isEngaged() || TurnGuard.feasibleToArm(mc, p, targetAlt);
     } else {
       int clear = clearBelow(mc, p);
       boolean absSafe = lastTroughY >= ABS_FLOOR;
