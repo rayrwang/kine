@@ -54,7 +54,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Damage auto kick not working when window unfocused
 	- Autopilot no longer responds to heading command, or turning with AD keys
 	- Collision avoidance throttling sprinting jumping with elytra
-	- Autopilot visually move flight director when turning
 	- Autopilot resume heading after turn
 	- Low altitude warning should count as autopilot disconnect.
 - Update readme technical, make more concise; change pictures, add logo
