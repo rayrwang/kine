@@ -46,6 +46,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Fly climbing pattern if boxed in
 	- Descend gradually before reaching destination
 	- Fly landing instead of disengaging on unable to escape terrain?
+	- Support fireworks?
 	- Warnings?
 - Fix:
 	- Elytra durability protection should be cumulative, not single
