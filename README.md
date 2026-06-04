@@ -44,7 +44,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Cool side view of path with terrain
 	- Per block pathing instead of heightmap highest block
 	- Fly climbing pattern if boxed in
-	- Adjust lookahead distance
 	- Descend gradually before reaching destination
 	- Fly landing instead of disengaging on unable to escape terrain?
 	- Warnings?
