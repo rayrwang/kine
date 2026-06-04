@@ -39,6 +39,14 @@ public final class TurnPlanner {
     static final double CLIMB_GRAD = 0.05;     // assumed climb per block of path (below the real ~6.6%)
     static final double CORRIDOR_CLEAR = 8.0;  // terrain must stay this far below the climbing corridor
     static final double GROUND_MIN = 5.0;      // actual path must stay this far above ground (real-crash guard)
+    // Trough-floor raising: before turning, try lifting the porpoise's hold trough so the aircraft climbs
+    // OVER terrain rising ahead, staying on course (no lateral deviation). Each stage scans a ladder of
+    // trough floors low->high and takes the lowest that clears; only if NONE up to the cap clears does it
+    // fall to a turn -- and the turn search scans the same ladder, so a banked dodge can be lifted too.
+    // The floor is the FlightModel3D.State.target the live law flies its trough to. Climbing over is
+    // preferred to turning whenever it works, because it holds course; turning is the fallback.
+    static final double FLOOR_STEP      = 4.0;   // trough-floor ladder increment (blocks)
+    static final double FLOOR_RAISE_MAX = 60.0;  // most we lift the trough above the cruise floor before turning
     static final double IMMINENT = 50.0;       // tall obstacle closer than this can't be turned out of (~turn radius)
 
     /** Clamp scanning to how far terrain is actually loaded (blocks). Servers cap render distance -- often
@@ -51,20 +59,20 @@ public final class TurnPlanner {
         scanRange = Math.max(MIN_LOOKAHEAD + 16.0, Math.min(SCAN_DIST, loadedBlocks));
     }
 
-    /** A planner decision: an absolute target heading (yaw, deg) and the action that produced it. */
+    /** A planner decision: an absolute target heading (yaw, deg), the action, and the trough floor to fly. */
     public static final class Plan {
-        public final double heading; public final int action;
-        Plan(double heading, int action) { this.heading = heading; this.action = action; }
+        public final double heading; public final int action; public final double floor;
+        Plan(double heading, int action, double floor) { this.heading = heading; this.action = action; this.floor = floor; }
     }
 
     private static final class Roll { int status; double progress; int cause = CAUSE_NONE; double hitDist = 0.0; }
 
-    /** Roll `base` forward at a fixed target heading; report clearance + directional progress. */
-    static Roll rollout(FlightModel3D.State base, double targetHeading, Terrain2D terrain,
+    /** Roll `base` forward at a fixed target heading toward a trough `floor`; report clearance + progress. */
+    static Roll rollout(FlightModel3D.State base, double targetHeading, double floor, Terrain2D terrain,
                         int horizon, double minLookahead, double destX, double destZ) {
         FlightModel3D.State s = base.copy();
+        s.target = floor;                                 // fly the porpoise to this candidate trough floor
         double sx = s.x, sz = s.z, y0 = base.y;
-        double grad = base.climbing ? CLIMB_GRAD : 0.0;   // at cruise (not climbing) the corridor is flat
         double dx = destX - sx, dz = destZ - sz;
         double dlen = Math.sqrt(dx * dx + dz * dz); if (dlen == 0.0) dlen = 1.0;
         double ux = dx / dlen, uz = dz / dlen;
@@ -83,7 +91,10 @@ public final class TurnPlanner {
             // obstacle = terrain rising into the climbing corridor (a wall/mountain ahead). Separately,
             // the actual porpoise path must not skim into the floor -- a small buffer so only a real
             // impending ground hit flags, not a normal mid-altitude dive (which would falsely block).
-            double corridorY = y0 + grad * pathLen;
+            // Trough envelope: climb from the current altitude up to `floor`, then hold flat at it. Raising
+            // `floor` lifts the flat part so the porpoise clears more terrain; capping at `floor` keeps the
+            // test from assuming a climb past the altitude it will actually hold. Smooth -> phase-independent.
+            double corridorY = Math.min(floor, y0 + CLIMB_GRAD * pathLen);
             if (g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; hit = true; break; }
             if (s.y - g < GROUND_MIN)            { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; hit = true; break; }
         }
@@ -94,52 +105,48 @@ public final class TurnPlanner {
         return r;
     }
 
-    /** Prioritized decision for the situation ahead. */
+    /** Prioritized decision for the situation ahead: climb-over-first, then turn. Both stages raise the
+     *  trough floor as needed; turning is the fallback only when no reachable floor clears straight. */
     public static Plan plan(FlightModel3D.State base, double destBearing,
                             double destX, double destZ, Terrain2D terrain) {
-        // Stage 1: straight at the destination, climbing
-        Roll straight = rollout(base, destBearing, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
-        if (straight.status == CLEARS) {
-            return new Plan(destBearing, CLB);
-        }
-        // Stage 2: can a NORMAL turn clear it? Scan headings smallest-offset first, keeping two candidates:
-        //  - progressing: smallest offset that clears AND still makes real progress toward the dest
-        //    (the productive dodge: thread a gap / round an end while heading where we want to go)
-        //  - evasive: smallest offset that merely clears (e.g. turn to fly parallel along a wall)
-        // This runs BEFORE any emergency. A banked turn whose rolled-out path actually clears always beats
-        // a hard turn-around, and it keeps plan() consistent with feasible() -- which arms whenever some
-        // heading clears. Escalating to an emergency here while a normal turn exists is exactly what made a
-        // just-engaged autopilot trip: feasible() arms, but plan() emergency-banks and at high speed can't
-        // come around within STUCK_MAX, handing off and disengaging.
-        double progHeading = Double.NaN, progOff = Double.POSITIVE_INFINITY;
-        double anyHeading  = Double.NaN, anyOff  = Double.POSITIVE_INFINITY;
+        double cruiseFloor = base.target;
+        // Stage 1: straight at the destination. Clear (or simply can't see far enough) at the cruise floor
+        // -> just go; this is the normal no-avoidance path.
+        Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+        if (straight.status != HITS) return new Plan(destBearing, CLB, cruiseFloor);
+        // Straight HITS: try to CLIMB OVER it by lifting the trough floor -- the lowest floor that clears,
+        // no lateral deviation. This is preferred to any turn.
+        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
+            if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
+                return new Plan(destBearing, CLB, f);          // climb over, stay on course
+        // Stage 2: no straight floor up to the cap clears -> turn. For each heading (smallest offset first)
+        // find the lowest floor that clears; prefer the smallest progressing turn, else the smallest evasive
+        // one. The turn search raises the trough too -- a banked dodge may itself need to be higher to clear.
+        double anyHeading = Double.NaN, anyFloor = Double.NaN, anyOff = Double.POSITIVE_INFINITY;
         for (double off : OFFSETS) {
             for (int sgn = +1; sgn >= -1; sgn -= 2) {
                 double h = destBearing + sgn * off;
-                Roll r = rollout(base, h, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
-                if (r.status != CLEARS) continue;
-                if (off < anyOff) { anyOff = off; anyHeading = h; }
-                if (r.progress >= PROG_MIN && off < progOff) { progOff = off; progHeading = h; }
+                for (double f = cruiseFloor; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP) {
+                    Roll r = rollout(base, h, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+                    if (r.status != CLEARS) continue;
+                    if (r.progress >= PROG_MIN) return new Plan(h, TURN, f);   // smallest progressing turn wins
+                    if (off < anyOff) { anyOff = off; anyHeading = h; anyFloor = f; }  // smallest evasive, remember
+                    break;                                                     // lowest clearing floor for this heading
+                }
             }
         }
-        if (!Double.isNaN(progHeading)) return new Plan(progHeading, TURN);   // productive dodge
-        if (!Double.isNaN(anyHeading))  return new Plan(anyHeading, TURN);    // evasive turn (avoid the wall)
-
-        // Stage 3: no normal turn clears. If a tall obstacle is closer than the turn radius, a normal turn
-        // can't get out of it -- commit to a hard turn-around (~180) toward the more-open side. The look is
-        // held only EMERGENCY_DELTA off the (rotating) velocity each tick, so it ARCS around to reverse
-        // rather than pointing backward and stalling. Target just under 180 to fix the arc direction.
+        if (!Double.isNaN(anyHeading)) return new Plan(anyHeading, TURN, anyFloor);   // evasive turn (parallel a wall)
+        // Stage 3: nothing clears at any heading or floor. If a tall obstacle is inside the turn radius, a
+        // normal turn can't escape -- hard turn-around toward the more-open side. Otherwise keep climbing
+        // straight at the cruise floor (we may yet top it or find a gap as it nears).
         if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
             double course = FlightModel3D.velYaw(base.vx, base.vz);
             boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
             boolean leftBlocked  = imminentAhead(base, course - 90.0, terrain);
             double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
-            return new Plan(course + side * 179.0, EMERGENCY);
+            return new Plan(course + side * 179.0, EMERGENCY, cruiseFloor);
         }
-        // No clear heading and not imminently walled: keep climbing straight (we may yet top it or find a
-        // gap as it nears; if it becomes imminent the emergency turn-around fires). Low ground / can't-see-far
-        // is likewise right to keep climbing through.
-        return new Plan(destBearing, CLB);
+        return new Plan(destBearing, CLB, cruiseFloor);
     }
 
     /** Is there a flyable path from here? True if flying straight at the destination doesn't hit (it
@@ -150,11 +157,15 @@ public final class TurnPlanner {
      *  around. This adapts the arming floor to the actual situation rather than a guessed AGL. */
     public static boolean feasible(FlightModel3D.State base, double destBearing,
                                    double destX, double destZ, Terrain2D terrain) {
-        Roll straight = rollout(base, destBearing, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+        double cruiseFloor = base.target;
+        Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
         if (straight.status != HITS) return true;            // clear ahead, or can't see a problem
+        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
+            if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
+                return true;                                 // could climb over it straight ahead
         for (double off : OFFSETS)
             for (int sgn = +1; sgn >= -1; sgn -= 2)
-                if (rollout(base, destBearing + sgn * off, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
+                if (rollout(base, destBearing + sgn * off, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
                     return true;                             // some heading is flyable
         return false;                                        // no way out from here -> don't arm
     }
@@ -162,7 +173,7 @@ public final class TurnPlanner {
     /** True if flying `heading` runs into a tall obstacle within the emergency (turn-radius) distance.
      *  The emergency maneuver holds until the current course is no longer imminently blocked. */
     public static boolean imminentAhead(FlightModel3D.State base, double heading, Terrain2D terrain) {
-        Roll r = rollout(base, heading, terrain, HORIZON, MIN_LOOKAHEAD, base.x, base.z);
+        Roll r = rollout(base, heading, base.target, terrain, HORIZON, MIN_LOOKAHEAD, base.x, base.z);
         return r.status == HITS && r.cause == CAUSE_CORRIDOR && r.hitDist < IMMINENT;
     }
 }

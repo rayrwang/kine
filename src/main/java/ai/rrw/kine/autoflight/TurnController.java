@@ -30,17 +30,23 @@ public final class TurnController {
     private int emergencyCount = 0;      // turn-arounds since last getting clear; trips the endless-wall hand-off
     private double emergencyRefDist = 0; // dest distance when the current turn-around streak began
     private double escapeHeading = 0.0;
+    private double committedFloor = Double.NaN;   // trough floor latched with the committed leg (NaN until first plan)
 
     public int action() { return action; }
+    /** Trough altitude the live law should fly to this tick -- the cruise floor, or raised by the planner
+     *  to climb OVER terrain rising ahead. Held across the committed leg, like the heading. */
+    public double floor() { return committedFloor; }
 
     /** Decide the heading to fly this tick. `live` is the current seeded aircraft state. */
     public double update(FlightModel3D.State live, double destX, double destZ, Terrain2D terrain) {
         double destBearing = FlightModel3D.velYaw(destX - live.x, destZ - live.z);
+        if (Double.isNaN(committedFloor)) committedFloor = live.target;   // first call: cruise floor
 
         // Emergency hard bank in progress: hold the captured reversed heading and keep arcing until the
         // turn-around is actually complete (heading reached). Exiting the instant the immediate collision
         // clears would only jink a few degrees -- this commits to the full ~180.
         if (emergency) {
+            committedFloor = live.target;            // bank at cruise; a raised trough was for the abandoned dodge
             double course = FlightModel3D.velYaw(live.vx, live.vz);
             if (Math.abs(FlightModel3D.wrap180(escapeHeading - course)) <= TURN_DONE_TOL) {
                 // Turn-around complete. A hard bank pivots almost in place (speed bled off), so the wall
@@ -60,6 +66,7 @@ public final class TurnController {
 
         if (t % REPLAN_EVERY == 0 && t >= committedUntil) {
             TurnPlanner.Plan pl = TurnPlanner.plan(live, destBearing, destX, destZ, terrain);
+            committedFloor = pl.floor;               // adopt the planner's trough floor (cruise, or raised to climb over)
             if (pl.action == TurnPlanner.EMERGENCY) {
                 if (emergencyCount == 0)                     // start of a streak: remember how far the dest was
                     emergencyRefDist = Math.hypot(destX - live.x, destZ - live.z);

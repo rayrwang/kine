@@ -154,7 +154,10 @@ public class FlightDirector {
     // planner finds a path from here (which, because the climb law dives, naturally refuses too low to
     // clear that dive, refuses low-and-slow with no energy to climb, and refuses when boxed in). Without
     // avoidance, the legacy absolute-AGL window arms/holds the autopilot.
-    floorAlt = targetAlt;
+    // floorAlt is NOT reset to targetAlt here -- it persists, latched at the end of the tick from the
+    // planner's chosen trough floor (raised to climb OVER terrain). The law below reads the value committed
+    // last tick (one-tick lag); it is forced back to targetAlt when avoidance is off, the autopilot is not
+    // engaged, or the path goes infeasible (the branches below and reset()).
     boolean room;
     if (Settings.terrainAvoidance) {
       // Stay armed only while a flyable path actually exists from here -- checked live every tick, not
@@ -183,6 +186,7 @@ public class FlightDirector {
       // below arming altitude / no feasible floor: revert to the climb profile so re-arming climbs back up
       climbing = true; vmode = VM_CLB; loadProfile();
       phase = HOLD; commandedPitch = aDive; topTicks = 0; cycMinY = Double.MAX_VALUE; cycleTicks = 0;
+      floorAlt = targetAlt;       // path infeasible: drop any raised trough, revert to the cruise floor
       TurnGuard.reset();
       return;
     }
@@ -231,7 +235,10 @@ public class FlightDirector {
     if (Settings.terrainAvoidance && Autopilot.isEngaged()) {
       TurnGuard.evaluate(mc, p, targetAlt);
       if (TurnGuard.handOff()) Autopilot.disengage();
-    } else TurnGuard.reset();
+      // Adopt the planner's trough floor for next tick's law: the cruise floor normally, raised to climb
+      // OVER terrain rising ahead. The planner only ever raises, so clamp into [targetAlt, ALT_MAX].
+      floorAlt = Math.max(targetAlt, Math.min(ALT_MAX, (int) Math.round(TurnGuard.desiredFloor())));
+    } else { TurnGuard.reset(); floorAlt = targetAlt; }
   }
 
   /** From the sampled trough: climb if below target (climb profile), otherwise hold/descend (the dive runs

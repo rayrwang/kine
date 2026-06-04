@@ -30,17 +30,20 @@ public final class TurnGuard {
     private static TurnController ctl = new TurnController();
     private static boolean steering = false;
     private static double  desiredHeading = 0.0;
+    private static double  desiredFloor = 0.0;
     private static int     action = TurnPlanner.CLB;
 
     public static boolean steering()       { return steering; }
     public static double  desiredHeading() { return desiredHeading; }
+    /** Trough altitude the live law should fly to -- raised by the planner to climb OVER terrain rising ahead. */
+    public static double  desiredFloor()   { return desiredFloor; }
     public static int     action()         { return action; }
     /** True when an emergency bank couldn't escape an endless wall and control should be handed back. */
     public static boolean handOff()        { return steering && action == TurnPlanner.DISENGAGE; }
 
     /** Drop the steering latch and the committed-leg state (call on disengage / not gliding). */
     public static void reset() {
-        steering = false; action = TurnPlanner.CLB; ctl = new TurnController();
+        steering = false; action = TurnPlanner.CLB; desiredFloor = 0.0; ctl = new TurnController();
     }
 
     /** Compute this tick's steer heading toward the destination, dodging terrain. Call once/tick
@@ -53,6 +56,7 @@ public final class TurnGuard {
         Terrain2D terrain = terrainOf(mc.level);
         desiredHeading = ctl.update(seed, d[0], d[1], terrain);
         action = ctl.action();
+        desiredFloor = ctl.floor();
         steering = true;
     }
 
