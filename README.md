@@ -42,6 +42,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Kill aura only on player attack or being attacked, decouple client & server rotation
 - Elytra autopilot:
 	- Per block pathing instead of heightmap highest block
 	- Fly climbing pattern if boxed in
