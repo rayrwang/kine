@@ -79,56 +79,49 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 \*written by Opus 4.8
 
-Built for Minecraft 26.1.2 — the first unobfuscated release — against Mojang mappings on Fabric. Client-side only; every cheat is off by default and toggled from the settings menu (K). State is read live from the client each tick, so the numbers below are real in-game behaviour.
+Built for Minecraft 26.1.2 — the first unobfuscated release — against Mojang mappings on Fabric. Client-side only; every cheat is off by default and toggled from the settings menu (K). State is read live from the client each tick.
 
 ### Elytra autopilot
 
-No fireworks. The autopilot flies a fixed pitch oscillation — a "porpoise" — trading altitude and speed to sustain roughly level cruise: dive ~34° to build airspeed, then at ~44 m/s snap the nose up ~48° and hold briefly (elytra physics make the climb outvalue the dive), then ease back to the dive angle over ~1 s and repeat.
+No fireworks. The autopilot flies a "porpoise" — diving to build airspeed, then snapping the nose up to trade that speed back for altitude (elytra physics make the climb outvalue the dive) — to sustain roughly level cruise or to descend to a set altitude. A flight director draws the commanded pitch, and the commanded heading while steering, as bars; the autopilot (J to engage) follows them with smoothed, rate-limited control so nothing snaps. A/D set a heading bug it holds and tracks; any real mouse movement hands control straight back. Engagement is hysteretic — enough clear air below to arm, a "TOO LOW" advisory if you sink too far — and altitude comes from a downward block scan (radio altimeter), shown as height above ground.
 
-A flight director draws the commanded pitch as a bar; the autopilot (P to engage) follows it with smoothed, rate-limited pitch so it never snaps. A/D nudge heading; any real mouse movement hands control back instantly. Engagement uses hysteresis — ~120 blocks of clear air below to arm, staying armed until you drop below ~48 (a "TOO LOW" advisory otherwise). Altitude is a downward block scan (radio altimeter), shown as height above ground.
+Two displays render the trajectory the flight model predicts: guiderails laid along it in the world (depth-sorted against terrain, so they pass behind hills and clouds correctly), and a side-profile cutaway plotting terrain and path out to render distance.
+
+### Terrain avoidance (opt-in)
+
+Turned on in settings, the autopilot rolls the real flight model forward each tick across the loaded heightmap and steers on the result — a receding-horizon search that flies straight when it can, climbs when the way ahead is clear above, turns toward open air when it isn't, and hard-banks from an imminent wall. With no recoverable path it hands control back rather than flying you into the ground. The same model feeds the guiderails, so the drawn path is the predicted one.
 
 ### Navigation and landing
 
-Press N to set a course: *Selected* holds a compass heading (set on a dial), *Managed* flies to an X/Z coordinate (two fields), or *Off*. In Managed mode a translucent green beam marks the target column in the world, the heading director bar and autopilot steer toward it, and the HUD shows distance and ETA.
-
-On arrival (within ~24 blocks) it runs a landing program: it picks the nearest safe touchdown column — skipping lava, fire, cactus, magma, powder snow and the like — orbits it tightly rather than overshooting, and descends on an altitude-scheduled pitch: a near-vertical 80° dive when high, easing to a gentle 10° flare by ~12 blocks up (so 1000 m+ is essentially straight down, soft at the bottom). Flying back out past ~36 blocks cancels it; touching down ends it.
+Press N to set a course: *Selected* holds a compass heading, *Managed* flies to an X/Z coordinate, or *Off*. In Managed mode a translucent green beam marks the target column, the director and autopilot steer to it, and the HUD shows distance and ETA. On arrival (~24 blocks) a landing program picks the nearest safe touchdown column — skipping lava, fire, cactus, magma, powder snow — orbits it tightly instead of overshooting, and descends on an altitude-scheduled pitch: near-vertical when high, easing to a gentle flare by ~12 blocks up. Flying back out cancels it; touchdown ends it.
 
 ### Range and endurance
 
-While wearing an elytra the HUD estimates how long you can stay up and how far you can go. Endurance sums the worn wing's durability plus every spare you can reach in the air — inventory and offhand, not shulker boxes — each scaled by its Unbreaking level; XP bottles and Mending aren't counted (no XP source aloft yet). Reserves follow aviation fuel planning: a 5% contingency plus a final reserve sized to glide down from your current altitude, taken off a smoothed altitude so the porpoise doesn't make the readouts pulse — the failsafe itself reads true instantaneous height. Endurance hits zero just as that failsafe would trigger.
+While wearing an elytra the HUD estimates flight time and reach. Endurance sums the worn wing plus every spare you can reach airborne (inventory and offhand, not shulkers), each scaled by Unbreaking, minus aviation-style reserves: a 5% contingency plus a final reserve sized to glide down from your current altitude — so it reads zero just as the durability failsafe would fire. Range is endurance × measured cruise speed (a rolling mean over whole porpoise cycles, so dives and climbs cancel). Both range and ETA are eased into a steady decline rather than left to twitch with each durability step, without the optimism a naive average would add.
 
-Range is endurance times your measured cruise speed — a rolling mean over whole porpoise cycles, so the fast dives and slow climbs cancel rather than making it wander — falling back to a nominal figure until a full cycle of samples exists. Range and ETA are both eased into a steady decline rather than left to twitch with each durability step: smoothed, but without the optimistic "reach further than you can" bias a naive average would add.
+### Durability failsafe and auto-swap
 
-### Elytra durability failsafe and auto-swap
-
-When the worn wing drops below the safe-glide reserve for your altitude you get a land-immediately warning and a two-tier auto-swap:
-
-- **At the warning:** hot-swap to a spare with enough flight time — durability × Unbreaking — to clear the warning outright. If your best spare wouldn't, nothing happens — the warning stays up so you land, rather than shuffling you onto another near-dead wing.
-- **About to break:** once durability is critically low, swap to *any* spare with more flight time left. The only priority left is not dying.
-
-Swaps go through real container-click packets and only run with no screen open and an empty cursor, so they can't strand an item. With nothing left to swap, on autopilot — if you don't take control within five seconds — it disconnects you, logging out before the wing breaks so you don't fall to your death. Flying manually it only warns.
+When the worn wing drops below the safe-glide reserve for your altitude you get a land-now warning and a two-tier hot-swap: first to a spare with enough flight time to clear the warning outright (and nothing if none would, so you land rather than shuffle onto another near-dead wing); then, once critically low, to any spare with more life left. Swaps use real container packets and only run with no screen open and an empty cursor. With nothing left and the autopilot flying, it disconnects you after five seconds of no input — out before the wing breaks. Manual flight only warns.
 
 ### Terrain crash protection
 
-A movement hook bleeds off only the velocity component heading *into* a surface — ground, ceiling, or wall along your actual descending path — and never steers you, so it can't itself cause a crash. Ground approaches are flared to a survivable descent rate and fall damage cushioned. It reduces impacts but can't guarantee zero damage, since damage is ultimately server-authoritative.
+A movement hook bleeds off only the velocity heading *into* a surface — ground, ceiling, or wall along your path — and never steers, so it can't itself cause a crash. Ground approaches are flared to a survivable descent rate and fall damage cushioned. It reduces impacts but can't guarantee zero, since damage is server-authoritative.
 
 ### Water-bucket clutch
 
-An automatic MLG. While you're free-falling hard enough to take damage — including after a broken elytra drops you into a plain fall — it predicts where you'll land and, once the spot is within reach, places a water source in the block you're about to hit, then scoops it back up once you're safely down.
-
-To get it right it sweeps your hitbox footprint against the real block collision shapes to find the *highest* surface you'll actually rest on, so a fence post tucked under an edge still counts, and aims there allowing for horizontal drift. It places while sneaking so the water lands on top of the surface instead of waterlogging it — the sneak is sent through the input packet so the client prediction and the server agree — and the pickup aims back at the exact spot it placed. A water bucket is staged from your inventory into the hotbar the moment the fall starts, and it skips dimensions where water would evaporate.
+An automatic MLG. While falling hard enough to take damage it sweeps your hitbox against real block collision shapes to find the highest surface you'll actually land on, places a water source there — sneaking, so it sits on top rather than waterlogging — and scoops it back once you're down. A bucket is staged to the hotbar when the fall starts; it skips dimensions where water would evaporate.
 
 ### AFK damage protection
 
-A dead-man switch for when you've stepped away. It tracks your last real input — a movement or action key, the mouse actually turning the view (the autopilot moving the camera for you doesn't count), or an open screen. If you take any damage after fifteen seconds idle, it logs you out before something finishes you off, naming the source by attacker or damage type — read straight off the client and worded as a precaution rather than an obituary. It complements the autopilot's own dead-man switch (which only fires on disengage), covering damage taken while it's still flying you, or while you're on foot.
+A dead-man switch for when you've stepped away: it tracks real input (keys, the mouse turning the view — not the autopilot moving it — or an open screen), and if you take damage after ~15 s idle it logs you out, naming the source. It complements the autopilot's own dead-man switch, covering damage taken while it's still flying you or while you're on foot.
 
 ### Combat and movement
 
-Projectile targeting predicts where an incoming or outgoing projectile is going and either draws a lead reticle or aims for you (aimbot, off by default), with optional glowing outlines. A dodge feature reads each incoming projectile's closest approach and nudges you laterally clear. Fall prevention stops you walking off drops over three blocks unless you jump first.
+Projectile targeting predicts where an incoming or outgoing projectile is going and either draws a lead reticle or aims for you (aimbot, off by default), with optional glowing outlines; a dodge reads each incoming projectile's closest approach and nudges you laterally clear. Fall prevention stops you walking off drops over three blocks unless you jump first.
 
 ### A note on anti-cheat
 
-HUD readouts are invisible to servers. The movement and inventory features — autopilot, fall prevention, crash protection, dodge, auto-swap, the water clutch — send normal-looking inputs and packets and are lower risk, though a strict anti-cheat could still flag something like a mid-flight armor swap. The aimbot is the one feature that's reliably bannable. Use accordingly.
+HUD readouts are invisible to servers. The movement and inventory features send normal-looking inputs and packets and are lower risk, though a strict anti-cheat could still flag something like a mid-flight armor swap. The aimbot is the one reliably bannable feature. Use accordingly.
 
 ---
 
