@@ -102,7 +102,19 @@ public class Autopilot {
         float cap    = MAX_DPS * dt;
         cmdPitch += Math.max(-cap, Math.min(cap, step));
 
-        // yaw: terrain avoidance steers (faithful look placement) > nav mode > manual A/D
+        // A/D is the heading "bug": it nudges the commanded heading and enters SELECTED, so it steers the
+        // aircraft whether terrain avoidance or the nav law is doing the actual flying -- both fly toward this
+        // heading. (Previously A/D was only read in the no-avoidance branch, so it -- and a selected heading --
+        // did nothing whenever avoidance was steering.)
+        boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
+        if ((apLeft ^ apRight) && !Nav.hasTarget()) {
+            float base = Nav.hasHeading() ? Nav.selectedHeading()
+                                          : (float) (((cmdYaw + 180.0) % 360.0 + 360.0) % 360.0);  // current heading, as compass
+            Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
+        }
+
+        // yaw: terrain avoidance steers (faithful look placement) toward the commanded course, dodging
+        // terrain > nav heading law. Both honor the selected heading / A/D bug set above.
         if (ai.rrw.kine.Settings.terrainAvoidance && TurnGuard.steering()) {
             if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
                 // imminent wall: hard bank toward the open side at elevated authority, the look slewed
@@ -127,10 +139,8 @@ public class Autopilot {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
             float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
-        } else {
-            if (mc.options.keyLeft.isDown())  cmdYaw -= TURN_DPS * dt;
-            if (mc.options.keyRight.isDown()) cmdYaw += TURN_DPS * dt;
         }
+        // else: nothing commanded -- hold the current heading
 
         p.setXRot(cmdPitch);
         p.setYRot(cmdYaw);

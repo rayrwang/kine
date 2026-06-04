@@ -73,8 +73,16 @@ public final class TurnGuard {
     private static double[] destOf(LocalPlayer p) {
         double px = p.getX(), pz = p.getZ();
         if (Nav.hasTarget()) return new double[] { Nav.targetX(), Nav.targetZ() };
-        double dx = px - p.xOld, dz = pz - p.zOld;
-        double course = (dx * dx + dz * dz > 1.0e-8) ? FlightModel3D.velYaw(dx, dz) : p.getYRot();
+        // Honor a selected heading (the nav dial, or the A/D heading bug) so avoidance flies the pilot's
+        // chosen course -- dodging terrain on the way -- instead of straight ahead. Otherwise project a far
+        // point along the current ground course.
+        double course;
+        if (Nav.steering()) {                              // hasTarget is false here, so this is a heading
+            course = Nav.desiredYaw(p);                    // selected compass heading as MC yaw
+        } else {
+            double dx = px - p.xOld, dz = pz - p.zOld;
+            course = (dx * dx + dz * dz > 1.0e-8) ? FlightModel3D.velYaw(dx, dz) : p.getYRot();
+        }
         double r = Math.toRadians(course);
         return new double[] { px - Math.sin(r) * 3000.0, pz + Math.cos(r) * 3000.0 };
     }
