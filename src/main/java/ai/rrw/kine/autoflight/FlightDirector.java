@@ -113,6 +113,7 @@ public class FlightDirector {
   private static long  yawNanos = 0L;               // wall-clock of the last bar update, for the dt-based filter
   private static boolean active = false;
   private static boolean tooLow = false;   // gliding, but below the altitude to arm
+  private static boolean freshGlide = true; // first feasibility verdict of a new glide is decided raw (see tick)
   // Hysteresis for the too-low verdict. In rough terrain `room` chatters tick-to-tick (your altitude
   // porpoises across the feasibility boundary, terrain samples shift), so we integrate it rather than
   // react to a single tick: +1 per infeasible tick, -2 per feasible tick, clamped. Trip the warning only
@@ -179,7 +180,19 @@ public class FlightDirector {
     // Integrate the raw verdict so a momentary infeasible reading (common near tall terrain) neither
     // flashes the warning nor kicks the law out of cruise; only a sustained loss of a flyable path does.
     lowAccum = Math.max(0, Math.min(LOW_CAP, lowAccum + (room ? -2 : 1)));
-    boolean lowConfirmed = tooLow ? (lowAccum > LOW_CLEAR) : (lowAccum >= LOW_TRIP);
+    // The integrator's optimism (innocent-until-proven-infeasible over LOW_TRIP ticks) exists to ride out
+    // chatter in an ESTABLISHED cruise that briefly dips across the feasibility boundary. At the FIRST
+    // verdict of a fresh glide there is no cruise to protect, so an infeasible activation would otherwise
+    // flash the bars for ~LOW_TRIP ticks before the warning trips. Decide that first verdict on the raw
+    // `room` and seed the integrator to match, so the state holds and re-arming still drains via LOW_CLEAR.
+    boolean lowConfirmed;
+    if (freshGlide) {
+      freshGlide = false;
+      lowAccum = room ? 0 : LOW_CAP;
+      lowConfirmed = !room;
+    } else {
+      lowConfirmed = tooLow ? (lowAccum > LOW_CLEAR) : (lowAccum >= LOW_TRIP);
+    }
     if (lowConfirmed) {
       active = false;
       tooLow = true;
@@ -262,7 +275,7 @@ public class FlightDirector {
   }
 
   private static void reset() {
-    active = false; tooLow = false; lowAccum = 0;
+    active = false; tooLow = false; lowAccum = 0; freshGlide = true;
     TurnGuard.reset();
     climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
     floorAlt = targetAlt;
