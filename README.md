@@ -20,7 +20,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press P to engage autopilot.
-	- Terrain aware autopilot with fully optimized flight profiles.
+	- Terrain aware autopilot with fully optimized flight profile.
 	- Press N to enter a destination, with auto landing.
 	- Visializations: flight director bars, path guiderails, and flight path vector.
 - **Aimbot and targeting reticles for weapons.**
@@ -56,6 +56,10 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- ETA estimate isn't resetting on landing when above anchor
 	- Autopilot movement should stop when paused singleplayer
 	- Damage auto kick not working when window unfocused
+	- Autopilot no longer turning with AD keys
+	- Collision avoidance throttling sprinting jumping with elytra
+	- Autopilot visually move flight director when turning
+	- Autopilot resume heading after turn
 - Update readme technical, make more concise; change pictures, add logo
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
