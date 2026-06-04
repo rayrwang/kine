@@ -54,7 +54,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- ETA estimate isn't resetting on landing when above anchor
 	- Autopilot movement should stop when paused singleplayer
 	- Damage auto kick not working when window unfocused
-	- Collision avoidance throttling sprinting jumping with elytra
 	- Low altitude warning should count as autopilot disconnect.
 - Update pictures, add logo
 - Vertical speed indicator? Move speed to left?
