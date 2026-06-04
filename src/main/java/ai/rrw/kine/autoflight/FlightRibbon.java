@@ -122,12 +122,55 @@ public final class FlightRibbon {
         }
 
         Matrix4f mat = ctx.poseStack().last().pose();
+        // Pass 1 -- the visible translucent rails. debugQuads depth-TESTS against terrain (so terrain
+        // occludes them) but does not WRITE depth; drawing this FIRST means it tests against the far terrain
+        // depth and reliably passes, so the rails draw solid.
         VertexConsumer vc = ctx.bufferSource().getBuffer(RenderTypes.debugQuads());
         for (int i = 1; i < count; i++) {
             rail(vc, mat, cam, ox, oy, oz, col, i, +1.0);   // left rail
             rail(vc, mat, cam, ox, oy, oz, col, i, -1.0);   // right rail
         }
         ctx.bufferSource().endBatch(RenderTypes.debugQuads());
+
+        // Pass 2 -- depth only. Without this, clouds (a later frame-graph pass composited against the main
+        // depth buffer) painted over the rails even when behind them, because debugQuads never wrote depth.
+        // waterMask writes depth with no color (write mask 0) under the same LEQUAL test, laying the rails
+        // into the depth buffer exactly where they're visible, so the clouds pass is correctly occluded.
+        // It runs AFTER the color pass on purpose: drawing it first would make the color pass test LEQUAL
+        // against this coincident-but-not-bit-identical depth (different vertex shader) and z-fight to white.
+        VertexConsumer mvc = ctx.bufferSource().getBuffer(RenderTypes.waterMask());
+        for (int i = 1; i < count; i++) {
+            railMask(mvc, mat, cam, ox, oy, oz, i, +1.0);
+            railMask(mvc, mat, cam, ox, oy, oz, i, -1.0);
+        }
+        ctx.bufferSource().endBatch(RenderTypes.waterMask());
+    }
+
+    /** Same quad as {@link #rail} but position-only, for the depth-write (waterMask) pass. waterMask
+     *  back-face culls, and a near-horizontal rail quad faces away from the camera as readily as toward it,
+     *  so emit BOTH windings -- one survives the cull and lays down depth regardless of orientation. */
+    private static void railMask(VertexConsumer vc, Matrix4f mat, Vec3 cam,
+                                 double[] ox, double[] oy, double[] oz, int i, double sign) {
+        int a = i - 1, b = i;
+        double e1 = sign * RAIL_HALF - RAIL_W * 0.5;
+        double e2 = sign * RAIL_HALF + RAIL_W * 0.5;
+        double a1x = ox[a] + perpX * e1, a1z = oz[a] + perpZ * e1, ay = oy[a];
+        double b1x = ox[b] + perpX * e1, b1z = oz[b] + perpZ * e1, by = oy[b];
+        double b2x = ox[b] + perpX * e2, b2z = oz[b] + perpZ * e2;
+        double a2x = ox[a] + perpX * e2, a2z = oz[a] + perpZ * e2;
+        posVertex(vc, mat, cam, a1x, ay, a1z);   // forward winding
+        posVertex(vc, mat, cam, b1x, by, b1z);
+        posVertex(vc, mat, cam, b2x, by, b2z);
+        posVertex(vc, mat, cam, a2x, ay, a2z);
+        posVertex(vc, mat, cam, a2x, ay, a2z);   // reverse winding (other face)
+        posVertex(vc, mat, cam, b2x, by, b2z);
+        posVertex(vc, mat, cam, b1x, by, b1z);
+        posVertex(vc, mat, cam, a1x, ay, a1z);
+    }
+
+    private static void posVertex(VertexConsumer vc, Matrix4f mat, Vec3 cam,
+                                  double wxx, double wyy, double wzz) {
+        vc.addVertex(mat, (float) (wxx - cam.x), (float) (wyy - cam.y), (float) (wzz - cam.z));
     }
 
     /** Emit one quad: the span of one rail (a thin strip at sign*RAIL_HALF across the path) from i-1 to i. */
