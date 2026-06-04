@@ -59,9 +59,8 @@ public final class KillAura {
     private KillAura() {}
 
     // --- tuning ---------------------------------------------------------------------------------
-    private static final int   HIT_REFRACTORY = 10;   // ticks a mob we hit stays i-framed; skip it until then (~0.5 s)
-    private static final float FULL_CHARGE    = 0.9f;  // charge gating a clean full hit (and crits/sweep) -- matches vanilla fullStrength
-    private static final int   SPAM_MIN       = 6;     // fresh in-reach targets at/above which spamming out-DPSes waiting (~breakeven)
+    private static final int   HIT_REFRACTORY = 10;   // a struck mob sets invulnerableTime=20 and is re-hittable for full damage only at <=10 -- i.e. exactly 10 ticks later
+    private static final float FULL_CHARGE    = 1.0f;  // wait/sweep gate. Vanilla enables sweep/crit at scale>0.9, but a sword/axe's charge time (>=12.5t) outlasts the 10t i-frame, so you're charge-limited: hitting at 0.9 instead of full just resets the ticker ~1.5t early for ~5% less per hit. A full charge is the DPS-optimal point (and also maximises sweep base damage).
     private static final int   ANGRY_TICKS    = 600;   // a neutral mob that hits you stays a target this long (~30 s)
     private static final double REACH_PAD     = 0.0;   // attack at exactly the vanilla entity-interaction range
     private static final double SWEEP_X = 1.0, SWEEP_Y = 0.25, SWEEP_Z = 1.0;   // vanilla sweep-box inflation
@@ -124,7 +123,15 @@ public final class KillAura {
         }
         if (nearest == null) return;   // everything we can see is still i-framed -- nothing to gain by swinging
 
-        if (fresh >= SPAM_MIN) {
+        // Spam-vs-wait breakeven, from the real combat maths: every swing resets the charge ticker, so a
+        // spammed hit is the 20% floor (~0.2*base); you can land one per fresh mob and a mob is fresh every
+        // 10 ticks, giving spam aggregate ~= 0.02*N*base per tick. Waiting lands one full hit (base) per
+        // attack delay D (a sword/axe is charge-limited since D >= 12.5 > 10), i.e. base/D per tick. Spam
+        // wins past N = 50/D fresh mobs -- ~5 for a sword, ~3 for a netherite axe. (Enchantments barely
+        // touch the floor-damage spam hit but fully count toward the full hit, so they nudge this up a little.)
+        int spamMin = (int) Math.floor(50.0 / p.getCurrentItemAttackStrengthDelay()) + 1;
+
+        if (fresh >= spamMin) {
             attack(mc, p, nearest);                          // crowd: swing every tick at a fresh mob
         } else if (charge >= FULL_CHARGE) {
             attack(mc, p, nearest);                          // few: only on a full charge, timed to the i-frame window
