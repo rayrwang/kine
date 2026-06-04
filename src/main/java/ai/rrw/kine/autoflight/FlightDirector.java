@@ -140,15 +140,22 @@ public class FlightDirector {
       return;
     }
 
-    // Decide whether the situation ahead is flyable. The arming gate always applies -- arming with no
-    // safe way forward is unsafe regardless of mode. With avoidance on, "flyable" means the planner finds
-    // a path from here (which, because the climb law dives, naturally refuses to arm too low to clear that
-    // dive, and refuses when boxed in). Once armed, terrain ahead is the lateral planner's job, so we stay
-    // armed. Without avoidance, the legacy absolute-AGL window arms/holds the autopilot.
+    // Decide whether the situation ahead is flyable. The arming gate always applies -- arming or staying
+    // armed with no safe way forward is unsafe regardless of mode. With avoidance on, "flyable" means the
+    // planner finds a path from here (which, because the climb law dives, naturally refuses too low to
+    // clear that dive, refuses low-and-slow with no energy to climb, and refuses when boxed in). Without
+    // avoidance, the legacy absolute-AGL window arms/holds the autopilot.
     floorAlt = targetAlt;
     boolean room;
     if (Settings.terrainAvoidance) {
-      room = active || TurnGuard.feasibleToArm(mc, p, targetAlt);
+      // Stay armed only while a flyable path actually exists from here -- checked live every tick, not
+      // latched, so descending into a low-and-slow state with no way out drops the bars and refuses to
+      // engage. The one exception: an in-progress committed maneuver (turn / emergency bank), whose
+      // transient low speed would otherwise read as infeasible and yank a recoverable turn. A genuinely
+      // stuck maneuver ends itself through the controller's own DISENGAGE escalation.
+      boolean maneuvering = Autopilot.isEngaged()
+          && (TurnGuard.action() == TurnPlanner.TURN || TurnGuard.action() == TurnPlanner.EMERGENCY);
+      room = TurnGuard.feasibleToArm(mc, p, targetAlt) || maneuvering;
     } else {
       int clear = clearBelow(mc, p);
       boolean absSafe = lastTroughY >= ABS_FLOOR;
