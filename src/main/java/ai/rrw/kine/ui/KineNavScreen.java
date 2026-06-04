@@ -2,6 +2,7 @@ package ai.rrw.kine.ui;
 
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.FlightDirector;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -13,6 +14,7 @@ import net.minecraft.network.chat.Component;
 public class KineNavScreen extends Screen {
 
     private static final int GREEN = 0xFF44FF44, RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
+    private static final int CURR = 0xFF44CCFF;   // cyan: where the player is currently pointed (heading bug)
 
     private Nav.Mode mode;
     private float heading;          // compass deg (0 = N); only meaningful when hasHeading
@@ -22,6 +24,7 @@ public class KineNavScreen extends Screen {
     private Button altMinus, altPlus;
     private static final int ALT_STEP = 25;
     private Button selBtn, manBtn, offBtn;
+    private Button useCurrentBtn;
     private boolean draggingDial = false;
 
     private int dialCx, dialCy, dialR;   // heading dial geometry
@@ -65,8 +68,8 @@ public class KineNavScreen extends Screen {
         addRenderableWidget(offBtn);
 
         int dialTop = top + bh + 22;                       // just below the mode buttons
-        int avail   = (this.height - 30) - dialTop;        // room down to above the Done button, less the HDG label
-        dialR  = Math.max(40, Math.min(90, (avail - 18) / 2));
+        int avail   = (this.height - 30) - dialTop;        // room down to above the Done button
+        dialR  = Math.max(40, Math.min(90, (avail - 50) / 2));   // reserve for the HDG label + "use current" button
         dialCx = cx;
         dialCy = dialTop + dialR;
 
@@ -81,6 +84,12 @@ public class KineNavScreen extends Screen {
         }
         addRenderableWidget(xBox);
         addRenderableWidget(zBox);
+
+        // sets the dial to wherever the player is currently pointed (one tap instead of dragging)
+        int useY = dialCy + dialR + 28;
+        useCurrentBtn = Button.builder(Component.literal("Use current heading"), b -> useCurrentHeading())
+            .bounds(cx - 75, useY, 150, 20).build();
+        addRenderableWidget(useCurrentBtn);
 
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
             .bounds(cx - 50, this.height - 28, 100, 20).build());
@@ -118,6 +127,8 @@ public class KineNavScreen extends Screen {
         selBtn.active = mode != Nav.Mode.SELECTED;   // greyed = the current mode
         manBtn.active = mode != Nav.Mode.MANAGED;
         offBtn.active = mode != Nav.Mode.OFF;
+        boolean sel = mode == Nav.Mode.SELECTED;
+        useCurrentBtn.visible = sel; useCurrentBtn.active = sel;   // only meaningful when dialing a heading
     }
 
     @Override
@@ -156,6 +167,15 @@ public class KineNavScreen extends Screen {
         Nav.setHeading(heading);
     }
 
+    /** Set the dial to where the player is currently pointed. MC yaw (0 = south) -> compass (0 = north). */
+    private void useCurrentHeading() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        heading = ((mc.player.getYRot() + 180f) % 360f + 360f) % 360f;
+        hasHeading = true;
+        Nav.setHeading(heading);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
         super.extractRenderState(g, mouseX, mouseY, partial);
@@ -188,6 +208,18 @@ public class KineNavScreen extends Screen {
         g.text(this.font, "S", dialCx - 3, dialCy + dialR + 2,  LABEL, true);
         g.text(this.font, "E", dialCx + dialR + 5, dialCy - 4,  LABEL, true);
         g.text(this.font, "W", dialCx - dialR - 11, dialCy - 4, LABEL, true);
+
+        // current heading bug: a short cyan tick at the rim showing where the player is pointed right now,
+        // so you can dial relative to it (or hit "use current heading" to snap to it)
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            double pr = Math.toRadians(((mc.player.getYRot() + 180f) % 360f + 360f) % 360f);
+            int ox = dialCx + (int) Math.round(Math.sin(pr) * (dialR + 2));
+            int oy = dialCy - (int) Math.round(Math.cos(pr) * (dialR + 2));
+            int ix = dialCx + (int) Math.round(Math.sin(pr) * (dialR - 10));
+            int iy = dialCy - (int) Math.round(Math.cos(pr) * (dialR - 10));
+            line(g, ox, oy, ix, iy, CURR);
+        }
 
         if (hasHeading) {
             double hr = Math.toRadians(heading);

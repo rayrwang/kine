@@ -30,7 +30,7 @@ public class Autopilot {
     private static final float LANDING_TURN_DPS = 80f;// sharper turn authority while landing, for a tight circle
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
-    private static final int   KICK_TICKS  = 60; // 3 s after an unattended disengage before we disconnect
+    private static final int   KICK_TICKS  = 30; // 1.5 s after an unattended disengage before we disconnect
     private static final float TAKEOVER_EPS = 3f; // look change (deg) that counts as the pilot taking control
 
     private static KeyMapping toggleKey;
@@ -48,7 +48,7 @@ public class Autopilot {
 
     public static void register() {
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.autopilot", GLFW.GLFW_KEY_P, KeyMapping.Category.MISC));
+            "key.kine.autopilot", GLFW.GLFW_KEY_J, KeyMapping.Category.MISC));
         ClientTickEvents.END_CLIENT_TICK.register(Autopilot::tick);
         HudElementRegistry.attachElementAfter(
             VanillaHudElements.MISC_OVERLAYS,
@@ -162,7 +162,7 @@ public class Autopilot {
 
     private static void resetWarn() { warnActive = false; kickTicks = 0; }
 
-    // While the warning is up: clear it the moment the pilot takes control; otherwise disconnect at 3 s.
+    // While the warning is up: clear it the moment the pilot takes control; otherwise disconnect at 1.5 s.
     private static void updateWarn(Minecraft mc, LocalPlayer p) {
         if (engaged || !p.isFallFlying()) { resetWarn(); return; }   // re-engaged, or no longer airborne
         boolean keys = mc.options.keyUp.isDown() || mc.options.keyDown.isDown()

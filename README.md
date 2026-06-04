@@ -19,7 +19,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Current Features
 
 - **Fly long distances without fireworks.**
-	- Start high enough, then press P to engage autopilot.
+	- Start high enough, then press J to engage autopilot.
 	- Terrain aware autopilot with fully optimized flight profile.
 	- Press N to enter a destination, with auto landing.
 	- Visializations: flight director bars, path guiderails, and flight path vector.
@@ -40,9 +40,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Initialize nav heading to current, add button for update to current
-- Change autopilot disengage kick grace period to 1s
-- Change P autopilot keybind (conflict)
 - Elytra autopilot:
 	- Cool side view of path with terrain
 	- Per block pathing instead of heightmap highest block
