@@ -123,6 +123,14 @@ public class KineSettingsScreen extends Screen {
         + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
         + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
 
+    private static final String DESC_AURA =
+        "Automatically melees nearby hostile mobs and angry neutral mobs (any neutral that has hit you) "
+        + "with whatever's in hand \\u2014 no view turning, line-of-sight checked so it won't swing through "
+        + "walls. It adapts to the fight: against a crowd it spams the nearest fresh mob every tick; against "
+        + "one or two it waits for a full charge so each hit lands clean; with a Sweeping Edge sword on the "
+        + "ground it times a full-charge sweep onto the tightest cluster. Bind a key under Controls to toggle "
+        + "it. This is a combat cheat \\u2014 expect a ban anywhere that doesn't allow client mods.";
+
     private static final String DESC_AFK =
         "If you take any damage while you've given no input \u2014 no movement keys, mouse, or open screen "
         + "\u2014 for fifteen seconds, you're logged out before something can kill you unattended. The "
@@ -175,6 +183,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Projectile glow", DESC_GLOW, () -> Settings.projectileGlow, v -> Settings.projectileGlow = v),
             Opt.of("Auto aim", DESC_AUTOAIM, () -> Settings.autoAim, v -> Settings.autoAim = v),
             Opt.of("Projectile dodge", DESC_DODGE, () -> Settings.projectileDodge, v -> Settings.projectileDodge = v),
+            Opt.of("Kill aura", DESC_AURA, () -> Settings.killAura, v -> Settings.killAura = v),
         }),
     };
 

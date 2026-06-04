@@ -22,6 +22,7 @@ import ai.rrw.kine.autoflight.ElytraGuard;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.combat.KillAura;
 
 public class Kine implements ClientModInitializer {
 	public static final String MOD_ID = "kine";
@@ -57,6 +58,7 @@ public class Kine implements ClientModInitializer {
 		ai.rrw.kine.combat.AfkGuard.register();
 		ProjectileTargeting.register();
 		ProjectileDodge.register();
+		KillAura.register();
 		ai.rrw.kine.ui.KineMenu.register();
 	}
 }
