@@ -113,6 +113,15 @@ public class FlightDirector {
   private static long  yawNanos = 0L;               // wall-clock of the last bar update, for the dt-based filter
   private static boolean active = false;
   private static boolean tooLow = false;   // gliding, but below the altitude to arm
+  // Hysteresis for the too-low verdict. In rough terrain `room` chatters tick-to-tick (your altitude
+  // porpoises across the feasibility boundary, terrain samples shift), so we integrate it rather than
+  // react to a single tick: +1 per infeasible tick, -2 per feasible tick, clamped. Trip the warning only
+  // after it has been bad a while (LOW_TRIP); clear only after it drains back down (LOW_CLEAR). A 50/50
+  // chatter drifts toward zero and never trips, so the annunciator stops flashing on transients.
+  private static int       lowAccum  = 0;
+  private static final int LOW_TRIP  = 12;   // ~0.6 s of sustained infeasibility before it trips
+  private static final int LOW_CLEAR = 4;    // must drain to here before it clears (asymmetric / leaky)
+  private static final int LOW_CAP   = 20;   // ceiling so a long bad stretch still clears promptly once good
 
   public static void register() {
     HudElementRegistry.attachElementAfter(
@@ -148,11 +157,14 @@ public class FlightDirector {
     floorAlt = targetAlt;
     boolean room;
     if (Settings.terrainAvoidance) {
-      // Engaged: the planner/controller is the terrain authority -- it hands control back (DISENGAGE,
-      // routed via TurnGuard.handOff at end of tick) when there is no way out, including low-and-slow
-      // where the climb can't clear the ground, and skips that mid-maneuver so a committed turn isn't
-      // cut off. Not engaged: arm only if a flyable path exists from here. Same check, one code path.
-      room = Autopilot.isEngaged() || TurnGuard.feasibleToArm(mc, p, targetAlt);
+      // Stay armed only while a flyable path actually exists from here -- checked live every tick, not
+      // latched, so descending into a low-and-slow state with no way out drops the bars and refuses to
+      // engage. The one exception: an in-progress committed maneuver (turn / emergency bank), whose
+      // transient low speed would otherwise read as infeasible and yank a recoverable turn. A genuinely
+      // stuck maneuver ends itself through the controller's own DISENGAGE escalation.
+      boolean maneuvering = Autopilot.isEngaged()
+          && (TurnGuard.action() == TurnPlanner.TURN || TurnGuard.action() == TurnPlanner.EMERGENCY);
+      room = TurnGuard.feasibleToArm(mc, p, targetAlt) || maneuvering;
     } else {
       int clear = clearBelow(mc, p);
       boolean absSafe = lastTroughY >= ABS_FLOOR;
@@ -161,7 +173,11 @@ public class FlightDirector {
       // terrain, where AGL at the bottom is small even though absolute altitude is safe.)
       room = active ? (absSafe || clear >= FLOOR_AGL) : (clear >= ENGAGE_AGL);
     }
-    if (!room) {
+    // Integrate the raw verdict so a momentary infeasible reading (common near tall terrain) neither
+    // flashes the warning nor kicks the law out of cruise; only a sustained loss of a flyable path does.
+    lowAccum = Math.max(0, Math.min(LOW_CAP, lowAccum + (room ? -2 : 1)));
+    boolean lowConfirmed = tooLow ? (lowAccum > LOW_CLEAR) : (lowAccum >= LOW_TRIP);
+    if (lowConfirmed) {
       active = false;
       tooLow = true;
       // below arming altitude / no feasible floor: revert to the climb profile so re-arming climbs back up
@@ -239,7 +255,7 @@ public class FlightDirector {
   }
 
   private static void reset() {
-    active = false; tooLow = false;
+    active = false; tooLow = false; lowAccum = 0;
     TurnGuard.reset();
     climbing = true; vmode = VM_CLB; lastTroughY = -1.0e9; cycMinY = Double.MAX_VALUE;
     floorAlt = targetAlt;
