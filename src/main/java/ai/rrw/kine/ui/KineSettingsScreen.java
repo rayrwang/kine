@@ -76,7 +76,7 @@ public class KineSettingsScreen extends Screen {
         "Draws the autopilot's predicted path as two blue rails at ground level, so you can see where it "
         + "will carry you and how it clears terrain. Shown only while the autopilot is engaged.";
     private static final String DESC_TERRAIN =
-        "Experimental. Lets the elytra autopilot climb to clear rising terrain instead of holding a fixed "
+        "Lets the elytra autopilot climb to clear rising terrain instead of holding a fixed "
         + "altitude, resuming once it drops away. Disengages if a climb can't clear what's ahead.";
 
     private static final String DESC_ELYTRA =
@@ -133,7 +133,7 @@ public class KineSettingsScreen extends Screen {
         }),
         new Section("Safety", new Opt[]{
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
-            Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
+            Opt.of("Elytra crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
             Opt.of("Water bucket clutch", DESC_CLUTCH, () -> Settings.waterBucketClutch, v -> Settings.waterBucketClutch = v),
             Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),

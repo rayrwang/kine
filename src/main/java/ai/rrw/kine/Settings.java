@@ -25,7 +25,7 @@ public class Settings {
     public static boolean afkDamageProtection    = true;
     public static boolean waterBucketClutch      = true;
     public static boolean displayFlightPathVector= false;
-    public static boolean terrainAvoidance       = false;
+    public static boolean terrainAvoidance       = true;
     public static boolean flightRibbon           = true;
     public static boolean displayFlightProfile   = true;
     public static boolean killAura               = false;
@@ -40,7 +40,7 @@ public class Settings {
                 displayMobHealths = true, displayMobNames = false, projectileReticle = true,
                 projectileGlow = true, autoAim = false, projectileDodge = false, displayRangeEndurance = true,
                 afkDamageProtection = true, waterBucketClutch = true, displayFlightPathVector = false,
-                terrainAvoidance = false, flightRibbon = true, displayFlightProfile = true,
+                terrainAvoidance = true, flightRibbon = true, displayFlightProfile = true,
                 killAura = false, autoWeapon = false;
     }
 

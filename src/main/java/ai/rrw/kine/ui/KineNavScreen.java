@@ -22,7 +22,7 @@ public class KineNavScreen extends Screen {
     private EditBox xBox, zBox;
     private EditBox altBox;
     private Button altMinus, altPlus;
-    private static final int ALT_STEP = 25;
+    private static final int ALT_STEP = 10;
     private Button selBtn, manBtn, offBtn;
     private Button useCurrentBtn;
     private boolean draggingDial = false;

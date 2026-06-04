@@ -46,7 +46,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Quality of life: terrain avoidance is no longer experimenta, make default on; rename terrain crash protection -> crash protection; altitude 10 or 20 increments not 25; add heading display; shift annunciators up, move not enough durability warning to below annunciators, move AP on/off to annunciators
 - Kill aura only on player attack or being attacked, decouple client & server rotation
 - Elytra autopilot:
 	- Per block pathing instead of heightmap highest block
