@@ -195,17 +195,7 @@ public class Autopilot {
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
-        int boxX = W / 2 + 91 + 4; // mirror of the offhand slot, right of the hotbar
-        int boxY = H - 20;
-        g.fill(boxX, boxY, boxX + 18, boxY + 18, 0x90000000); // slot-like backdrop
-        String s = "AP";
-        int tx = boxX + (20 - mc.font.width(s)) / 2;
-        int ty = boxY + (20 - mc.font.lineHeight) / 2 + 1;
-        if (engaged) {
-            g.text(mc.font, s, tx, ty, 0xFF55FF55, true); // green
-        } else {
-            g.text(mc.font, s, tx, ty, 0xFFFF0000, true); // red
-        }
+        // (autopilot engaged/disengaged status now annunciates as "AP" in the heading/nav strip, drawn by Nav)
 
         if (warnActive) {
             Font font = mc.font;

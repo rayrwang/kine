@@ -63,7 +63,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Low altitude warning should count as autopilot disconnect
 	- Flight director turn even in manual flight?
 - Update pictures, add logo
-- Heading indicator
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall

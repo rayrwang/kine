@@ -44,6 +44,10 @@ public class Nav {
     private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
     private static final int    AMBER          = 0xFFFFC400; // CLB / DESC (climbing or descending to target)
     private static final int    YELLOW         = 0xFFFFEE00; // ALT* (altitude capture, nearing target)
+    private static final int    WHITE          = 0xFFFFFFFF; // heading arc ticks/labels/box
+    private static final double ARC_HALF_DEG   = 24.0;       // the arc spans this far each side of the apex (circle deg)
+    private static final double ARC_VIS_HDG    = 60.0;       // compass degrees shown each side of the current heading
+    private static final int    ARC_BOX_TOP    = 4;          // gap from the top of the screen to the heading box
     private static final int    ALT_LEFT_GAP   = 100;        // fixed offset left of center for the CLB/ALT block
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
@@ -194,7 +198,14 @@ public class Nav {
         int cx = W / 2, cy = H / 2;
         int maxOff = (int) (H * 0.25f);
         int lh = mc.font.lineHeight;
-        int etaY  = cy - maxOff - lh - 6;   // bottom annunciator row (the slot the "too low" warning uses)
+
+        // heading compass arc across the very top — always shown, independent of autopilot state
+        drawHeadingArc(g, mc, cx, cy);
+
+        // annunciator block sits one line higher than the old layout; the freed bottom line carries the
+        // durability warning directly beneath it.
+        int durY  = cy - maxOff - lh - 6;   // durability warning line (below the annunciators; "too low" also uses it)
+        int etaY  = durY - lh - 2;          // bottom annunciator row
         int lineY = etaY - lh - 2;          // top annunciator row
 
         if (mode == Mode.MANAGED && hasTarget) drawTargetColumn(g, mc, W, H);
@@ -222,18 +233,102 @@ public class Nav {
         // altitude-hold annunciator: two rows to the LEFT of the nav block, shown whenever the director flies
         drawAltAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
 
+        // autopilot status on the RIGHT, mirroring the CLB/ALT block's distance from center -- replaces the old
+        // hotbar badge; always shown
+        int apX = Math.max(cx + ALT_LEFT_GAP, cx + halfCenter + 12);
+        g.text(mc.font, "AP", apX, lineY, Autopilot.isEngaged() ? GREEN : RED, true);
+
         if (!navCenter) return;
 
         g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
         if (line2 == null) return;   // SELECTED, or no destination yet — no distance/ETA/range
         g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
 
-        // If the elytra can't take us that far, flag it to the right of the two readout lines.
+        // If the elytra can't take us that far, flag it on one line directly below the annunciators.
         double range = RangeEndurance.rangeMeters();
         if (!landing && range >= 0 && range < dist) {
-            int wx = cx + halfCenter + 12;
-            g.text(mc.font, "INSUFFICIENT", wx, lineY, RED, true);
-            g.text(mc.font, "DURABILITY",   wx, etaY,  RED, true);
+            String wd = "INSUFFICIENT DURABILITY";
+            g.text(mc.font, wd, cx - mc.font.width(wd) / 2, durY, RED, true);
+        }
+    }
+
+    // Heading compass arc: a shallow arc of a big circle centred on the crosshair, drawn near the top of the
+    // screen. The compass card (ticks every 10 deg, labels every 30) rotates under a fixed apex; the current
+    // heading shows in a boxed readout just above the apex; a green bug marks the selected heading when one is
+    // active, clamped to the arc edges. Always drawn regardless of whether the autopilot is armed or engaged.
+    private static void drawHeadingArc(GuiGraphicsExtractor g, Minecraft mc, int cx, int cy) {
+        LocalPlayer p = mc.player;
+        if (p == null) return;
+        net.minecraft.client.gui.Font font = mc.font;
+        int lh = font.lineHeight;
+        double hdg = (((p.getYRot() + 180.0) % 360.0) + 360.0) % 360.0;   // compass heading (0=N, 90=E)
+
+        int boxH  = lh + 2;
+        int apexY = ARC_BOX_TOP + boxH + 4;
+        double R  = cy - apexY;                     // circle centred on the crosshair; apex just under the box
+        if (R < 20) return;
+        double scale = ARC_HALF_DEG / ARC_VIS_HDG;  // circle-deg per compass-deg
+
+        for (int h = 0; h < 360; h += 10) {
+            double d = Mth.wrapDegrees((float) (h - hdg));
+            if (Math.abs(d) > ARC_VIS_HDG) continue;
+            double a = Math.toRadians(d * scale), sin = Math.sin(a), cos = Math.cos(a);
+            boolean major = (h % 30 == 0);
+            int tlen = major ? 7 : 4;
+            int xo = cx + (int) Math.round(R * sin),          yo = cy - (int) Math.round(R * cos);
+            int xi = cx + (int) Math.round((R - tlen) * sin), yi = cy - (int) Math.round((R - tlen) * cos);
+            line(g, xi, yi, xo, yo, WHITE);
+            if (major) {
+                String lbl = headingLabel(h);
+                double lr = R - tlen - 2;                       // just inside the tick
+                int lx = cx + (int) Math.round(lr * sin) - font.width(lbl) / 2;
+                int ly = cy - (int) Math.round(lr * cos);       // hangs inboard (toward the centre), below the tick
+                g.text(font, lbl, lx, ly, WHITE, true);
+            }
+        }
+
+        // current-heading readout, boxed, just above the apex
+        String hs = pad3(((int) Math.round(hdg)) % 360);
+        int bw = font.width(hs) + 8, bx = cx - bw / 2;
+        g.fill(bx, ARC_BOX_TOP, bx + bw, ARC_BOX_TOP + boxH, 0x90000000);
+        g.outline(bx, ARC_BOX_TOP, bw, boxH, WHITE);   // outline takes width/height, not x2/y2
+        g.text(font, hs, cx - font.width(hs) / 2, ARC_BOX_TOP + (boxH - lh) / 2 + 1, WHITE, true);
+
+        // green selected-heading bug, a small triangle on the arc, clamped to the visible edges
+        if (mode == Mode.SELECTED && hasHeading) {
+            double d = Math.max(-ARC_VIS_HDG, Math.min(ARC_VIS_HDG, Mth.wrapDegrees((float) (selectedHeading - hdg))));
+            double a = Math.toRadians(d * scale), sin = Math.sin(a), cos = Math.cos(a);
+            int tx = cx + (int) Math.round(R * sin), ty = cy - (int) Math.round(R * cos);   // tip on the arc
+            double bcx = cx + (R + 7) * sin, bcy = cy - (R + 7) * cos;                       // base centre, just outside
+            double tgx = cos, tgy = sin;                                                     // tangent to the arc here
+            int b1x = (int) Math.round(bcx - 4 * tgx), b1y = (int) Math.round(bcy - 4 * tgy);
+            int b2x = (int) Math.round(bcx + 4 * tgx), b2y = (int) Math.round(bcy + 4 * tgy);
+            line(g, tx, ty, b1x, b1y, GREEN);
+            line(g, tx, ty, b2x, b2y, GREEN);
+            line(g, b1x, b1y, b2x, b2y, GREEN);
+        }
+    }
+
+    private static String headingLabel(int h) {
+        switch (h) {
+            case 0:   return "N";
+            case 90:  return "E";
+            case 180: return "S";
+            case 270: return "W";
+            default:  return Integer.toString(h / 10);
+        }
+    }
+
+    // 1px line via Bresenham (GuiGraphicsExtractor only offers axis-aligned primitives; the arc needs diagonals).
+    private static void line(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1, int col) {
+        int dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx - dy;
+        while (true) {
+            g.fill(x0, y0, x0 + 1, y0 + 1, col);
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; x0 += sx; }
+            if (e2 <  dx) { err += dx; y0 += sy; }
         }
     }
 
