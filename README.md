@@ -56,7 +56,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Warnings?
 - Fix:
 	- Elytra durability protection should be cumulative, not single
-	- ETA estimate isn't resetting on landing when above anchor
+	- Range estimate isn't resetting on landing
+	- Brief lack of too low altitude warning on elytra engage
 	- Autopilot movement should stop when paused singleplayer, and should work when window unfocused (both currently opposite)
 	- Damage auto kick not working when window unfocused
 	- Low altitude warning should count as autopilot disconnect
