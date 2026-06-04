@@ -73,15 +73,18 @@ public final class TurnGuard {
         return TurnPlanner.feasible(seed, destBearing, d[0], d[1], terrainOf(mc.level));
     }
 
-    // destination: Nav managed target if set, else a far point along the current ground course
+    // destination: Nav managed target while in MANAGED, else a far point along the selected heading / ground course
     private static double[] destOf(LocalPlayer p) {
         double px = p.getX(), pz = p.getZ();
-        if (Nav.hasTarget()) return new double[] { Nav.targetX(), Nav.targetZ() };
+        // hasTarget() stays set after leaving MANAGED (the destination is remembered), so gate on the mode too --
+        // otherwise a heading selected after a managed leg would be ignored in favor of the stale target.
+        if (Nav.mode() == Nav.Mode.MANAGED && Nav.hasTarget())
+            return new double[] { Nav.targetX(), Nav.targetZ() };
         // Honor a selected heading (the nav dial, or the A/D heading bug) so avoidance flies the pilot's
         // chosen course -- dodging terrain on the way -- instead of straight ahead. Otherwise project a far
         // point along the current ground course.
         double course;
-        if (Nav.steering()) {                              // hasTarget is false here, so this is a heading
+        if (Nav.steering()) {                              // not managed here, so this is a selected heading
             course = Nav.desiredYaw(p);                    // selected compass heading as MC yaw
         } else {
             double dx = px - p.xOld, dz = pz - p.zOld;

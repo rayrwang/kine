@@ -107,7 +107,7 @@ public class Autopilot {
         // heading. (Previously A/D was only read in the no-avoidance branch, so it -- and a selected heading --
         // did nothing whenever avoidance was steering.)
         boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
-        if ((apLeft ^ apRight) && !Nav.hasTarget()) {
+        if ((apLeft ^ apRight) && Nav.mode() != Nav.Mode.MANAGED) {   // don't fight the coordinate nav while it's flying
             float base = Nav.hasHeading() ? Nav.selectedHeading()
                                           : (float) (((cmdYaw + 180.0) % 360.0 + 360.0) % 360.0);  // current heading, as compass
             Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
@@ -156,6 +156,9 @@ public class Autopilot {
         cmdYaw   = p.getYRot();
         lastFrameNanos = System.nanoTime();
     }
+
+    /** Engage from another system rather than the toggle key. */
+    public static void engageFor(LocalPlayer p) { if (!engaged && p != null) engage(p); }
 
     public static void disengage() {
         if (engaged) {
