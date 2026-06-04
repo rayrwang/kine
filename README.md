@@ -46,6 +46,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Quality of life: terrain avoidance is no longer experimenta, make default on; rename terrain crash protection -> crash protection; altitude 10 or 20 increments not 25; add heading display; shift annunciators up, move not enough durability warning to below annunciators, move AP on/off to annunciators
 - Kill aura only on player attack or being attacked, decouple client & server rotation
 - Elytra autopilot:
 	- Per block pathing instead of heightmap highest block
@@ -57,9 +58,10 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Fix:
 	- Elytra durability protection should be cumulative, not single
 	- ETA estimate isn't resetting on landing when above anchor
-	- Autopilot movement should stop when paused singleplayer
+	- Autopilot movement should stop when paused singleplayer, and should work when window unfocused (both currently opposite)
 	- Damage auto kick not working when window unfocused
 	- Low altitude warning should count as autopilot disconnect
+	- Flight director turn even in manual flight?
 - Update pictures, add logo
 - Heading indicator
 - Vertical speed indicator? Move speed to left?
@@ -67,6 +69,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Mace fall
 - Auto eat & totem
 - Activate elytra if fall (could be annoying)
+- Creeper explosion avoidance
 - Warning sounds
 - More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
