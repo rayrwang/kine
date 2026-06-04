@@ -29,6 +29,7 @@ public class Settings {
     public static boolean flightRibbon           = true;
     public static boolean displayFlightProfile   = true;
     public static boolean killAura               = false;
+    public static boolean autoWeapon             = false;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
@@ -40,7 +41,7 @@ public class Settings {
                 projectileGlow = true, autoAim = false, projectileDodge = false, displayRangeEndurance = true,
                 afkDamageProtection = true, waterBucketClutch = true, displayFlightPathVector = false,
                 terrainAvoidance = false, flightRibbon = true, displayFlightProfile = true,
-                killAura = false;
+                killAura = false, autoWeapon = false;
     }
 
     public static void load() {
@@ -81,6 +82,7 @@ public class Settings {
         flightRibbon = d.flightRibbon;
         displayFlightProfile = d.displayFlightProfile;
         killAura = d.killAura;
+        autoWeapon = d.autoWeapon;
     }
 
     public static void save() {
@@ -105,6 +107,7 @@ public class Settings {
         d.flightRibbon = flightRibbon;
         d.displayFlightProfile = displayFlightProfile;
         d.killAura = killAura;
+        d.autoWeapon = autoWeapon;
         try {
             Files.writeString(FILE, GSON.toJson(d));
         } catch (IOException e) {

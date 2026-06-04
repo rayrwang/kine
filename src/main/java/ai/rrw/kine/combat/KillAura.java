@@ -62,6 +62,7 @@ public final class KillAura {
     private static final int   HIT_REFRACTORY = 10;   // a struck mob sets invulnerableTime=20 and is re-hittable for full damage only at <=10 -- i.e. exactly 10 ticks later
     private static final float FULL_CHARGE    = 1.0f;  // wait/sweep gate. Vanilla enables sweep/crit at scale>0.9, but a sword/axe's charge time (>=12.5t) outlasts the 10t i-frame, so you're charge-limited: hitting at 0.9 instead of full just resets the ticker ~1.5t early for ~5% less per hit. A full charge is the DPS-optimal point (and also maximises sweep base damage).
     private static final int   ANGRY_TICKS    = 600;   // a neutral mob that hits you stays a target this long (~30 s)
+    private static final int   WEAPON_PERIOD  = 10;    // re-evaluate the best weapon at most this often (~0.5 s) while engaging
     private static final double REACH_PAD     = 0.0;   // attack at exactly the vanilla entity-interaction range
     private static final double SWEEP_X = 1.0, SWEEP_Y = 0.25, SWEEP_Z = 1.0;   // vanilla sweep-box inflation
 
@@ -69,6 +70,7 @@ public final class KillAura {
     private static final Map<Integer, Integer> angryUntil = new HashMap<>();   // neutral entityId -> tick its anger lapses
     private static int tick = 0;
     private static int lastHurtTime = 0;   // player's hurtTime last tick, to spot a fresh incoming hit
+    private static int lastWeaponTick = -100;   // last tick auto weapon selection ran
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);   // toggled from the settings menu (K)
@@ -88,13 +90,28 @@ public final class KillAura {
         AABB area = p.getBoundingBox().inflate(reach + 1.0);
 
         List<LivingEntity> inReach = new ArrayList<>();
+        LivingEntity nearestTarget = null;
+        double nearestDist = Double.MAX_VALUE;
         for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x))) {
             LivingEntity t = (LivingEntity) e;
             if (eyeToBox(eye, t.getBoundingBox()) > reach) continue;
             if (!lineOfSight(p, eye, t)) continue;
             inReach.add(t);
+            double d = eye.distanceToSqr(t.getBoundingBox().getCenter());
+            if (d < nearestDist) { nearestDist = d; nearestTarget = t; }
         }
         if (inReach.isEmpty()) return;
+
+        // Auto weapon selection: equip the best sword/axe for this target before swinging. Re-evaluated
+        // periodically (the target type can change) and immediately when not already holding a weapon.
+        if (Settings.autoWeapon) {
+            ItemStack cur = p.getMainHandItem();
+            boolean holdingWeapon = cur.is(h -> h.is(ItemTags.SWORDS)) || cur.is(h -> h.is(ItemTags.AXES));
+            if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
+                lastWeaponTick = tick;
+                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched; swing next tick once it syncs
+            }
+        }
 
         ItemStack held = p.getMainHandItem();
         boolean sweepSword = held.is(h -> h.is(ItemTags.SWORDS)) && enchantLevel(held, Enchantments.SWEEPING_EDGE) > 0;
