@@ -57,6 +57,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Collision avoidance throttling sprinting jumping with elytra
 	- Autopilot visually move flight director when turning
 	- Autopilot resume heading after turn
+	- Low altitude warning should count as autopilot disconnect.
 - Update readme technical, make more concise; change pictures, add logo
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
