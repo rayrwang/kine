@@ -53,7 +53,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- ETA estimate isn't resetting on landing when above anchor
 	- Autopilot movement should stop when paused singleplayer
 	- Damage auto kick not working when window unfocused
-	- Autopilot no longer turning with AD keys
+	- Autopilot no longer responds to heading command, or turning with AD keys
 	- Collision avoidance throttling sprinting jumping with elytra
 	- Autopilot visually move flight director when turning
 	- Autopilot resume heading after turn
