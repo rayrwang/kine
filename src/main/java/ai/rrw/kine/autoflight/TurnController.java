@@ -83,6 +83,12 @@ public final class TurnController {
                     emergencyCount = 0;
             }
         }
+        // Clear cruise, outside any turn/escape commitment: track the destination bearing every tick so a
+        // smoothly-moving destination -- a swept A/D heading bug or selected heading -- is followed
+        // continuously, instead of refreshing the bearing only at each REPLAN_EVERY re-plan and holding it
+        // in between (which reads as one big jerk every half second). The expensive plan() stays throttled;
+        // only this cheap bearing-follow runs each tick.
+        if (t >= committedUntil) committedHeading = destBearing;
         t++;
         return committedHeading;
     }
