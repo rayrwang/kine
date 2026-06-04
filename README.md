@@ -12,6 +12,10 @@
 
 Minecraft elytra autopilot, aimbot, movement tweaks, and HUD displays.
 
+<center>
+<a href="https://github.com/rayrwang/kine/releases">Download the Mod</a>
+</center>
+
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 \*heavy assistance from Opus 4.8
