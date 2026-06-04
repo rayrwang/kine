@@ -52,7 +52,8 @@ public class ProjectileTargeting {
     private static final float AIM_MAX_STEP   = 10f;   // deg/tick cap
     private static final float MOUSE_EPS      = 0.4f;  // mouse drift (deg) that releases the lock
     private static final int   COOLDOWN_TICKS = 10;    // ticks aim stays off after you look away
-    private static final int   AIM_ITERS      = 8;
+    private static final int   LEAD_ITERS     = 3;   // outer passes: target lead + azimuth (flight time depends on the arc)
+    private static final int   PITCH_ITERS    = 6;   // secant steps for the vertical solve (converges in ~2-4)
     // open-sky acquisition fallback: used only when the arrow finds no block impact
     private static final double CONE_DEG      = 6.0;                              // acquisition half-angle
     private static final double CONE_COS      = Math.cos(Math.toRadians(CONE_DEG));
@@ -218,35 +219,103 @@ public class ProjectileTargeting {
             ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self)).getType() == HitResult.Type.MISS;
     }
 
-    private static int nearestIndex(List<Vec3> path, Vec3 t) {
-        int best = 0; double bd = Double.MAX_VALUE;
-        for (int i = 0; i < path.size(); i++) {
-            double d = path.get(i).distanceToSqr(t);
-            if (d < bd) { bd = d; best = i; }
-        }
-        return best;
+    // unit launch direction for a yaw/pitch (deg), MC convention (up = negative pitch).
+    private static Vec3 dirOf(double yaw, double pitch) {
+        double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+        return new Vec3(-Math.sin(yr) * Math.cos(pr), -Math.sin(pr), Math.cos(yr) * Math.cos(pr));
     }
 
-    // iterative ballistic solve WITH target lead. Uses a FREE-FLIGHT arc and measures the miss at the
-    // projectile's closest approach to the target's range, so it lifts the aim for drop at long range.
+    // first tick at which the free-flight arc reaches the target's horizontal range (flight time for lead).
+    private static int ticksToHoriz(List<Vec3> path, Vec3 eye, double horiz) {
+        for (int i = 1; i < path.size(); i++)
+            if (Math.hypot(path.get(i).x - eye.x, path.get(i).z - eye.z) >= horiz) return i;
+        return path.size() - 1;
+    }
+
+    // vertical miss (arrow minus target) where the arc crosses the target's horizontal range. The true,
+    // monotonic objective for the pitch solve; uses the real launchVel/simulate so drag, inherited motion,
+    // gravity order and any throw y-offset are all baked in. Negative = the arc is below the target (short).
+    private static double vMissAtRange(ClientLevel level, LocalPlayer p, Vec3 eye,
+                                       double yaw, double pitch, Spec spec, double horiz, double dy) {
+        List<Vec3> path = simulate(level, eye, launchVel(p, (float) yaw, (float) pitch, spec), spec, p, false).path();
+        for (int i = 1; i < path.size(); i++) {
+            Vec3 a = path.get(i - 1), b = path.get(i);
+            double h0 = Math.hypot(a.x - eye.x, a.z - eye.z), h1 = Math.hypot(b.x - eye.x, b.z - eye.z);
+            if (h1 >= horiz && h1 != h0) {
+                double t = (horiz - h0) / (h1 - h0);
+                return (a.y + t * (b.y - a.y) - eye.y) - dy;
+            }
+        }
+        return (path.get(path.size() - 1).y - eye.y) - dy;   // never reached the range (truncated/short)
+    }
+
+    // drag-free closed-form launch pitch (low arc), MC deg, up = negative. NaN beyond no-drag range.
+    private static double seedPitch(Spec spec, double horiz, double dy) {
+        double v2 = spec.speed() * spec.speed();
+        double disc = v2 * v2 - spec.gravity() * (spec.gravity() * horiz * horiz + 2 * dy * v2);
+        if (disc < 0) return Double.NaN;
+        double tan = (v2 - Math.sqrt(disc)) / (spec.gravity() * horiz);
+        return -Math.toDegrees(Math.atan(tan));
+    }
+
+    // launch pitch so the arc crosses the target's range at the target's height: analytic seed + 1-D secant
+    // on the (monotonic, low-arc) vertical miss. Converges in ~2-4 steps at any range -- including the long /
+    // high-arc shots where the old closest-approach fixed point stalled short.
+    private static double solvePitch(ClientLevel level, LocalPlayer p, Vec3 eye,
+                                     double yaw, Spec spec, double horiz, double dy) {
+        double seed = seedPitch(spec, horiz, dy);
+        double p0 = Double.isNaN(seed) ? -45.0 : seed;       // beyond no-drag range: loft and let the secant push
+        double p1 = p0 - 1.0;                                 // nudge up 1 deg to seed the secant slope
+        double f0 = vMissAtRange(level, p, eye, yaw, p0, spec, horiz, dy);
+        double f1 = vMissAtRange(level, p, eye, yaw, p1, spec, horiz, dy);
+        for (int i = 0; i < PITCH_ITERS; i++) {
+            if (Math.abs(f1) < 0.02) break;
+            double den = f1 - f0;
+            if (Math.abs(den) < 1e-9) break;
+            double p2 = Mth.clamp(p1 - f1 * (p1 - p0) / den, -89.0, 89.0);
+            p0 = p1; f0 = f1; p1 = p2; f1 = vMissAtRange(level, p, eye, yaw, p1, spec, horiz, dy);
+        }
+        return p1;
+    }
+
+    // azimuth that points the arrow's (constant-direction) horizontal velocity at the target, correcting
+    // exactly for inherited shooter motion: speed*cos(pitch)*[-sinYaw,cosYaw] + km_h must be parallel to the
+    // bearing. Drag scales x/z equally so the horizontal path is a straight ray -- this is one-shot exact.
+    private static double solveYaw(LocalPlayer p, Vec3 eye, Vec3 lead, double pitch, Spec spec) {
+        double bearing = Math.toDegrees(Math.atan2(-(lead.x - eye.x), lead.z - eye.z));
+        double ux = lead.x - eye.x, uz = lead.z - eye.z, un = Math.sqrt(ux * ux + uz * uz);
+        if (un < 1e-9) return bearing;
+        ux /= un; uz /= un;
+        double pr = Math.toRadians(pitch), pro = Math.toRadians(pitch + spec.yOffsetDeg());
+        double hu = Math.cos(pr);
+        double a = spec.speed() * hu / Math.hypot(hu, Math.sin(pro));   // true horizontal launch speed (excl. inherited)
+        double kmx = p.getX() - p.xOld, kmz = p.getZ() - p.zOld;
+        double ukm = ux * kmx + uz * kmz, c = kmx * kmx + kmz * kmz - a * a, disc = ukm * ukm - c;
+        if (disc < 0 || a < 1e-9) return bearing;
+        double s = ukm + Math.sqrt(disc);
+        return Math.toDegrees(Math.atan2(-(s * ux - kmx), s * uz - kmz));
+    }
+
+    // ballistic solve WITH target lead. Outer loop refines the lead (flight time depends on the arc); each
+    // pass solves pitch (seed+secant on the range-crossing height) and azimuth (inherited-motion exact).
     private static Vec3 solveAim(ClientLevel level, LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
         Vec3 center = target.getBoundingBox().getCenter();
         Entity velSrc = target instanceof EnderDragonPart part ? part.parentMob : target;
         Vec3 tv = new Vec3(velSrc.getX() - velSrc.xOld, velSrc.getY() - velSrc.yOld, velSrc.getZ() - velSrc.zOld);
-        Vec3 aim = center;
-        for (int i = 0; i < AIM_ITERS; i++) {
-            Vec3 d = aim.subtract(eye);
-            if (d.lengthSqr() < 1e-6) break;
-            d = d.normalize();
-            float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
-            float pitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
-            List<Vec3> path = simulate(level, eye, launchVel(p, yaw, pitch, spec), spec, p, false).path();
-            int k = nearestIndex(path, center);                  // flight time to the target's range
-            Vec3 leadTarget = center.add(tv.scale(k));           // where the target will be then
-            Vec3 cp = path.get(nearestIndex(path, leadTarget));  // projectile's closest approach to it
-            aim = aim.add(leadTarget.subtract(cp));              // raise/adjust aim by the miss at that range
+
+        Vec3 lead = center;
+        double yaw = Math.toDegrees(Math.atan2(-(center.x - eye.x), center.z - eye.z));
+        double pitch = 0.0;
+        for (int outer = 0; outer < LEAD_ITERS; outer++) {
+            Vec3 d = lead.subtract(eye);
+            double horiz = Math.sqrt(d.x * d.x + d.z * d.z);
+            if (horiz < 1e-3) break;
+            pitch = solvePitch(level, p, eye, yaw, spec, horiz, d.y);
+            yaw   = solveYaw(p, eye, lead, pitch, spec);
+            int k = ticksToHoriz(simulate(level, eye, launchVel(p, (float) yaw, (float) pitch, spec), spec, p, false).path(), eye, horiz);
+            lead = center.add(tv.scale(k));
         }
-        return aim;
+        return eye.add(dirOf(yaw, pitch));   // caller recovers (yaw,pitch) via line-of-sight to this point
     }
 
     private static float ease(float cur, float target, boolean wrap) {
