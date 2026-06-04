@@ -1,6 +1,8 @@
 package ai.rrw.kine;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.resources.Identifier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,10 +14,10 @@ import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.hud.RangeEndurance;
 import ai.rrw.kine.hud.FlightPathVector;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.FlightRibbon;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.ElytraGuard;
-import ai.rrw.kine.autoflight.FlightRibbon;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
@@ -27,6 +29,13 @@ public class Kine implements ClientModInitializer {
 	// It is considered best practice to use your mod id as the logger's name.
 	// That way, it's clear which mod wrote info, warnings, and errors.
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+
+	// Custom keybind category so Kine's binds group under their own "Kine" section in the vanilla
+	// controls screen instead of scattering into Miscellaneous. Registered once at class load, before
+	// onInitializeClient's per-feature register() calls create the binds. The section header text comes
+	// from "key.category.kine.keybinds" in the lang file.
+	public static final KeyMapping.Category KEY_CATEGORY =
+		KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "keybinds"));
 
 	@Override
 	public void onInitializeClient() {

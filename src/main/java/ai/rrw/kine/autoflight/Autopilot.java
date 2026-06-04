@@ -48,7 +48,7 @@ public class Autopilot {
 
     public static void register() {
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.autopilot", GLFW.GLFW_KEY_J, KeyMapping.Category.MISC));
+            "key.kine.autopilot", GLFW.GLFW_KEY_J, Kine.KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(Autopilot::tick);
         HudElementRegistry.attachElementAfter(
             VanillaHudElements.MISC_OVERLAYS,

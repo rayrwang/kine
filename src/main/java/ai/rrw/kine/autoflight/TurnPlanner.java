@@ -28,8 +28,10 @@ public final class TurnPlanner {
     static final double[] OFFSETS = {4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,72,80,90,102,116,130,144,158,172};
     static final double PROG_MIN = 40.0;    // a turn must close at least this far along the bearing
     public static final int HORIZON = 900;
-    public static final double MIN_LOOKAHEAD = 96.0;  // must verify-clear this far (loaded) to call a path clear
-    public static final double SCAN_DIST = 480.0;     // check terrain this far ahead (~ the ribbon's predicted length)
+    public static final double MIN_LOOKAHEAD = 80.0;  // must verify-clear this far (loaded) to call a path clear;
+                                                      // sized to fit an 8-chunk (128-block) server render with margin
+    public static final double SCAN_DIST = 480.0;     // the most we ever scan ahead (~ the ribbon's predicted length)
+    private static double scanRange = SCAN_DIST;      // effective scan, clamped to loaded terrain each tick (setRenderRange)
     // Climb-corridor collision test. An obstacle is terrain that rises into the altitude we will be
     // climbing through -- NOT the low ground the porpoise momentarily dives toward. Modelling the
     // corridor as a steady climb (decoupled from the dive) makes obstacle detection phase-independent,
@@ -38,6 +40,16 @@ public final class TurnPlanner {
     static final double CORRIDOR_CLEAR = 8.0;  // terrain must stay this far below the climbing corridor
     static final double GROUND_MIN = 5.0;      // actual path must stay this far above ground (real-crash guard)
     static final double IMMINENT = 50.0;       // tall obstacle closer than this can't be turned out of (~turn radius)
+
+    /** Clamp scanning to how far terrain is actually loaded (blocks). Servers cap render distance -- often
+     *  8-12 chunks (128-192 blocks) -- so scanning the full {@link #SCAN_DIST} both wastes work over unloaded
+     *  chunks (which sample as unknown and are skipped anyway) and implies sight we don't have. Held at
+     *  >= MIN_LOOKAHEAD + a small margin (a "clear" verdict must still span the verify distance) and
+     *  <= SCAN_DIST. Set once per tick from the live render distance before planning; defaults to SCAN_DIST,
+     *  so anything not calling this (e.g. the test suite) keeps the original full-sight behaviour. */
+    public static void setRenderRange(double loadedBlocks) {
+        scanRange = Math.max(MIN_LOOKAHEAD + 16.0, Math.min(SCAN_DIST, loadedBlocks));
+    }
 
     /** A planner decision: an absolute target heading (yaw, deg) and the action that produced it. */
     public static final class Plan {
@@ -64,7 +76,7 @@ public final class TurnPlanner {
             double prx = s.x, prz = s.z;
             FlightModel3D.step(s, targetHeading);
             pathLen += Math.hypot(s.x - prx, s.z - prz);
-            if (pathLen > SCAN_DIST) break;                 // only look as far as the ribbon predicts
+            if (pathLen > scanRange) break;                 // only look as far as terrain is loaded / the ribbon predicts
             double g = terrain.heightAt(s.x, s.z);
             if (Double.isNaN(g)) continue;                  // unloaded sample: skip it, keep scanning ahead
             maxLoaded = pathLen;

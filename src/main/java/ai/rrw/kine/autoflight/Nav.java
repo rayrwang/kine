@@ -123,7 +123,7 @@ public class Nav {
 
     public static void register() {
         navKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.nav", GLFW.GLFW_KEY_N, KeyMapping.Category.MISC));
+            "key.kine.nav", GLFW.GLFW_KEY_N, Kine.KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(Nav::tick);
         HudElementRegistry.attachElementAfter(
             VanillaHudElements.MISC_OVERLAYS,

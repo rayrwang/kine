@@ -47,6 +47,7 @@ public final class TurnGuard {
      *  while engaged. After this, {@link #steering()} and {@link #desiredHeading()} are current. */
     public static void evaluate(Minecraft mc, LocalPlayer p, int cruise) {
         if (mc.level == null) { reset(); return; }
+        TurnPlanner.setRenderRange(mc.options.getEffectiveRenderDistance() * 16.0);
         double[] d = destOf(p);
         FlightModel3D.State seed = seedOf(p, cruise, FlightDirector.climbingState());
         Terrain2D terrain = terrainOf(mc.level);
@@ -61,6 +62,7 @@ public final class TurnGuard {
      *  always begins a climb to cruise), so the predicted dive is the one we'd actually fly. */
     public static boolean feasibleToArm(Minecraft mc, LocalPlayer p, int cruise) {
         if (mc.level == null) return false;
+        TurnPlanner.setRenderRange(mc.options.getEffectiveRenderDistance() * 16.0);
         double[] d = destOf(p);
         FlightModel3D.State seed = seedOf(p, cruise, true);
         double destBearing = FlightModel3D.velYaw(d[0] - seed.x, d[1] - seed.z);

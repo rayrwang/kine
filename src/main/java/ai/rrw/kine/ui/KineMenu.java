@@ -8,7 +8,7 @@ import org.lwjgl.glfw.GLFW;
 public class KineMenu {
     public static void register() {
         KeyMapping open = KeyMappingHelper.registerKeyMapping(
-            new KeyMapping("key.kine.settings", GLFW.GLFW_KEY_K, KeyMapping.Category.MISC));
+            new KeyMapping("key.kine.settings", GLFW.GLFW_KEY_K, ai.rrw.kine.Kine.KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             while (open.consumeClick()) {
                 mc.setScreen(new KineSettingsScreen(mc.screen));
