@@ -1,10 +1,7 @@
 package ai.rrw.kine.combat;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Holder;
@@ -26,7 +23,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,7 +51,7 @@ import java.util.Map;
  *
  * <p>Targets are mobs only (never players, armour stands or animals): hostiles ({@link Enemy}) always,
  * and neutral mobs only while angry at us &mdash; detected client-side from {@code getLastDamageSource},
- * since a mob's AI anger isn't synced. It attacks entities directly in reach without turning the view,
+ * since a mob's AI anger isn't synced. Toggled from the mod's settings menu (K). It attacks entities directly in reach without turning the view,
  * with a line-of-sight check so it won't swing through walls. This is a combat cheat: expect a ban
  * anywhere that doesn't allow client mods.
  */
@@ -70,21 +66,16 @@ public final class KillAura {
     private static final double REACH_PAD     = 0.0;   // attack at exactly the vanilla entity-interaction range
     private static final double SWEEP_X = 1.0, SWEEP_Y = 0.25, SWEEP_Z = 1.0;   // vanilla sweep-box inflation
 
-    private static KeyMapping toggleKey;
     private static final Map<Integer, Integer> lastHit    = new HashMap<>();   // entityId -> tick we last hit it
     private static final Map<Integer, Integer> angryUntil = new HashMap<>();   // neutral entityId -> tick its anger lapses
     private static int tick = 0;
     private static int lastHurtTime = 0;   // player's hurtTime last tick, to spot a fresh incoming hit
 
     public static void register() {
-        toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.killaura", GLFW.GLFW_KEY_UNKNOWN, Kine.KEY_CATEGORY));   // unbound by default
-        ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);
+        ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);   // toggled from the settings menu (K)
     }
 
     private static void onTick(Minecraft mc) {
-        while (toggleKey.consumeClick()) { Settings.killAura = !Settings.killAura; Settings.save(); }
-
         tick++;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { lastHit.clear(); angryUntil.clear(); return; }
