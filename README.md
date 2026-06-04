@@ -27,7 +27,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Enable in settings (press K to open).
 - **Water bucket clutch automatically.**
 - **Kill aura.**
-	- Takes into account number of enemies (spam for more, cooldown for fewer)
+	- Takes into account number of enemies (spam for more, cooldown for fewer).
 - **Dodge arrows and other projectiles.**
 - **AFK failsafes.**
 	- Logs you out if you gake damage while AFK, autopilot disconnects, or elytra has low durability.
