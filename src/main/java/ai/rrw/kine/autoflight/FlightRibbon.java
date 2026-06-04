@@ -44,7 +44,8 @@ public final class FlightRibbon {
     private static final double RAIL_W         = 0.60;  // rail strip width in blocks
     private static final double STAND_EYE     = 1.62;   // standing eye height; the rails sit this far below the camera
 
-    private static final int RAIL_COLOR = (0xE0 << 24) | 0x2864FF;   // solid blue (no gradient)
+    private static final int RAIL_TOP    = (0xE0 << 24) | 0x2864FF;   // seen from above: blue
+    private static final int RAIL_BOTTOM = (0xE0 << 24) | 0xFF7A1A;   // seen from below (underside): orange
 
     // cached predicted path, stored RELATIVE to the aircraft (re-anchored to interpolated pos each frame)
     private static final double[] dAlong = new double[MAX_PTS];   // along-track distance (blocks; negative = behind)
@@ -104,7 +105,6 @@ public final class FlightRibbon {
 
         // per-point: offset each path point below itself by `drop`, along the (down) path normal
         double[] ox = new double[count], oy = new double[count], oz = new double[count];
-        int[] col = new int[count];
         for (int i = 0; i < count; i++) {
             int j = (i + 1 < count) ? i + 1 : i;
             int h = (i + 1 < count) ? i : i - 1;
@@ -118,26 +118,42 @@ public final class FlightRibbon {
             ox[i] = ax + trackX * (dAlong[i] + offA);
             oy[i] = ay + yRel[i] + offY;
             oz[i] = az + trackZ * (dAlong[i] + offA);
-            col[i] = RAIL_COLOR;
         }
 
         Matrix4f mat = ctx.poseStack().last().pose();
-        // Pass 1 -- the visible translucent rails. debugQuads depth-TESTS against terrain (so terrain
-        // occludes them) but does not WRITE depth; drawing this FIRST means it tests against the far terrain
-        // depth and reliably passes, so the rails draw solid.
+
+        // Pass 1 -- the visible rails: ONE zero-thickness quad per span, coloured by which face the camera
+        // sees, so the strip is genuinely two-sided (blue top, orange underside) with no thickness to split
+        // into a gap and nothing coincident to z-fight. For each span take the strip's true normal (the span
+        // tangent crossed with the across-track direction, flipped to point up) and test which side the camera
+        // is on: above the surface -> you see the top -> blue; below -> you see the underside -> orange. Using
+        // the real normal (not just camera-vs-midpoint-height) keeps it correct on the tilted climb/descent
+        // limbs of a porpoise, where a height test mislabels the face. debugQuads depth-TESTS against terrain
+        // (so terrain occludes the rails) but does NOT write depth; drawn FIRST it tests against far terrain
+        // depth and passes, so the rails draw solid -- and drawing before the depth pass below avoids testing
+        // against that coincident-but-not-bit-identical depth (which would z-fight to white).
         VertexConsumer vc = ctx.bufferSource().getBuffer(RenderTypes.debugQuads());
         for (int i = 1; i < count; i++) {
-            rail(vc, mat, cam, ox, oy, oz, col, i, +1.0);   // left rail
-            rail(vc, mat, cam, ox, oy, oz, col, i, -1.0);   // right rail
+            int a = i - 1;
+            double tx = ox[i] - ox[a], ty = oy[i] - oy[a], tz = oz[i] - oz[a];   // span tangent
+            double nx = ty * perpZ;                                              // normal = tangent x across
+            double ny = tz * perpX - tx * perpZ;                                 //   (across = perpX,0,perpZ)
+            double nz = -ty * perpX;
+            if (ny < 0.0) { nx = -nx; ny = -ny; nz = -nz; }                      // orient the normal upward
+            double side = (cam.x - ox[a]) * nx + (cam.y - oy[a]) * ny + (cam.z - oz[a]) * nz;
+            int color = side >= 0.0 ? RAIL_TOP : RAIL_BOTTOM;                    // above surface -> top (blue)
+            rail(vc, mat, cam, ox, oy, oz, color, i, +1.0);   // left rail
+            rail(vc, mat, cam, ox, oy, oz, color, i, -1.0);   // right rail
         }
         ctx.bufferSource().endBatch(RenderTypes.debugQuads());
 
-        // Pass 2 -- depth only. Without this, clouds (a later frame-graph pass composited against the main
-        // depth buffer) painted over the rails even when behind them, because debugQuads never wrote depth.
-        // waterMask writes depth with no color (write mask 0) under the same LEQUAL test, laying the rails
-        // into the depth buffer exactly where they're visible, so the clouds pass is correctly occluded.
-        // It runs AFTER the color pass on purpose: drawing it first would make the color pass test LEQUAL
-        // against this coincident-but-not-bit-identical depth (different vertex shader) and z-fight to white.
+        // Pass 2 -- depth only, written AFTER the colour pass. Without it, clouds (a later frame-graph pass
+        // composited against the main depth buffer) paint over the rails even when behind them, because
+        // debugQuads never wrote depth. waterMask writes depth with no colour (write mask 0) under the same
+        // LEQUAL test, laying the rails into the depth buffer where they're visible so the clouds pass is
+        // occluded. It runs after the colour pass on purpose: drawing it first would make the colour pass
+        // test LEQUAL against this coincident-but-not-bit-identical depth (different vertex shader) and
+        // z-fight to white.
         VertexConsumer mvc = ctx.bufferSource().getBuffer(RenderTypes.waterMask());
         for (int i = 1; i < count; i++) {
             railMask(mvc, mat, cam, ox, oy, oz, i, +1.0);
@@ -175,14 +191,14 @@ public final class FlightRibbon {
 
     /** Emit one quad: the span of one rail (a thin strip at sign*RAIL_HALF across the path) from i-1 to i. */
     private static void rail(VertexConsumer vc, Matrix4f mat, Vec3 cam,
-                             double[] ox, double[] oy, double[] oz, int[] col, int i, double sign) {
+                             double[] ox, double[] oy, double[] oz, int color, int i, double sign) {
         int a = i - 1, b = i;
         double e1 = sign * RAIL_HALF - RAIL_W * 0.5;
         double e2 = sign * RAIL_HALF + RAIL_W * 0.5;
-        vertex(vc, mat, cam, ox[a] + perpX * e1, oy[a], oz[a] + perpZ * e1, col[a]);
-        vertex(vc, mat, cam, ox[b] + perpX * e1, oy[b], oz[b] + perpZ * e1, col[b]);
-        vertex(vc, mat, cam, ox[b] + perpX * e2, oy[b], oz[b] + perpZ * e2, col[b]);
-        vertex(vc, mat, cam, ox[a] + perpX * e2, oy[a], oz[a] + perpZ * e2, col[a]);
+        vertex(vc, mat, cam, ox[a] + perpX * e1, oy[a], oz[a] + perpZ * e1, color);
+        vertex(vc, mat, cam, ox[b] + perpX * e1, oy[b], oz[b] + perpZ * e1, color);
+        vertex(vc, mat, cam, ox[b] + perpX * e2, oy[b], oz[b] + perpZ * e2, color);
+        vertex(vc, mat, cam, ox[a] + perpX * e2, oy[a], oz[a] + perpZ * e2, color);
     }
 
     private static void vertex(VertexConsumer vc, Matrix4f mat, Vec3 cam,
