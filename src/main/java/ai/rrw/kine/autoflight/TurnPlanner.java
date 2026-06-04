@@ -102,23 +102,15 @@ public final class TurnPlanner {
         if (straight.status == CLEARS) {
             return new Plan(destBearing, CLB);
         }
-        // A tall obstacle closer than the turn radius can't be avoided by a normal turn -- commit to a
-        // hard turn-around (~180) toward the more-open side. The look is held only EMERGENCY_DELTA off
-        // the (rotating) velocity each tick, so it ARCS around to reverse rather than pointing backward
-        // and stalling. Target just under 180 on the chosen side to fix the arc direction unambiguously.
-        if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
-            double course = FlightModel3D.velYaw(base.vx, base.vz);
-            boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
-            boolean leftBlocked  = imminentAhead(base, course - 90.0, terrain);
-            double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
-            return new Plan(course + side * 179.0, EMERGENCY);
-        }
-        // Straight would clip terrain. Scan headings smallest-offset first and keep two candidates:
+        // Stage 2: can a NORMAL turn clear it? Scan headings smallest-offset first, keeping two candidates:
         //  - progressing: smallest offset that clears AND still makes real progress toward the dest
         //    (the productive dodge: thread a gap / round an end while heading where we want to go)
         //  - evasive: smallest offset that merely clears (e.g. turn to fly parallel along a wall)
-        // Progress decides which is PREFERRED, not whether to turn at all: a sharp low-progress turn
-        // that avoids a close wall always beats flying straight into it.
+        // This runs BEFORE any emergency. A banked turn whose rolled-out path actually clears always beats
+        // a hard turn-around, and it keeps plan() consistent with feasible() -- which arms whenever some
+        // heading clears. Escalating to an emergency here while a normal turn exists is exactly what made a
+        // just-engaged autopilot trip: feasible() arms, but plan() emergency-banks and at high speed can't
+        // come around within STUCK_MAX, handing off and disengaging.
         double progHeading = Double.NaN, progOff = Double.POSITIVE_INFINITY;
         double anyHeading  = Double.NaN, anyOff  = Double.POSITIVE_INFINITY;
         for (double off : OFFSETS) {
@@ -132,9 +124,21 @@ public final class TurnPlanner {
         }
         if (!Double.isNaN(progHeading)) return new Plan(progHeading, TURN);   // productive dodge
         if (!Double.isNaN(anyHeading))  return new Plan(anyHeading, TURN);    // evasive turn (avoid the wall)
-        // No clear heading, but the obstacle isn't imminent yet: keep climbing straight (we may yet
-        // top it or find a gap as it nears; if it becomes imminent the emergency turn-around fires).
-        // If it's only low ground / can't-see-far, climbing straight is likewise right.
+
+        // Stage 3: no normal turn clears. If a tall obstacle is closer than the turn radius, a normal turn
+        // can't get out of it -- commit to a hard turn-around (~180) toward the more-open side. The look is
+        // held only EMERGENCY_DELTA off the (rotating) velocity each tick, so it ARCS around to reverse
+        // rather than pointing backward and stalling. Target just under 180 to fix the arc direction.
+        if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
+            double course = FlightModel3D.velYaw(base.vx, base.vz);
+            boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
+            boolean leftBlocked  = imminentAhead(base, course - 90.0, terrain);
+            double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
+            return new Plan(course + side * 179.0, EMERGENCY);
+        }
+        // No clear heading and not imminently walled: keep climbing straight (we may yet top it or find a
+        // gap as it nears; if it becomes imminent the emergency turn-around fires). Low ground / can't-see-far
+        // is likewise right to keep climbing through.
         return new Plan(destBearing, CLB);
     }
 
