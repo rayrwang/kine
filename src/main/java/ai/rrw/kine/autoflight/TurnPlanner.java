@@ -25,7 +25,7 @@ public final class TurnPlanner {
     static final int CAUSE_NONE = 0, CAUSE_CORRIDOR = 1, CAUSE_GROUND = 2;
 
     // tuning (mirror terrain_turn_poc.py)
-    static final double[] OFFSETS = {10, 20, 30, 45, 60, 75, 90, 110, 130, 150};
+    static final double[] OFFSETS = {4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,72,80,90,102,116,130,144,158,172};
     static final double PROG_MIN = 40.0;    // a turn must close at least this far along the bearing
     public static final int HORIZON = 900;
     public static final double MIN_LOOKAHEAD = 96.0;  // must verify-clear this far (loaded) to call a path clear
@@ -39,9 +39,7 @@ public final class TurnPlanner {
     static final double GROUND_MIN = 5.0;      // actual path must stay this far above ground (real-crash guard)
     static final double IMMINENT = 50.0;       // tall obstacle closer than this can't be turned out of (~turn radius)
 
-    /** A planner decision: an absolute target heading (yaw, deg) and the action that produced it.
-     *  DISENGAGE means no flyable path (the straight-ahead climb scrapes the ground -- too low/slow --
-     *  with no turn able to add the missing altitude), which is also what gates engagement. */
+    /** A planner decision: an absolute target heading (yaw, deg) and the action that produced it. */
     public static final class Plan {
         public final double heading; public final int action;
         Plan(double heading, int action) { this.heading = heading; this.action = action; }
@@ -70,12 +68,12 @@ public final class TurnPlanner {
             double g = terrain.heightAt(s.x, s.z);
             if (Double.isNaN(g)) continue;                  // unloaded sample: skip it, keep scanning ahead
             maxLoaded = pathLen;
-            // obstacle = terrain ABOVE us that we can't out-climb (a wall/mountain rising into the
-            // climbing corridor ahead). Requiring g > y0 keeps flat ground we're flying OVER from being
-            // misread as a wall when low -- that case is a vertical problem, caught by the ground check.
+            // obstacle = terrain rising into the climbing corridor (a wall/mountain ahead). Separately,
+            // the actual porpoise path must not skim into the floor -- a small buffer so only a real
+            // impending ground hit flags, not a normal mid-altitude dive (which would falsely block).
             double corridorY = y0 + grad * pathLen;
-            if (g > y0 && g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; hit = true; break; }
-            if (s.y - g < GROUND_MIN)                     { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; hit = true; break; }
+            if (g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; hit = true; break; }
+            if (s.y - g < GROUND_MIN)            { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; hit = true; break; }
         }
         // Only declare a path CLEAR if we actually saw loaded terrain far enough out; otherwise we simply
         // can't see (render edge close, or all-NaN ahead) -- report INSUFFICIENT rather than a false clear.
@@ -91,13 +89,6 @@ public final class TurnPlanner {
         Roll straight = rollout(base, destBearing, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
         if (straight.status == CLEARS) {
             return new Plan(destBearing, CLB);
-        }
-        // Can't climb out: even flying straight, the climb scrapes the ground (too low / too slow to gain
-        // altitude). Turning adds no vertical energy, so there is no path -- hand off. This is the same
-        // ground check the rollout uses, surfaced as a decision; it covers low-and-slow without any
-        // separate altitude rule.
-        if (straight.status == HITS && straight.cause == CAUSE_GROUND) {
-            return new Plan(destBearing, DISENGAGE);
         }
         // A tall obstacle closer than the turn radius can't be avoided by a normal turn -- commit to a
         // hard turn-around (~180) toward the more-open side. The look is held only EMERGENCY_DELTA off
@@ -135,12 +126,21 @@ public final class TurnPlanner {
         return new Plan(destBearing, CLB);
     }
 
-    /** Is there a flyable path from here? Simply asks the planner: there's a path unless it hands off
-     *  (can't climb out -- too low/slow for the climb to clear the ground -- or no way through). Used to
-     *  gate ENGAGEMENT. Same collision code as steering; no separate near-ground or altitude rule. */
+    /** Is there a flyable path from here? True if flying straight at the destination doesn't hit (it
+     *  clears, or we simply can't see far enough), or failing that some heading clears. Used to gate
+     *  ENGAGEMENT instead of a fixed altitude: the climb law's own dive scrapes the ground in every
+     *  direction when too low, so every rollout HITS -> infeasible -> don't arm. It also refuses to arm
+     *  when boxed by terrain with no clear heading, and allows arming facing a wall there's room to turn
+     *  around. This adapts the arming floor to the actual situation rather than a guessed AGL. */
     public static boolean feasible(FlightModel3D.State base, double destBearing,
                                    double destX, double destZ, Terrain2D terrain) {
-        return plan(base, destBearing, destX, destZ, terrain).action != DISENGAGE;
+        Roll straight = rollout(base, destBearing, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+        if (straight.status != HITS) return true;            // clear ahead, or can't see a problem
+        for (double off : OFFSETS)
+            for (int sgn = +1; sgn >= -1; sgn -= 2)
+                if (rollout(base, destBearing + sgn * off, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
+                    return true;                             // some heading is flyable
+        return false;                                        // no way out from here -> don't arm
     }
 
     /** True if flying `heading` runs into a tall obstacle within the emergency (turn-radius) distance.
