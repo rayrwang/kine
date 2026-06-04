@@ -30,9 +30,10 @@ import net.minecraft.world.level.material.MapColor;
  * {@link TerrainGuard#seedFromPlayer} that draws the blue rails -- so it's drawn only while the autopilot is
  * engaged. The terrain panel shows whenever you're gliding. Pure instrument: reads and draws, steers nothing.
  *
- * <p>Both axes share one fixed scale ({@value #RANGE_X} blocks across, the same blocks-per-pixel vertically),
- * so the picture is undistorted and never zooms. The vertical window only slides to keep you ~62% up from the
- * bottom. Small numeric ticks label distance ahead (bottom) and altitude (left).
+ * <p>The horizontal axis spans the whole loaded render distance (so the map reaches exactly as far as you can
+ * see), and the vertical axis uses the SAME blocks-per-pixel scale, so the picture is undistorted. The
+ * vertical window slides to keep you ~62% up from the bottom. No panel or border -- just the raster, the
+ * trace, and small numeric ticks (distance ahead along the bottom, altitude up the left).
  */
 public final class FlightProfile {
     private FlightProfile() {}
@@ -43,35 +44,30 @@ public final class FlightProfile {
     private static final int    CELL    = 1;
     private static final int    PLOT_W  = COLS * CELL;
     private static final int    PLOT_H  = ROWS * CELL;
-    private static final double RANGE_X = 240.0;                 // blocks of ground track across the width
-    private static final double BPP     = RANGE_X / PLOT_W;      // blocks per pixel -- SHARED by both axes
-    private static final double SPAN    = PLOT_H * BPP;          // vertical window height in blocks (== aspect of X)
-    private static final double TOP_FRAC = 0.382;               // you sit 38.2% down from the top (~62% up)
+    private static final double TOP_FRAC = 0.382;                // you sit 38.2% down from the top (~62% up)
     private static final int    PLAYER_ROW = (int) Math.round(TOP_FRAC * ROWS);
-    private static final int    Y_TICK  = 64;                    // altitude label spacing (blocks)
 
-    private static final int PAD_L = 22, PAD_T = 2, PAD_R = 3, PAD_B = 11, MARGIN_PX = 6;
+    private static final int PAD_L = 22, PAD_T = 2, PAD_B = 11, MARGIN_PX = 6;
 
     // ---- projection ----
-    private static final int MAX_STEPS = 500;
+    private static final int MAX_STEPS = 900;                    // rollout cap (ticks) -- covers a 32-chunk render
     private static final int RECOMPUTE = 6;
 
     // ---- colours (ARGB unless noted) ----
-    private static final int BG       = 0xC0101418;
-    private static final int FRAME    = 0xFF3A4048;
     private static final int AIR      = 0xFF8FB8E0;
     private static final int CAVE     = 0xFF1B2330;
     private static final int UNKNOWN  = 0xFF454B52;
     private static final int NO_COLOR = 0x6B6B6B;                // rgb only
     private static final int PATH_RGB = 0x0A1F70;                // dark navy (rgb; alpha from AA coverage)
     private static final int PLAYER   = 0xFFFFD23F;
-    private static final int LABEL    = 0xFFB8C0C8;
+    private static final int LABEL    = 0xFFC8D0D8;
 
     private static boolean  have = false;
     private static int[]    cells;                               // COLS*ROWS, idx = c*ROWS + r, r=0 is window top
     private static double[] pathY;                               // per column: plot-space row of the trace (float)
     private static boolean[] hasPath;
     private static double   winTop, winBottom;
+    private static double   rangeX = 240.0;                      // current x-span (blocks) = render distance
     private static int      ticks = 0;
 
     public static void register() {
@@ -96,27 +92,30 @@ public final class FlightProfile {
         ClientLevel level = mc.level;
         double pX = p.getX(), pY = p.getY(), pZ = p.getZ();
 
+        // X spans the entire loaded render distance; Y uses the same blocks-per-pixel scale (square cells).
+        rangeX = Math.max(32, mc.options.getEffectiveRenderDistance() * 16);
+        double bpp = rangeX / PLOT_W;
+        double span = PLOT_H * bpp;
+        winTop = pY + TOP_FRAC * span;          // slide the window to keep you at TOP_FRAC; scale is fixed by render
+        winBottom = winTop - span;
+
         // ground-track unit vector (the direction the strip looks along)
         double dx = pX - p.xOld, dz = pZ - p.zOld, len = Math.hypot(dx, dz);
         double trackX, trackZ;
         if (len > 1.0e-4) { trackX = dx / len; trackZ = dz / len; }
         else { double yr = Math.toRadians(p.getYRot()); trackX = -Math.sin(yr); trackZ = Math.cos(yr); }
 
-        // Fixed window: equal scale to X (SPAN blocks tall), slid so you sit at TOP_FRAC. No zooming.
-        winTop = pY + TOP_FRAC * SPAN;
-        winBottom = winTop - SPAN;
-
         // The trace: only when engaged, pulled from the predicted trajectory (same source as the blue rails).
         boolean engaged = Autopilot.isEngaged();
         java.util.Arrays.fill(hasPath, false);
         if (engaged) {
             FlightModel.State s = TerrainGuard.seedFromPlayer(p, FlightDirector.floorAltitude());
-            double colStep = RANGE_X / COLS, nextD = colStep * 0.5;
+            double colStep = rangeX / COLS, nextD = colStep * 0.5;
             int col = 0;
             for (int k = 1; k <= MAX_STEPS && col < COLS; k++) {
-                FlightModel.step(s);                                  // s.x = along-track distance, s.y = altitude
+                FlightModel.step(s);                              // s.x = along-track distance, s.y = altitude
                 while (col < COLS && s.x >= nextD) {
-                    pathY[col] = (winTop - s.y) / SPAN * ROWS;        // plot-space row (float; may sit off-plot)
+                    pathY[col] = (winTop - s.y) / span * ROWS;    // plot-space row (float; may sit off-plot)
                     hasPath[col] = true;
                     col++; nextD += colStep;
                 }
@@ -125,7 +124,7 @@ public final class FlightProfile {
 
         // rasterize each column top-down along the straight ground track, sampling the real world block
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        double colStep = RANGE_X / COLS;
+        double colStep = rangeX / COLS;
         for (int c = 0; c < COLS; c++) {
             double d = (c + 0.5) * colStep;
             int wx = (int) Math.floor(pX + trackX * d), wz = (int) Math.floor(pZ + trackZ * d);
@@ -151,13 +150,12 @@ public final class FlightProfile {
         if (!have || cells == null) return;
         Font font = Minecraft.getInstance().font;
 
-        int panelW = PAD_L + PLOT_W + PAD_R, panelH = PAD_T + PLOT_H + PAD_B;
+        int panelW = PAD_L + PLOT_W, panelH = PAD_T + PLOT_H + PAD_B;
         int ox = g.guiWidth() - panelW - MARGIN_PX, oy = MARGIN_PX;
         int plotX = ox + PAD_L, plotY = oy + PAD_T;
 
-        g.fill(ox, oy, ox + panelW, oy + panelH, BG);
-
-        // terrain cells -- merge vertical runs of equal colour into one fill
+        // terrain cells -- merge vertical runs of equal colour into one fill. No panel, no border: the raster
+        // is the map.
         for (int c = 0; c < COLS; c++) {
             int sx = plotX + c * CELL, base = c * ROWS;
             int runStart = 0, runColor = cells[base];
@@ -181,35 +179,44 @@ public final class FlightProfile {
         int psy = plotY + PLAYER_ROW * CELL;
         g.fill(plotX, psy - 2, plotX + 3, psy + 3, PLAYER);
 
-        // small numeric ticks: distance along the bottom, altitude up the left
+        // small numeric ticks (shadowed, since there's no panel behind them): distance along the bottom...
         int ayTick = plotY + PLOT_H, ayText = plotY + PLOT_H + 4;
-        xTick(g, font, plotX, ayTick, ayText, 0.0,          "0",                                  0);
-        xTick(g, font, plotX, ayTick, ayText, RANGE_X / 2,  String.valueOf((int) (RANGE_X / 2)),  1);
-        xTick(g, font, plotX, ayTick, ayText, RANGE_X,      String.valueOf((int) RANGE_X),        2);
-        long first = (long) Math.ceil(winBottom / Y_TICK) * Y_TICK;
-        for (long wy = first; wy <= winTop; wy += Y_TICK) {
-            int sy = plotY + (int) Math.round((winTop - wy) / SPAN * ROWS);
+        xTick(g, font, plotX, ayTick, ayText, 0.0,          "0",                                 0);
+        xTick(g, font, plotX, ayTick, ayText, rangeX / 2,   String.valueOf((int) (rangeX / 2)),  1);
+        xTick(g, font, plotX, ayTick, ayText, rangeX,       String.valueOf((int) rangeX),        2);
+        // ...altitude up the left, at round heights spaced to the current scale
+        double span = winTop - winBottom;
+        int step = niceStep(span / 4.0);
+        long first = (long) Math.ceil(winBottom / step) * step;
+        for (long wy = first; wy <= winTop; wy += step) {
+            int sy = plotY + (int) Math.round((winTop - wy) / span * ROWS);
             if (sy < plotY || sy > plotY + PLOT_H) continue;
             g.fill(plotX - 3, sy, plotX, sy + 1, LABEL);
             String lab = String.valueOf(wy);
-            g.text(font, lab, plotX - 5 - font.width(lab), sy - 3, LABEL, false);
+            g.text(font, lab, plotX - 5 - font.width(lab), sy - 3, LABEL, true);
         }
-
-        // frame, drawn last
-        g.fill(ox, oy, ox + panelW, oy + 1, FRAME);
-        g.fill(ox, oy + panelH - 1, ox + panelW, oy + panelH, FRAME);
-        g.fill(ox, oy, ox + 1, oy + panelH, FRAME);
-        g.fill(ox + panelW - 1, oy, ox + panelW, oy + panelH, FRAME);
     }
 
     /** A distance tick + number on the x-axis. align: 0 left, 1 centre, 2 right (keeps text inside the plot). */
     private static void xTick(GuiGraphicsExtractor g, Font font, int plotX, int ayTick, int ayText,
                               double d, String lab, int align) {
-        int sx = plotX + (int) Math.round(d / RANGE_X * PLOT_W);
+        int sx = plotX + (int) Math.round(d / rangeX * PLOT_W);
         g.fill(sx, ayTick, sx + 1, ayTick + 3, LABEL);
         int w = font.width(lab);
         int tx = (align == 0) ? sx : (align == 1) ? sx - w / 2 : sx - w;
-        g.text(font, lab, tx, ayText, LABEL, false);
+        g.text(font, lab, tx, ayText, LABEL, true);
+    }
+
+    /** A round altitude step near the target so ~4 gridlines fall in the window. */
+    private static int niceStep(double target) {
+        int[] nice = {8, 16, 32, 64, 128, 256};
+        int best = nice[0];
+        double bestErr = Double.MAX_VALUE;
+        for (int n : nice) {
+            double e = Math.abs(n - target);
+            if (e < bestErr) { bestErr = e; best = n; }
+        }
+        return best;
     }
 
     // ---- smooth line (Wu): two coverage-weighted pixels per step, clipped to the plot ----
@@ -241,6 +248,7 @@ public final class FlightProfile {
 
     /** Cell row -> the world-Y at its centre (for sampling). */
     private static int rowToY(int r) {
-        return (int) Math.round(winTop - (r + 0.5) / ROWS * SPAN);
+        double span = winTop - winBottom;
+        return (int) Math.round(winTop - (r + 0.5) / ROWS * span);
     }
 }
