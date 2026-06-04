@@ -56,10 +56,11 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Damage auto kick not working when window unfocused
 	- Collision avoidance throttling sprinting jumping with elytra
 	- Low altitude warning should count as autopilot disconnect.
-- Update readme technical, make more concise; change pictures, add logo
+- Update pictures, add logo
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall
+- Auto eat & totem
 - Activate elytra if fall (could be annoying)
 - Warning sounds
 - More settings for enabling/disabling & finer control
