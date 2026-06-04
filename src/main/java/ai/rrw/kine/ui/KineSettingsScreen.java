@@ -46,125 +46,75 @@ public class KineSettingsScreen extends Screen {
 
     private record Section(String title, Opt[] opts) {}
 
-    // ---- descriptions ----
+    // ---- descriptions (kept short and uniform; most important first) ----
     private static final String DESC_SPEED =
-        "Shows your total movement speed in m/s (blocks per second), including vertical motion, "
-        + "measured from your real per-tick position change rather than the game's under-reported "
-        + "velocity. Handy while falling or flying. Drawn centred above the hotbar.";
+        "Total movement speed in m/s, including vertical motion, measured from your real per-tick position "
+        + "change rather than the game's under-reported velocity. Drawn above the hotbar.";
     private static final String DESC_GROUND =
-        "Shows horizontal speed only, ignoring up/down motion, in m/s. This is the number that "
-        + "governs elytra travel distance and your walking/sprinting pace. Drawn just below the "
-        + "total-speed line.";
+        "Horizontal speed only in m/s, ignoring vertical motion. This is the number that governs elytra "
+        + "travel distance and your walking or sprinting pace.";
     private static final String DESC_HEALTH =
-        "Floats each creature's current and maximum health (e.g. \"14 / 20\") above it, sized by "
-        + "distance and visible through walls. Useful for tracking damage mid-fight.";
+        "Floats each creature's current and maximum health above it, scaled by distance and visible through "
+        + "walls. Useful for tracking damage during a fight.";
     private static final String DESC_NAMES =
-        "Floats each creature's name above it, next to the health readout. Off by default because "
-        + "it adds clutter, especially on busy servers.";
-    private static final String DESC_RANGE =
-        "While wearing an elytra, estimates flight endurance (time) and range (distance) from "
-        + "everything you can reach in the air: the worn elytra plus every spare in your inventory and "
-        + "offhand (not shulker boxes \u2014 you'd have to land). Accounts for each elytra's Unbreaking. "
-        + "Range uses your own recent average flight speed, so it tracks how you actually fly. Reserves "
-        + "are held back aviation-style: a 5% contingency plus a final reserve to glide down safely from "
-        + "your current height, so it hits zero right as the durability failsafe would. Shown near the hotbar.";
+        "Floats each creature's name above it, beside the health readout. Off by default because it adds "
+        + "clutter, especially on busy servers.";
+
     private static final String DESC_FLIGHT =
-        "While elytra-flying, overlays magenta guidance bars showing the pitch to hold for the "
-        + "energy-pumping technique: dive to build speed, snap the nose up, then ease it back down. "
-        + "They appear only with enough clear air below to complete a dive. Guidance only \u2014 it "
-        + "never moves you.";
+        "While elytra flying, magenta bars show the pitch to hold for the energy-pumping technique: dive to "
+        + "build speed, snap the nose up, then ease it down. It is guidance only and never moves you.";
     private static final String DESC_FPV =
-        "The winged ring marks where your velocity is actually taking you, not where you're looking: "
-        + "below the centre means descending, off to one side means drifting that way. Put it on the "
-        + "spot you want to reach. Shows while flying or in a real fall. Instrument only.";
+        "Marks where your velocity is actually taking you, not where you are looking. Place it on the spot "
+        + "you want to reach to steer there. Shows while flying or falling. Instrument only.";
     private static final String DESC_PROFILE =
-        "A side-on cutaway in the top-right corner: you on the left, the blue trace where your held attitude "
-        + "would carry you over the next 240 blocks, and the real blocks under that track in their own colours "
-        + "(sky-blue for open air). Where the trace meets the colour is where you'd hit ground. Shows while "
-        + "flying; instrument only. Axes are fixed so the picture doesn't rescale as you move.";
-    private static final String DESC_ELYTRA =
-        "Leave this on unless a bug keeps kicking you \u2014 that's the only good reason to turn it "
-        + "off. While elytra-flying it warns when durability is too low to safely glide down from your "
-        + "current altitude (higher = larger reserve, with healthy margins). When that warning trips, "
-        + "if you've got a spare elytra fresh enough to clear it, it hot-swaps automatically; if not, "
-        + "the warning stays up so you land. Once a wing is about to break it'll swap to any fresher "
-        + "spare you have left, just to keep you airborne. If nothing's left to swap to, then on "
-        + "autopilot \u2014 if you don't take control within 5s \u2014 it disconnects you, logging out "
-        + "before the elytra breaks so you don't fall to your death. Flying manually, it only warns.";
-    private static final String DESC_CRASH =
-        "While elytra-flying, sheds speed when you're about to hit a wall, ceiling, or ground \u2014 "
-        + "halting you short of walls and cushioning descents so you land safely instead of dying on "
-        + "impact. It only ever removes velocity heading into a surface, never turning or throwing you, "
-        + "so a false trigger just briefly slows you. Works within your client's control; a server with "
-        + "strict movement anti-cheat could override it.";
-    private static final String DESC_FALL =
-        "Stops you walking off ledges that would cause fall damage, the way sneaking does, but "
-        + "automatically and only when the drop ahead is actually dangerous. Safe drops and "
-        + "deliberate jumps are unaffected. Ignores water/hay landings and slow/feather falling.";
-    private static final String DESC_RETICLE =
-        "Draws a ring at the exact spot your readied projectile will land \u2014 bow, crossbow, "
-        + "trident, snowball, egg, ender pearl, potion, or xp bottle \u2014 accounting for gravity, "
-        + "drag, launch spread, and your own movement. The ring turns green when it covers a valid "
-        + "target.";
-    private static final String DESC_GLOW =
-        "Outlines every projectile with a bright glow \u2014 in flight and after it lands \u2014 "
-        + "visible through walls, so arrows and thrown items are easy to follow. Applies to all "
-        + "projectiles, including those thrown by others.";
-    private static final String DESC_AUTOAIM =
-        "Automatically steers your view so weapon shots (bow, crossbow, trident) land on the target "
-        + "nearest your reticle, leading moving targets by predicting where they'll be when the shot "
-        + "arrives. Nudge the mouse to break the lock; it pauses briefly so you can look away. Thrown "
-        + "utility items are never auto-aimed. This is an aimbot \u2014 expect a ban anywhere that "
-        + "doesn't allow client mods.";
-    private static final String DESC_DODGE =
-        "Watches for incoming projectiles (arrows, tridents, fireballs and the like) and, when one is "
-        + "on course to hit you within about a second, sidesteps you off its line at roughly sprint "
-        + "speed. It can't beat a point-blank or very fast shot \u2014 there isn't time to clear the "
-        + "hitbox \u2014 and an opponent who aims where you'll dodge to can still connect. Moves you "
-        + "with normal-looking speed, so it's lower risk than the aimbot, but it's still a movement mod.";
-
-    private static final String DESC_AURA =
-        "Automatically melees nearby hostile mobs and angry neutral mobs (any neutral that has hit you) "
-        + "with whatever's in hand \\u2014 no view turning, line-of-sight checked so it won't swing through "
-        + "walls. It adapts to the fight: against a crowd it spams the nearest fresh mob every tick; against "
-        + "one or two it waits for a full charge so each hit lands clean; with a Sweeping Edge sword on the "
-        + "ground it times a full-charge sweep onto the tightest cluster. This is a combat cheat \\u2014 expect a ban anywhere that doesn't allow client mods.";
-
-    private static final String DESC_WEAPON =
-        "Lets the kill aura pick your weapon for you. While it's fighting, it scores every sword and axe in "
-        + "your hotbar and main inventory by expected damage against the current target \\u2014 the weapon's "
-        + "own attack damage and speed plus enchantments (Sharpness always, Smite against the undead, Bane of "
-        + "Arthropods against spiders and the like, Sweeping Edge for crowds) \\u2014 and equips the best one, "
-        + "pulling it up from your inventory into the hotbar if needed. It only switches when something is "
-        + "clearly better, but pulling from the inventory does rearrange your hotbar. Only does anything while "
-        + "the kill aura is on.";
-
-    private static final String DESC_AFK =
-        "If you take any damage while you've given no input \u2014 no movement keys, mouse, or open screen "
-        + "\u2014 for fifteen seconds, you're logged out before something can kill you unattended. The "
-        + "disconnect screen names what hit you. The autopilot moving the camera doesn't count as input, "
-        + "so it still protects you on a hands-off flight; while a menu is open you're treated as present.";
-
-    private static final String DESC_CLUTCH =
-        "Auto water-bucket clutch. While you're free-falling hard enough to get hurt and have a water "
-        + "bucket in your hotbar or offhand, it drops water on the spot you're about to land and scoops "
-        + "it back up once you're safe \\u2014 sneaking as it places, so slabs, stairs and fences get the "
-        + "water on top rather than waterlogged. Never runs while gliding; a broken elytra is just falling. "
-        + "Doesn't work where water evaporates (the Nether).";
-
-    private static final String DESC_TERRAIN =
-        "Experimental. Lets the elytra autopilot climb to clear rising terrain ahead instead of holding a "
-        + "fixed altitude: each tick it rolls the flight model forward over the ground ahead and picks the "
-        + "lowest hold altitude that keeps a safe margin, resuming your set altitude once the ground drops "
-        + "away. It only flies straight and only adjusts altitude \u2014 if a climb can't clear what's ahead, "
-        + "or it can't see far enough (low render distance), it disengages and hands control back to you. "
-        + "Needs the autopilot engaged; off by default.";
-
+        "Side-on cutaway in the top-right corner: a blue trace of where your held attitude would carry you "
+        + "over the next 240 blocks, against the terrain below. Where they meet is where you land.";
+    private static final String DESC_RANGE =
+        "While wearing an elytra, estimates remaining flight time and distance from every elytra you can "
+        + "reach and your recent average speed. Holds back a reserve to glide down safely.";
     private static final String DESC_RIBBON =
-        "Draws the autopilot's predicted path ahead of (and a little behind) you as two blue rails at "
-        + "ground level, so you can see where the porpoise will carry you and how it clears terrain. The "
-        + "rails are the actual rolled-out trajectory, so they also reveal any drift between the model and "
-        + "real flight. Only shown while the autopilot is engaged.";
+        "Draws the autopilot's predicted path as two blue rails at ground level, so you can see where it "
+        + "will carry you and how it clears terrain. Shown only while the autopilot is engaged.";
+    private static final String DESC_TERRAIN =
+        "Experimental. Lets the elytra autopilot climb to clear rising terrain instead of holding a fixed "
+        + "altitude, resuming once it drops away. Disengages if a climb can't clear what's ahead.";
+
+    private static final String DESC_ELYTRA =
+        "While elytra flying, warns when durability is too low to glide down safely and hot-swaps to a fresh "
+        + "spare if you have one. As a last resort it logs you out before the wing breaks. Best left on.";
+    private static final String DESC_CRASH =
+        "While elytra flying, sheds speed before you hit a wall, ceiling, or ground so you land safely "
+        + "instead of dying. It only removes velocity heading into a surface, never turning you.";
+    private static final String DESC_FALL =
+        "Stops you walking off ledges with a dangerous drop, like sneaking but automatic. Safe drops, "
+        + "deliberate jumps, and water or hay landings are unaffected.";
+    private static final String DESC_CLUTCH =
+        "While falling hard with a water bucket in your hotbar or offhand, drops water where you will land "
+        + "and scoops it back once you are safe. Won't run while gliding or where water evaporates.";
+    private static final String DESC_AFK =
+        "If you take damage after fifteen seconds with no input, logs you out before something kills you "
+        + "unattended. Autopilot camera motion doesn't count, and an open menu counts as present.";
+
+    private static final String DESC_RETICLE =
+        "Draws a ring where your readied projectile will land (bow, trident, snowball, pearl, and so on), "
+        + "accounting for gravity, drag, and your own motion. Turns green when it covers a valid target.";
+    private static final String DESC_GLOW =
+        "Outlines every projectile with a glow visible through walls, in flight and after it lands, so "
+        + "arrows and thrown items are easy to follow. Includes projectiles thrown by others.";
+    private static final String DESC_AUTOAIM =
+        "Steers your view so bow, crossbow, and trident shots land on the target nearest your reticle, "
+        + "leading moving targets. Nudge the mouse to break lock. An aimbot, bannable where mods aren't allowed.";
+    private static final String DESC_DODGE =
+        "Watches for incoming projectiles and sidesteps you off their line at sprint speed when one is about "
+        + "to hit. Can't beat point-blank or very fast shots. A movement mod, lower risk than the aimbot.";
+    private static final String DESC_AURA =
+        "Automatically melees nearby hostile and angry-neutral mobs with whatever is in hand, without "
+        + "turning your view and without hitting through walls. Spams crowds, charges up on single targets, "
+        + "and sweeps clusters. A combat cheat, bannable where mods aren't allowed.";
+    private static final String DESC_WEAPON =
+        "While the kill aura fights, equips the best sword or axe for the target by damage, speed, and "
+        + "enchantments (Sharpness, Smite, Bane, Sweeping Edge), pulling one from your inventory if needed. "
+        + "Rearranges your hotbar.";
 
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
@@ -172,19 +122,21 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Display ground speed", DESC_GROUND, () -> Settings.displayGroundSpeed, v -> Settings.displayGroundSpeed = v),
             Opt.of("Display mob healths", DESC_HEALTH, () -> Settings.displayMobHealths, v -> Settings.displayMobHealths = v),
             Opt.of("Display mob names", DESC_NAMES, () -> Settings.displayMobNames, v -> Settings.displayMobNames = v),
-            Opt.of("Range & endurance", DESC_RANGE, () -> Settings.displayRangeEndurance, v -> Settings.displayRangeEndurance = v),
         }),
-        new Section("Flight & safety", new Opt[]{
-            Opt.of("Display flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
-            Opt.of("Terrain avoidance", DESC_TERRAIN, () -> Settings.terrainAvoidance, v -> Settings.terrainAvoidance = v),
-            Opt.of("Flight path rails", DESC_RIBBON, () -> Settings.flightRibbon, v -> Settings.flightRibbon = v),
+        new Section("Elytra flight", new Opt[]{
+            Opt.of("Flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
             Opt.of("Flight path vector", DESC_FPV, () -> Settings.displayFlightPathVector, v -> Settings.displayFlightPathVector = v),
             Opt.of("Flight profile map", DESC_PROFILE, () -> Settings.displayFlightProfile, v -> Settings.displayFlightProfile = v),
+            Opt.of("Range & endurance", DESC_RANGE, () -> Settings.displayRangeEndurance, v -> Settings.displayRangeEndurance = v),
+            Opt.of("Flight path rails", DESC_RIBBON, () -> Settings.flightRibbon, v -> Settings.flightRibbon = v),
+            Opt.of("Terrain avoidance", DESC_TERRAIN, () -> Settings.terrainAvoidance, v -> Settings.terrainAvoidance = v),
+        }),
+        new Section("Safety", new Opt[]{
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
             Opt.of("Terrain crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
             Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
-            Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),
             Opt.of("Water bucket clutch", DESC_CLUTCH, () -> Settings.waterBucketClutch, v -> Settings.waterBucketClutch = v),
+            Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),
         }),
         new Section("Combat", new Opt[]{
             Opt.of("Projectile targeting reticle", DESC_RETICLE, () -> Settings.projectileReticle, v -> Settings.projectileReticle = v),
