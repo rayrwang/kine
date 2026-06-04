@@ -54,13 +54,21 @@ public class CrashProtection {
         // a level sweep skims straight over as we descend into it) is still caught.
         double hs = Math.sqrt(vx * vx + vz * vz);
         if (hs > 1e-4) {
+            // The wall sweeps reach below the current level so a wall sitting just under us is caught as we
+            // descend into it. But that downward reach must never dip past the floor we're gliding over, or a
+            // low pass across flat ground reads the floor itself as a wall and brakes us. Cap the drop to the
+            // clearance straight down (less a small margin), keeping the box just above the ground while still
+            // catching anything that rises above it.
+            double groundBelow = sweep(level, box, 0, -1, 0, WALL_DROP_CAP + 1);
+            double dropCap = Math.max(0, groundBelow - 0.5);
+
             boolean blocked = false;
             if (vx != 0) {
-                double ok = axisAllowed(level, box, Math.signum(vx), true, Math.abs(vx), vy, hs);
+                double ok = axisAllowed(level, box, Math.signum(vx), true, Math.abs(vx), vy, hs, dropCap);
                 if (Math.abs(vx) > ok) { vx = Math.signum(vx) * ok; blocked = true; }
             }
             if (vz != 0) {
-                double ok = axisAllowed(level, box, Math.signum(vz), false, Math.abs(vz), vy, hs);
+                double ok = axisAllowed(level, box, Math.signum(vz), false, Math.abs(vz), vy, hs, dropCap);
                 if (Math.abs(vz) > ok) { vz = Math.signum(vz) * ok; blocked = true; }
             }
             // Backstop: a block dead ahead on the diagonal slips between the two axis checks (each axis
@@ -70,7 +78,7 @@ public class CrashProtection {
             if (!blocked) {
                 double nx = vx / hs, nz = vz / hs;
                 double look = Math.min(MAX_LOOK, hs / GAIN + WALL_STANDOFF + 2);
-                double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
+                double drop = vy < 0 ? Math.min(Math.min(WALL_DROP_CAP, look * (-vy) / hs), dropCap) : 0;
                 AABB b = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
                 double clr = sweep(level, b, nx, 0, nz, look);
                 double allowed = Math.max(0, (clr - WALL_STANDOFF) * GAIN);
@@ -85,9 +93,9 @@ public class CrashProtection {
     // box is extended downward by however far we'll sink over the lookahead, so descending into a wall
     // is caught the same way a level approach is.
     private static double axisAllowed(Level level, AABB box, double sign, boolean xAxis,
-                                      double speed, double vy, double hs) {
+                                      double speed, double vy, double hs, double dropCap) {
         double look = Math.min(MAX_LOOK, speed / GAIN + WALL_STANDOFF + 2);
-        double drop = vy < 0 ? Math.min(WALL_DROP_CAP, look * (-vy) / hs) : 0;
+        double drop = vy < 0 ? Math.min(Math.min(WALL_DROP_CAP, look * (-vy) / hs), dropCap) : 0;
         AABB b = drop > 0 ? box.expandTowards(0, -drop, 0) : box;
         double clr = xAxis ? sweep(level, b, sign, 0, 0, look) : sweep(level, b, 0, 0, sign, look);
         return Math.max(0, (clr - WALL_STANDOFF) * GAIN);
