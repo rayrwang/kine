@@ -12,6 +12,8 @@
 
 Minecraft elytra autopilot, aimbot, movement tweaks, and HUD displays.
 
+This mod only uses vanilla legal mechanics, the only "cheating" is having a computer instead of a monkey at the controls.
+
 <p align="center">
 	<a href="https://github.com/rayrwang/kine/releases">Download the Mod</a>
 </p>
