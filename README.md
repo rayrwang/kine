@@ -48,6 +48,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
+- Above ground altitude display change color
+- Expand configurability especially aimbot, kill aura
+- Improve projectile dodging (predict, avoid edges)
 - Kill aura only on player attack or being attacked, decouple client & server rotation
 - Elytra autopilot:
 	- Per block pathing instead of heightmap highest block
