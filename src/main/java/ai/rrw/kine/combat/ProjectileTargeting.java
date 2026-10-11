@@ -41,7 +41,6 @@ public class ProjectileTargeting {
     private static final double ANG_PER_UNC = 0.0172275;
     private static final double MIN_R       = 0.15;
     private static final int    RING_SEGS   = 48;
-    private static final double ENTITY_PAD  = 0.3;   // hitbox inflation when testing the path against entities
     private static final float  NEAR_W      = 0.05f; // clip-space w to clip segments at (keeps the divide finite)
     private static final int    LINE_PX     = 1;     // reticle line thickness in GUI pixels
     private static final float  MIN_SEG_PX2 = 1.0f;  // shortest segment drawn, squared pixels (bridges thin ellipse tips)
@@ -68,6 +67,7 @@ public class ProjectileTargeting {
     private static Vec3 normal = new Vec3(0, 1, 0);
     private static double radius = 0;
     private static AABB hitBox = null;
+    private static int hitId = -1;   // the shown target's entity id, for the hit chance; -1 when none
 
     // aim state
     private static boolean aiming = false;
@@ -111,19 +111,20 @@ public class ProjectileTargeting {
         if (it == Items.CROSSBOW && CrossbowItem.isCharged(stack)) {
             ChargedProjectiles cp = stack.get(DataComponents.CHARGED_PROJECTILES);
             if (cp != null && cp.contains(Items.FIREWORK_ROCKET)) return null; // firework physics differ
-            return new Spec(0.05, 0.99, 3.15, 0.0, false, true);          // arrow
+            return new Spec(0.05, 0.99, 3.15, 0.0, false, true, false);   // arrow, fired along the view without the shooter's motion (CrossbowItem.shootProjectile)
         }
         return null;
     }
 
     // The shooter's motion is the per-tick position change: getKnownMovement() and getDeltaMovement()
-    // read low for the local player.
-    private static Vec3 shooterMotion(LocalPlayer p) {
+    // read low for the local player. Zero for a weapon that doesn't pass it on.
+    private static Vec3 shooterMotion(LocalPlayer p, Spec spec) {
+        if (!spec.inherits()) return Vec3.ZERO;
         return new Vec3(p.getX() - p.xOld, p.getY() - p.yOld, p.getZ() - p.zOld);
     }
 
     private static Vec3 launchVel(LocalPlayer p, double yaw, double pitch, Spec spec) {
-        return Ballistics.launchVel(yaw, pitch, spec, shooterMotion(p), p.onGround());
+        return Ballistics.launchVel(yaw, pitch, spec, shooterMotion(p, spec), p.onGround());
     }
 
     private static boolean canHit(Entity e) {
@@ -140,7 +141,7 @@ public class ProjectileTargeting {
 
             Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
             for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), ProjectileTargeting::canHit)) {
-                Optional<Vec3> h = e.getBoundingBox().inflate(ENTITY_PAD).clip(pos, segEnd);
+                Optional<Vec3> h = entityHit(level, self, e.getBoundingBox(), pos, segEnd, HitChance.margin(tick));
                 if (h.isPresent()) {
                     double d = pos.distanceToSqr(h.get());
                     if (d < best) { best = d; ne = e; np = h.get(); }
@@ -150,6 +151,21 @@ public class ProjectileTargeting {
             if (bhr.getType() != HitResult.Type.MISS) return new Ballistics.Hit<>(bhr.getLocation(), bhr.getDirection().getUnitVec3(), null);
             return null;
         };
+    }
+
+    // ProjectileUtil.getManyEntityHitResult: the move hits the box, or else the box widened by the margin (none
+    // for a projectile's first two ticks, then 0.05 more a tick up to 0.3), provided the line from that graze
+    // point toward the box centre reaches the box before any block.
+    private static Optional<Vec3> entityHit(ClientLevel level, Entity self, AABB bb, Vec3 from, Vec3 to, double margin) {
+        Optional<Vec3> exact = bb.clip(from, to);
+        if (exact.isPresent() || margin <= 0) return exact;
+        Optional<Vec3> graze = bb.inflate(margin).clip(from, to);
+        if (graze.isEmpty()) return graze;
+        Vec3 toward = bb.getCenter();
+        BlockHitResult wall = level.clip(new ClipContext(graze.get(), toward,
+            ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
+        if (wall.getType() != HitResult.Type.MISS) toward = wall.getLocation();
+        return bb.clip(graze.get(), toward);
     }
 
     // the entity nearest the reticle centre p, among those the spread disc (radius r) overlaps
@@ -195,12 +211,13 @@ public class ProjectileTargeting {
             ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self)).getType() == HitResult.Type.MISS;
     }
 
-    // Ballistic solve with target lead, for a target entity (a dragon part leads with its parent's motion).
+    // Ballistic solve with target lead, for a target entity (a dragon part leads with its parent's motion), at the
+    // box centre moved to the best point AimAdvisor last found for it.
     private static Vec3 solveAim(LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
-        Vec3 center = target.getBoundingBox().getCenter();
+        Vec3 center = target.getBoundingBox().getCenter().add(AimAdvisor.aimOffset(target, eye, p.level().getGameTime()));
         Entity velSrc = target instanceof EnderDragonPart part ? part.parentMob : target;
         Vec3 tv = new Vec3(velSrc.getX() - velSrc.xOld, velSrc.getY() - velSrc.yOld, velSrc.getZ() - velSrc.zOld);
-        return Ballistics.solveAim(eye, center, tv, spec, shooterMotion(p), p.onGround());
+        return Ballistics.solveAim(eye, center, tv, spec, shooterMotion(p, spec), p.onGround());
     }
 
     private static float ease(float cur, float target, boolean wrap) {
@@ -213,14 +230,15 @@ public class ProjectileTargeting {
         if (p == null || level == null) { aiming = false; valid = false; return; }
         if (!Settings.projectileReticle && !Settings.autoAim) { aiming = false; valid = false; return; }
 
-        valid = false; hitBox = null;
+        valid = false; hitBox = null; hitId = -1;
         Spec spec = specFor(p);
         if (spec == null) { aiming = false; return; }
 
         Vec3 eye = p.getEyePosition();
+        Vec3 spawn = new Vec3(eye.x, p.getEyeY() - 0.1F, eye.z);   // where the server spawns the projectile
 
         // reticle from the current aim gives the candidate target
-        Ballistics.Flight<Entity> s0 = Ballistics.simulate(eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
+        Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
         Entity tgt = null;
         if (s0.impact() != null) {
             double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * ANG_PER_UNC * SPREAD_MULT);
@@ -236,8 +254,8 @@ public class ProjectileTargeting {
         if (overridden) { cooldown = COOLDOWN_TICKS; aiming = false; }
         if (cooldown > 0) { cooldown--; aiming = false; }
         else if (tgt != null && spec.weapon() && Settings.autoAim) {
-            Vec3 aimAt = solveAim(p, eye, tgt, spec);
-            Vec3 d = aimAt.subtract(eye).normalize();
+            Vec3 aimAt = solveAim(p, spawn, tgt, spec);
+            Vec3 d = aimAt.subtract(spawn).normalize();
             float fyaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
             float fpitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
             p.setYRot(ease(p.getYRot(), fyaw, true));
@@ -247,12 +265,21 @@ public class ProjectileTargeting {
         } else aiming = false;
 
         // final reticle, after any aim correction this tick
-        Ballistics.Flight<Entity> sf = Ballistics.simulate(eye, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
+        Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
+        Entity tgtF = locked;
+        double r = 0;
+        if (sf.impact() != null) {
+            r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
+            if (tgtF == null) tgtF = bestTarget(p, level, sf.impact(), r);
+        }
+        // the hit chance of the shot as aimed now, and the best point to aim at while auto aim holds a target
+        if (spec.weapon() && tgtF != null)
+            AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec,
+                              shooterMotion(p, spec), p.onGround(), tgtF, locked != null);
         if (sf.impact() == null) return;
-        double r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
-        Entity tgtF = locked != null ? locked : bestTarget(p, level, sf.impact(), r);
         impact = sf.impact(); normal = sf.normal();
         radius = r; hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
+        hitId = tgtF != null && spec.weapon() ? tgtF.getId() : -1;
         valid = true;
     }
 
@@ -292,6 +319,12 @@ public class ProjectileTargeting {
             }                                                  // else keep the anchor and bridge to a later point
         }
         if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, COLOR_ENTITY);
+
+        // the hit chance of the shot as aimed now, beside the crosshair
+        if (hitId >= 0 && mc.level != null) {
+            double c = AimAdvisor.chance(hitId, mc.level.getGameTime());
+            if (!Double.isNaN(c)) g.text(mc.font, Math.round(c * 100) + "%", W / 2 + 6, H / 2 + 4, COLOR_ENTITY, true);
+        }
     }
 
     private static void boxProjected(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, AABB bb, int color) {

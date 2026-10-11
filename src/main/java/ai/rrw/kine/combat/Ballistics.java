@@ -20,9 +20,14 @@ public final class Ballistics {
     static final int        PITCH_ITERS = 6;     // secant steps for the vertical solve (it converges in 2 to 4)
 
     /** A projectile's flight: gravity and drag per tick, launch speed, a launch pitch offset (thrown
-     *  potions go 20 degrees high), whether gravity applies before drag, and whether it is a weapon. */
+     *  potions go 20 degrees high), whether gravity applies before drag, whether it is a weapon, and
+     *  whether it takes on the shooter's motion (shootFromRotation does; a crossbow's shoot does not). */
     public record Spec(double gravity, double drag, double speed,
-                       double yOffsetDeg, boolean gravityFirst, boolean weapon) {}
+                       double yOffsetDeg, boolean gravityFirst, boolean weapon, boolean inherits) {
+        public Spec(double gravity, double drag, double speed, double yOffsetDeg, boolean gravityFirst, boolean weapon) {
+            this(gravity, drag, speed, yOffsetDeg, gravityFirst, weapon, true);
+        }
+    }
 
     /** Where a flight segment hits something: the point, the surface normal (null to keep up), and the
      *  entity hit, if any. */
@@ -39,13 +44,18 @@ public final class Ballistics {
     /** Launch velocity for an aim, as in Projectile.shootFromRotation, plus the shooter's own motion
      *  (vertical motion only when airborne). */
     public static Vec3 launchVel(double yaw, double pitch, Spec spec, Vec3 shooterMotion, boolean onGround) {
+        Vec3 dir = launchDir(yaw, pitch, spec).scale(spec.speed());
+        Vec3 km = shooterMotion;
+        return dir.add(km.x, onGround ? 0.0 : km.y, km.z);
+    }
+
+    /** Unit launch direction for an aim, before the server's random spread (the throw offset included). */
+    public static Vec3 launchDir(double yaw, double pitch, Spec spec) {
         double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch), pro = Math.toRadians(pitch + spec.yOffsetDeg());
         double xd = -Math.sin(yr) * Math.cos(pr);
         double yd = -Math.sin(pro);
         double zd = Math.cos(yr) * Math.cos(pr);
-        Vec3 dir = new Vec3(xd, yd, zd).normalize().scale(spec.speed());
-        Vec3 km = shooterMotion;
-        return dir.add(km.x, onGround ? 0.0 : km.y, km.z);
+        return new Vec3(xd, yd, zd).normalize();
     }
 
     /** Step the projectile tick by tick until the collider reports a hit or MAX_TICKS pass. A null
@@ -92,21 +102,67 @@ public final class Ballistics {
     }
 
     // Vertical miss (projectile minus target) where the arc crosses the target's horizontal range: the
-    // objective of the pitch solve, monotonic for the low arc. Uses launchVel and simulate, so drag, the
-    // shooter's motion, the gravity order and any throw offset are included. Negative means short.
+    // objective of the pitch solve, monotonic for the low arc. Same arithmetic as launchVel and simulate, so
+    // drag, the shooter's motion, the gravity order and any throw offset are included; flown past MAX_TICKS
+    // until the arc reaches the range or falls far below it, so long lobs are measured where they cross.
+    // Negative means short.
     static double vMissAtRange(Vec3 eye, double yaw, double pitch, Spec spec, double horiz, double dy,
                                Vec3 shooterMotion, boolean onGround) {
-        List<Vec3> path = simulate(eye, launchVel((float) yaw, (float) pitch, spec, shooterMotion, onGround), spec, null).path();
-        for (int i = 1; i < path.size(); i++) {
-            Vec3 a = path.get(i - 1), b = path.get(i);
-            double h0 = Math.hypot(a.x - eye.x, a.z - eye.z), h1 = Math.hypot(b.x - eye.x, b.z - eye.z);
+        Vec3 v0 = launchVel((float) yaw, (float) pitch, spec, shooterMotion, onGround);
+        double vx = v0.x, vy = v0.y, vz = v0.z, px = eye.x, py = eye.y, pz = eye.z, h0 = 0;
+        double g = spec.gravity(), drag = spec.drag();
+        for (int i = 0; i < RANGE_TICKS; i++) {
+            if (spec.gravityFirst()) { vy = vy - g; vx = vx * drag; vy = vy * drag; vz = vz * drag; }
+            double nx = px + vx, ny = py + vy, nz = pz + vz;
+            double h1 = Math.hypot(nx - eye.x, nz - eye.z);
             if (h1 >= horiz && h1 != h0) {
                 double t = (horiz - h0) / (h1 - h0);
-                return (a.y + t * (b.y - a.y) - eye.y) - dy;
+                return (py + t * (ny - py) - eye.y) - dy;
             }
+            px = nx; py = ny; pz = nz; h0 = h1;
+            if (!spec.gravityFirst()) { vx = vx * drag; vy = vy * drag; vz = vz * drag; vy = vy - g; }
+            if (vy < 0 && py - eye.y < dy - 1000) break;   // far below the target and falling
         }
-        return (path.get(path.size() - 1).y - eye.y) - dy;   // never reached the range
+        return (py - eye.y) - dy;   // never reached the range
     }
+
+    // Out of reach, the best try is the shot that comes down at the target's height farthest out: the pitch
+    // with the longest range at that height, coarse in 2 degree steps, then refined to a quarter degree.
+    private static double longestPitch(Vec3 eye, double yaw, Spec spec, double dy, Vec3 shooterMotion, boolean onGround) {
+        double best = -45.0, bestR = Double.NEGATIVE_INFINITY;
+        for (double p = 0.0; p >= -80.0; p -= 2.0) {
+            double r = rangeAtHeight(eye, yaw, p, spec, dy, shooterMotion, onGround);
+            if (r > bestR) { bestR = r; best = p; }
+        }
+        double c = best;
+        for (double p = c - 2.0; p <= c + 2.0; p += 0.25) {
+            double r = rangeAtHeight(eye, yaw, p, spec, dy, shooterMotion, onGround);
+            if (r > bestR) { bestR = r; best = p; }
+        }
+        return best;
+    }
+
+    // How far out (horizontally) the arc comes back down through the target's height; if it never rises that
+    // high, a large negative number ranked by how far its top falls short.
+    private static double rangeAtHeight(Vec3 eye, double yaw, double pitch, Spec spec, double dy, Vec3 shooterMotion, boolean onGround) {
+        Vec3 v0 = launchVel((float) yaw, (float) pitch, spec, shooterMotion, onGround);
+        double vx = v0.x, vy = v0.y, vz = v0.z, px = eye.x, py = eye.y, pz = eye.z, top = py;
+        double g = spec.gravity(), drag = spec.drag(), level = eye.y + dy;
+        for (int i = 0; i < RANGE_TICKS; i++) {
+            if (spec.gravityFirst()) { vy = vy - g; vx = vx * drag; vy = vy * drag; vz = vz * drag; }
+            double nx = px + vx, ny = py + vy, nz = pz + vz;
+            if (vy < 0 && py >= level && ny < level) {
+                double t = (py - level) / (py - ny);
+                return Math.hypot(px + t * (nx - px) - eye.x, pz + t * (nz - pz) - eye.z);
+            }
+            px = nx; py = ny; pz = nz; top = Math.max(top, py);
+            if (!spec.gravityFirst()) { vx = vx * drag; vy = vy * drag; vz = vz * drag; vy = vy - g; }
+            if (vy < 0 && py < level) break;
+        }
+        return -1e6 - (level - top);
+    }
+
+    static final int RANGE_TICKS = 2000;   // longest flight the pitch solve measures (horizontal speed decays to nothing)
 
     /** Closed-form launch pitch without drag (low arc), degrees, up negative; NaN beyond the drag-free range. */
     static double seedPitch(Spec spec, double horiz, double dy) {
@@ -117,8 +173,11 @@ public final class Ballistics {
         return -Math.toDegrees(Math.atan(tan));
     }
 
-    /** Launch pitch so the arc crosses the target's range at the target's height: the closed-form seed,
-     *  then secant steps on the vertical miss. Converges in 2 to 4 steps at any range. */
+    /** Launch pitch so the arc crosses the target's range at the target's height, on the low arc. First
+     *  the closed-form seed and secant steps on the vertical miss, which converge in 2 to 4 steps on most
+     *  shots; if they miss by more than MISS_OK or land on the high arc (near the longest range the seed is
+     *  poor and the miss curve flattens), a bracket is found from below and closed by regula falsi. Out of
+     *  range, the pitch that carries furthest toward the target's height. */
     static double solvePitch(Vec3 eye, double yaw, Spec spec, double horiz, double dy, Vec3 shooterMotion, boolean onGround) {
         double seed = seedPitch(spec, horiz, dy);
         double p0 = Double.isNaN(seed) ? -45.0 : seed;       // beyond the drag-free range: start at 45 degrees up
@@ -126,13 +185,46 @@ public final class Ballistics {
         double f0 = vMissAtRange(eye, yaw, p0, spec, horiz, dy, shooterMotion, onGround);
         double f1 = vMissAtRange(eye, yaw, p1, spec, horiz, dy, shooterMotion, onGround);
         for (int i = 0; i < PITCH_ITERS; i++) {
-            if (Math.abs(f1) < 0.02) break;
+            if (Math.abs(f1) < MISS_OK) break;
             double den = f1 - f0;
             if (Math.abs(den) < 1e-9) break;
             double p2 = Mth.clamp(p1 - f1 * (p1 - p0) / den, -89.0, 89.0);
             p0 = p1; f0 = f1; p1 = p2; f1 = vMissAtRange(eye, yaw, p1, spec, horiz, dy, shooterMotion, onGround);
         }
-        return p1;
+        // accept only a low-arc answer: there, aiming a little lower lands lower
+        if (Math.abs(f1) < MISS_OK
+            && vMissAtRange(eye, yaw, Math.min(89.0, p1 + 0.5), spec, horiz, dy, shooterMotion, onGround) < f1) return p1;
+        return bracketPitch(eye, yaw, spec, horiz, dy, shooterMotion, onGround);
+    }
+
+    static final double MISS_OK = 0.02;   // vertical miss (blocks) a pitch solve accepts
+
+    // From 10 degrees below the line of sight (always short), step up 2 degrees at a time to the first pitch
+    // that is not short, then close the bracket by regula falsi (the Illinois variant, which can't stall on
+    // one side). With no sign change before the miss starts falling (out of range), the best pitch seen.
+    private static double bracketPitch(Vec3 eye, double yaw, Spec spec, double horiz, double dy, Vec3 shooterMotion, boolean onGround) {
+        double los = -Math.toDegrees(Math.atan2(dy, horiz));
+        double a = Math.min(89.0, los + 10.0);
+        double fa = vMissAtRange(eye, yaw, a, spec, horiz, dy, shooterMotion, onGround);
+        if (fa >= 0) return a;
+        double b = Double.NaN, fb = Double.NaN;
+        for (double p = a - 2.0; p >= -89.0; p -= 2.0) {
+            double f = vMissAtRange(eye, yaw, p, spec, horiz, dy, shooterMotion, onGround);
+            if (f >= 0) { b = p; fb = f; break; }
+            if (f < fa) break;   // the miss is falling again: past the longest range, so out of reach
+            a = p; fa = f;
+        }
+        if (Double.isNaN(b)) return longestPitch(eye, yaw, spec, dy, shooterMotion, onGround);   // out of reach
+        int side = 0;
+        double c = b;
+        for (int i = 0; i < 30; i++) {
+            c = (a * fb - b * fa) / (fb - fa);
+            double fc = vMissAtRange(eye, yaw, c, spec, horiz, dy, shooterMotion, onGround);
+            if (Math.abs(fc) < MISS_OK) return c;
+            if (fc < 0) { a = c; fa = fc; if (side == -1) fb /= 2; side = -1; }
+            else        { b = c; fb = fc; if (side == 1) fa /= 2; side = 1; }
+        }
+        return c;
     }
 
     /** Yaw that points the projectile's horizontal velocity at the target, allowing for the shooter's

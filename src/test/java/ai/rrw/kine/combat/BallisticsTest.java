@@ -43,6 +43,50 @@ class BallisticsTest {
         }
     }
 
+    // closest distance between the no-spread path of an aim and a point
+    static double closestPass(Vec3 eye, Vec3 aim, Ballistics.Spec spec, Vec3 target) {
+        Vec3 d = aim.subtract(eye).normalize();
+        double yaw = Math.toDegrees(Math.atan2(-d.x, d.z)), pitch = Math.toDegrees(Math.asin(-d.y));
+        List<Vec3> path = Ballistics.simulate(eye, Ballistics.launchVel(yaw, pitch, spec, Vec3.ZERO, true), spec, null).path();
+        double best = Double.MAX_VALUE;
+        for (int i = 1; i < path.size(); i++) {
+            Vec3 p0 = path.get(i - 1), seg = path.get(i).subtract(p0);
+            double u = Math.max(0, Math.min(1, target.subtract(p0).dot(seg) / seg.lengthSqr()));
+            best = Math.min(best, target.subtract(p0.add(seg.scale(u))).length());
+        }
+        return best;
+    }
+
+    @Test
+    void theAimSolveReachesLongShots() {
+        // full-power arrows out to near the longest range, level and above and below
+        Vec3 eye = new Vec3(0, 70, 0);
+        for (double[] t : new double[][] { {0, 0, 100}, {0, 0, 108}, {0, 0, 112}, {60, 15, 50}, {0, -20, 110}, {-70, 8, 60} }) {
+            Vec3 target = eye.add(t[0], t[1], t[2]);
+            Vec3 aim = Ballistics.solveAim(eye, target, Vec3.ZERO, ARROW, Vec3.ZERO, true);
+            assertTrue(closestPass(eye, aim, ARROW, target) < 0.15, "misses " + target);
+        }
+    }
+
+    @Test
+    void outOfRangeTheAimSolveGivesItsBestTry() {
+        Vec3 eye = new Vec3(0, 70, 0), target = eye.add(0, 0, 200);
+        Vec3 aim = Ballistics.solveAim(eye, target, Vec3.ZERO, ARROW, Vec3.ZERO, true);
+        Vec3 d = aim.subtract(eye).normalize();
+        assertFalse(Double.isNaN(d.y));
+        double elevation = Math.toDegrees(Math.asin(d.y));
+        assertTrue(elevation > 30 && elevation < 50, "about the longest-range elevation, got " + elevation);
+    }
+
+    @Test
+    void weaponsPassOnTheShootersMotionExceptTheCrossbow() {
+        assertTrue(ARROW.inherits(), "the six-argument Spec defaults to passing it on");
+        assertFalse(new Ballistics.Spec(0.05, 0.99, 3.15, 0.0, false, true, false).inherits());
+        Vec3 dir = Ballistics.launchDir(30, -10, ARROW);
+        assertEquals(1.0, dir.length(), 1e-12);
+        assertEquals(dir.scale(3.0), Ballistics.launchVel(30, -10, ARROW, Vec3.ZERO, true));
+    }
+
     @Test
     void shooterMotionIsAddedHorizontallyAlwaysAndVerticallyOnlyInTheAir() {
         Vec3 m = new Vec3(0.5, 0.3, -0.2);
