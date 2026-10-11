@@ -53,7 +53,7 @@ public final class Settings {
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
-        displayFlightProfile, displayRangeEndurance, flightRibbon;
+        displayFlightProfile, displayRangeEndurance, displayFireworkFuel, flightRibbon;
 
     /** Whether a display set to this choice shows now. */
     public static boolean shows(Show s) {
@@ -125,6 +125,7 @@ public final class Settings {
     public static final Option DISPLAY_FLIGHT_PATH_VECTOR = mode("displayFlightPathVector", FLIGHT, Show.OFF, v -> displayFlightPathVector = v);
     public static final Option DISPLAY_FLIGHT_PROFILE     = mode("displayFlightProfile", FLIGHT, ELYTRA, v -> displayFlightProfile = v);
     public static final Option DISPLAY_RANGE_ENDURANCE    = mode("displayRangeEndurance", FLIGHT, ELYTRA, v -> displayRangeEndurance = v);
+    public static final Option DISPLAY_FIREWORK_FUEL      = mode("displayFireworkFuel", FLIGHT, ELYTRA, v -> displayFireworkFuel = v);
     public static final Option FLIGHT_PATH_RAILS          = mode("flightRibbon", FLIGHT, ELYTRA, v -> flightRibbon = v);
     public static final Option AUTOPILOT                  = toggle("autopilot", FLIGHT, true, v -> autopilot = v);
     public static final Option NAVIGATION                 = toggle("navigation", FLIGHT, true, v -> navigation = v);

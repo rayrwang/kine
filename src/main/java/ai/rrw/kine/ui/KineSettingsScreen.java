@@ -139,6 +139,9 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_OUTLINES =
         "Keeps the red projectile outlines thin and at full colour. It changes every outline in the game "
         + "while on; switching it reloads the game's resources.";
+    private static final String DESC_FUEL =
+        "Counts your rockets' burn in flight-duration-1 rockets, a green number with a rocket icon beside END "
+        + "and RNG, and while one boosts you, a bar of how far through its burn it likely is.";
     private static final String DESC_ALL =
         "Switches every Kine feature off at once, and back on, keeping each one's own setting. K still opens "
         + "this menu.";
@@ -166,6 +169,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Flight path vector", DESC_FPV, Settings.DISPLAY_FLIGHT_PATH_VECTOR),
             Opt.of("Flight profile map", DESC_PROFILE, Settings.DISPLAY_FLIGHT_PROFILE),
             Opt.of("Range & endurance", DESC_RANGE, Settings.DISPLAY_RANGE_ENDURANCE),
+            Opt.of("Firework fuel", DESC_FUEL, Settings.DISPLAY_FIREWORK_FUEL),
             Opt.of("Flight path rails", DESC_RIBBON, Settings.FLIGHT_PATH_RAILS),
             Opt.of("Autopilot", DESC_AUTOPILOT, Settings.AUTOPILOT),
             Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),

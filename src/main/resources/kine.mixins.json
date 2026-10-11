@@ -9,7 +9,8 @@
 		"ShulkerAccessor",
 		"MinecraftInvoker",
 		"MinecraftTickMixin",
-		"KeyboardInputMixin"
+		"KeyboardInputMixin",
+		"FireworkRocketAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1

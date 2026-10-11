@@ -11,6 +11,7 @@ import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.WaterClutch;
 import ai.rrw.kine.combat.WeaponSelect;
+import ai.rrw.kine.fireworks.FireworkFuel;
 import ai.rrw.kine.hud.FlightDirectorHud;
 import ai.rrw.kine.hud.FlightPathVector;
 import ai.rrw.kine.hud.FlightProfile;
@@ -54,6 +55,7 @@ public class Kine implements ClientModInitializer {
         FlightProfile.register();
         RadioAltimeter.register();
         RangeEndurance.register();
+        FireworkFuel.register();
         Autopilot.register();
         Nav.register();
         NavHud.register();
