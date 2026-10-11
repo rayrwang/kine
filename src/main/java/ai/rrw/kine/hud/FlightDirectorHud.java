@@ -4,6 +4,7 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Nav;
+import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.autoflight.TurnGuard;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -55,6 +56,7 @@ public final class FlightDirectorHud {
         }
 
         if (!Settings.shows(Settings.displayFlightDirectors)) return;
+        if (Takeoff.usesWarningRow()) return;   // the takeoff has the row, and the law flies nothing until it hands over
 
         boolean landing = Nav.landing();
         if (FlightDirector.isTooLow() && !landing) {

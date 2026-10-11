@@ -1,6 +1,7 @@
 package ai.rrw.kine.mixin;
 
 import ai.rrw.kine.autoflight.Autopilot;
+import ai.rrw.kine.autoflight.Takeoff;
 import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -8,7 +9,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Runs the autopilot's per-frame control once per frame, after the mouse has turned the player and
+ * Runs the autopilot's and the takeoff's per-frame control once per frame, after the mouse has turned the player and
  * before the frame is drawn: every frame, whether or not the HUD is hidden (F1), so a pilot's mouse input
  * is seen this frame and the autopilot's turn shows this frame.
  */
@@ -20,5 +21,6 @@ public class MinecraftFrameMixin {
                      shift = At.Shift.AFTER))
     private void kine$autopilotFrame(boolean advanceGameTime, CallbackInfo ci) {
         Autopilot.onFrame((Minecraft) (Object) this);
+        Takeoff.onFrame((Minecraft) (Object) this);
     }
 }

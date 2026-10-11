@@ -6,6 +6,7 @@ import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.FlightPathRails;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.PathPrediction;
+import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.AfkGuard;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileTargeting;
@@ -49,6 +50,7 @@ public class Kine implements ClientModInitializer {
         MiningHud.register();
         FlightDirector.register();
         FlightDirectorHud.register();
+        Takeoff.register();               // before the rails, which draw its path
         PathPrediction.register();
         FlightPathRails.register();
         FlightPathVector.register();

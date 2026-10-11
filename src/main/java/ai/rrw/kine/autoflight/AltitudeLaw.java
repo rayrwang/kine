@@ -122,6 +122,11 @@ public final class AltitudeLaw {
         else                          return (err < 0) ? VM_CLB : VM_DESC;
     }
 
+    /** Start the cruise in altitude hold, as at the end of a rocket takeoff above the target. */
+    void restartHold() {
+        law.restartHold(); cycleTicks = 0; vmode = VM_ALT_STAR;
+    }
+
     /** Not gliding: disarm and restart at the beginning of a climb. */
     void reset() {
         active = false; tooLow = false; lowAccum = 0; freshGlide = true;

@@ -21,7 +21,8 @@ import org.joml.Matrix4f;
  * height), since the gliding pose lowers the eye. The path starts a few blocks behind the aircraft (a
  * straight extrapolation at the current slope, so the rails pass under you). Points are stored relative
  * to the aircraft and re-anchored to the interpolated position every frame, so they move smoothly
- * between ticks. Drawn only while engaged.
+ * between ticks. Drawn while engaged, and for a rocket takeoff, offered or flying, along its planned path
+ * (straight up from where you stand, then the lean and the cruise).
  */
 public final class FlightPathRails {
     private FlightPathRails() {}
@@ -41,6 +42,7 @@ public final class FlightPathRails {
     // predicted path relative to the aircraft, re-anchored to the interpolated position each frame
     private static final double[] rx = new double[MAX_PTS], ry = new double[MAX_PTS], rz = new double[MAX_PTS];
     private static int count = 0;
+    private static double headX = 0.0, headZ = 1.0;   // horizontal heading the across-track direction starts from
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(FlightPathRails::tick);          // registered after PathPrediction, so it runs after it
@@ -49,6 +51,17 @@ public final class FlightPathRails {
 
     private static void tick(Minecraft mc) {
         count = 0;
+        // a rocket takeoff, offered or flying: its planned path, which starts straight up
+        if (Settings.shows(Settings.flightRibbon) && Takeoff.pathCount() > 1) {
+            double yr = Math.toRadians(Takeoff.heading());
+            headX = -Math.sin(yr); headZ = Math.cos(yr);
+            int n = 0;
+            for (int k = 0; k < Takeoff.pathCount() && k <= RAIL_TICKS && n < MAX_PTS; k += DECIMATE) {
+                rx[n] = Takeoff.pathX(k); ry[n] = Takeoff.pathY(k); rz[n] = Takeoff.pathZ(k); n++;
+            }
+            count = n;
+            return;
+        }
         if (!Settings.shows(Settings.flightRibbon) || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying() || PathPrediction.count() == 0) return;
@@ -57,6 +70,7 @@ public final class FlightPathRails {
         double len = Math.sqrt(dx * dx + dz * dz);
         if (len < 1.0e-4) return;                       // no ground track (also guards the slope divide below)
         double trackX = dx / len, trackZ = dz / len;
+        headX = trackX; headZ = trackZ;
 
         int n = 0;
         // extend behind: straight extrapolation back along the current ground track and flight slope
@@ -88,7 +102,7 @@ public final class FlightPathRails {
         // along, and the point offset by `drop` along the downward path normal.
         double[] ox = new double[count], oy = new double[count], oz = new double[count];
         double[] acx = new double[count], acz = new double[count];
-        double ux = 0.0, uz = 1.0;                         // last known horizontal direction
+        double ux = headX, uz = headZ;                     // last known horizontal direction (the heading on vertical spans)
         for (int i = 0; i < count; i++) {
             int j = (i + 1 < count) ? i + 1 : i;
             int h = (i + 1 < count) ? i : i - 1;

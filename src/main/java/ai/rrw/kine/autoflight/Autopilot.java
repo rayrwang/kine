@@ -173,6 +173,11 @@ public class Autopilot {
         cmdYaw   = setYaw   = p.getYRot();
     }
 
+    /** Engage at the end of a rocket takeoff, as J would. */
+    public static void engageFromTakeoff(LocalPlayer p) {
+        if (Settings.autopilot && p.isFallFlying()) engage(p);
+    }
+
     private static void engage(LocalPlayer p) {
         engaged = true;
         warnActive = false;   // engaging clears any pending "off" warning

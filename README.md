@@ -23,7 +23,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 ## Current Features
 
 - **Fly long distances without fireworks.**
-	- Start high enough, then press J to engage autopilot.
+	- Take off from ground, or start high enough and press J to engage autopilot.
 	- Terrain aware autopilot with fully optimized flight profile.
 	- Press N to enter a destination, with auto landing.
 	- Visualizations: flight director bars, path guiderails, and flight path vector.

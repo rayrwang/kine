@@ -29,6 +29,8 @@ public class FlightDirector {
     /** The live porpoise law, so the planner's and the rails' rollouts continue the current cycle. */
     public static PorpoiseLaw law()       { return LAW.law; }
     public static boolean isTooLow()      { return LAW.tooLow; }
+    /** Start the law in altitude hold (the rocket takeoff's hand-over, above the target with speed). */
+    public static void    startHold()     { LAW.restartHold(); }
 
     private static boolean      cruiseInit   = false;    // one-shot: pick the start cruise from initial facing
     private static final double ABS_FLOOR    = 390.0;   // trough above this is terrain-cleared: skip the AGL floor

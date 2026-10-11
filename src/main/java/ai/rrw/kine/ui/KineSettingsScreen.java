@@ -133,6 +133,9 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_AUTOPILOT =
         "Press J while gliding high enough to engage the autopilot, which flies the efficient climb and "
         + "cruise for you. Off: J does nothing.";
+    private static final String DESC_TAKEOFF =
+        "Standing with an elytra on and rockets in hand, left click to take off: straight up, a 70 degree rocket "
+        + "climb, then the autopilot at its cruise level, using the fewest rockets. Needs open sky above you.";
     private static final String DESC_NAV =
         "Press N for the nav screen: fly a heading or to coordinates, with landing at the destination. "
         + "Off: N does nothing and the autopilot keeps its heading.";
@@ -172,6 +175,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Firework fuel", DESC_FUEL, Settings.DISPLAY_FIREWORK_FUEL),
             Opt.of("Flight path rails", DESC_RIBBON, Settings.FLIGHT_PATH_RAILS),
             Opt.of("Autopilot", DESC_AUTOPILOT, Settings.AUTOPILOT),
+            Opt.of("Rocket takeoff", DESC_TAKEOFF, Settings.TAKEOFF),
             Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),
             Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
         }),

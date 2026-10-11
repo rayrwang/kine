@@ -107,7 +107,7 @@ public final class TurnGuard {
     }
 
     // lazily sampled surface heightmap, cached per call; NaN where unloaded (the planner treats it as unseen)
-    private static Terrain2D terrainOf(Level level) {
+    static Terrain2D terrainOf(Level level) {
         final HashMap<Long, Double> cache = new HashMap<>();
         return (x, z) -> {
             int bx = (int) Math.floor(x), bz = (int) Math.floor(z);

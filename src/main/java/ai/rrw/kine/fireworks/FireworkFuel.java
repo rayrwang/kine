@@ -14,6 +14,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.item.ItemStack;
@@ -21,6 +22,8 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
 import org.joml.Matrix3x2fStack;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.OptionalInt;
 
 /**
@@ -75,9 +78,7 @@ public final class FireworkFuel {
         // the rocket boosting you carries your id as its synced target; with two, show the one that can last longest
         if (!p.isFallFlying()) return;
         int longest = Integer.MIN_VALUE;
-        for (FireworkRocketEntity r : mc.level.getEntitiesOfClass(FireworkRocketEntity.class, p.getBoundingBox().inflate(4.0))) {
-            OptionalInt to = r.getEntityData().get(FireworkRocketAccessor.kine$attachedToTarget());
-            if (to.isEmpty() || to.getAsInt() != p.getId()) continue;
+        for (FireworkRocketEntity r : boosting(mc, p)) {
             int d = duration(r.getItem());
             int left = RocketBurn.maxTicks(d) - r.tickCount;
             if (left > longest) {
@@ -86,6 +87,22 @@ public final class FireworkFuel {
                 burnElapsed = r.tickCount;
             }
         }
+    }
+
+    /**
+     * The rockets boosting the player: those carrying the player's id as their synced target. Looked for among all
+     * the client's entities, not near the player: each time the server sends a rocket's position (every 10 ticks)
+     * the client copy jumps to where the server last had it, which in a fast climb is blocks behind the player
+     * until the rocket's own tick puts it back.
+     */
+    public static List<FireworkRocketEntity> boosting(Minecraft mc, LocalPlayer p) {
+        List<FireworkRocketEntity> out = new ArrayList<>();
+        for (Entity e : mc.level.entitiesForRendering()) {
+            if (!(e instanceof FireworkRocketEntity r)) continue;
+            OptionalInt to = r.getEntityData().get(FireworkRocketAccessor.kine$attachedToTarget());
+            if (to.isPresent() && to.getAsInt() == p.getId()) out.add(r);
+        }
+        return out;
     }
 
     private static void add(RocketBurn.Fuel fuel, ItemStack s) {

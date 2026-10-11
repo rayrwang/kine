@@ -1,5 +1,6 @@
 package ai.rrw.kine;
 
+import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
@@ -31,6 +32,7 @@ public final class VanillaActions {
     /** Just before handleKeybinds, with no screen or overlay open. One action a tick. */
     public static void beforeKeybinds(Minecraft mc) {
         if (mc.player == null || mc.level == null || mc.gameMode == null) return;
+        if (Takeoff.beforeKeybinds(mc)) return;
         if (WaterClutch.beforeKeybinds(mc)) return;
         KillAura.beforeKeybinds(mc);
     }
@@ -42,6 +44,7 @@ public final class VanillaActions {
 
     /** The keys the player holds this tick, as the features want them pressed. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
+        keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);
         keys = FallPrevention.adjustInput(p, keys);   // last, so a dodge never steps off a cliff

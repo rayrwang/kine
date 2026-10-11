@@ -73,4 +73,11 @@ public class PorpoiseLaw {
     public void restartClimb() {
         climbing = true; phase = DIVE; cmd = CLIMB.dive(); pullUpTicks = 0; cycleMin = Double.MAX_VALUE;
     }
+
+    /** Restart in altitude hold: diving at the hold profile's pitch, to pull up near the target. For a hand-over
+     *  above the target with speed, as at the end of a rocket takeoff, where the climb restart would first dive
+     *  to its trigger speed and give up height. */
+    public void restartHold() {
+        climbing = false; phase = DIVE; cmd = ALT_HOLD.dive(); pullUpTicks = 0; cycleMin = Double.MAX_VALUE;
+    }
 }
