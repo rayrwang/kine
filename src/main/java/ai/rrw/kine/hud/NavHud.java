@@ -17,9 +17,12 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
@@ -201,16 +204,23 @@ public final class NavHud {
         g.text(mc.font, l2, x + (blockW - mc.font.width(l2)) / 2, etaY, col, true);
     }
 
-    /** A beam over the target column from the bottom of the world to the top of the build height,
-     *  projected to the screen and drawn as a HUD element, so it shows through terrain like Baritone's goal
-     *  beam. Only the part in view is drawn. */
+    /** A beam over the target column from the ground to the top of the build height, and the landing block's top
+     *  face outlined in green, projected to the screen and drawn as a HUD element, so they show through terrain
+     *  like Baritone's goal beam. The ground is the landing spot's surface, or else the column's top where the
+     *  client has its chunk; with neither, the beam runs from the bottom of the world and no face is drawn. Only
+     *  the part in view is drawn. */
     private static void drawTargetColumn(GuiGraphicsExtractor g, Minecraft mc, int W, int H) {
         if (mc.level == null) return;
-        double baseY = mc.level.getMinY(), topY = mc.level.getMaxY() + 1;   // -64 and 320 in the overworld
+        // while landing on a known spot (a safe column found near the target, or the aimed one), the beam stands on it
+        boolean spot = Nav.hasSpot();
+        int bx = spot ? Mth.floor(Nav.spotX()) : Nav.targetX(), bz = spot ? Mth.floor(Nav.spotZ()) : Nav.targetZ();
+        double ground = spot ? Nav.spotTop() : columnTop(mc.level, bx, bz);
+        double baseY = Double.isNaN(ground) ? mc.level.getMinY() : ground, topY = mc.level.getMaxY() + 1;
         Camera cam = mc.gameRenderer.getMainCamera();
         Matrix4f vp = cam.getViewRotationProjectionMatrix(new Matrix4f());
         Vec3 c = cam.position();
-        double wx = Nav.targetX() + 0.5, wz = Nav.targetZ() + 0.5;
+        double wx = bx + 0.5, wz = bz + 0.5;
+        if (!Double.isNaN(ground)) drawTopFace(g, vp, c, bx, ground, bz, W, H);
 
         Vector4f[] seg = clipSegment(ScreenProjection.clip(vp, c, wx, baseY, wz), ScreenProjection.clip(vp, c, wx, topY, wz));
         if (seg == null) return;   // no part of the beam in view
@@ -224,6 +234,25 @@ public final class NavHud {
             g.fill(-hl, -width / 2, hl, width / 2, COLUMN_BODY);
             g.fill(-hl, -1, hl, 1, COLUMN_CORE);
         });
+    }
+
+    // The top of a column where the client has its chunk (the MOTION_BLOCKING heightmap, as the landing spot search
+    // reads it), else NaN.
+    private static double columnTop(ClientLevel level, int x, int z) {
+        if (!level.hasChunkAt(new BlockPos(x, level.getMinY(), z))) return Double.NaN;
+        return level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+    }
+
+    // The block's top face at height y, its four edges in green.
+    private static void drawTopFace(GuiGraphicsExtractor g, Matrix4f vp, Vec3 c, int x, double y, int z, int W, int H) {
+        double[][] k = {{x, z}, {x + 1, z}, {x + 1, z + 1}, {x, z + 1}};
+        for (int i = 0; i < 4; i++) {
+            double[] a = k[i], b = k[(i + 1) % 4];
+            Vector4f[] seg = clipSegment(ScreenProjection.clip(vp, c, a[0], y, a[1]), ScreenProjection.clip(vp, c, b[0], y, b[1]));
+            if (seg == null) continue;
+            float[] p0 = ScreenProjection.toScreen(seg[0], W, H), p1 = ScreenProjection.toScreen(seg[1], W, H);
+            HudDraw.alongSegment(g, p0[0], p0[1], p1[0], p1[1], 0f, hl -> g.fill(-hl - 1, -1, hl + 1, 1, HudColors.GREEN));
+        }
     }
 
     /**

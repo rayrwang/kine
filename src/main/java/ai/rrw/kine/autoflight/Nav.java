@@ -77,6 +77,7 @@ public class Nav {
     public static boolean hasHeading()    { return hasHeading; }
     public static boolean hasTarget()     { return hasTarget; }
     public static int     targetX()       { return targetX; }
+    public static boolean hasSpot()       { return landing() && haveSpot; }   // landing on a known spot (spotX, spotZ, spotTop)
     public static int     targetZ()       { return targetZ; }
 
     // set by the nav screen (the landing is cleared first, so an aimed landing's trip comes back before the change)

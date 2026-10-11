@@ -39,8 +39,8 @@ import org.joml.Matrix4f;
 public final class Landing {
     private Landing() {}
 
-    public static final double MAX_DIST = 256.0;        // horizontal distance limit for a spot
-    private static final double RAY = 512.0;            // how far the look is traced
+    public static final double MAX_DIST = 1024.0;       // horizontal distance limit for a spot (RW: farther out; loaded chunks bound it first, 512 at render distance 32)
+    private static final double RAY = 1536.0;           // how far the look is traced (past MAX_DIST, for a steep look from high up)
     private static final double MIN_BELOW = 2.0;        // the spot must be at least this far below you
     private static final int    MAX_DROP = 3;           // a neighbour lower than this beside the spot is a fall
     private static final int    REACH_TICKS = 4000;     // the reach rollout's limit
