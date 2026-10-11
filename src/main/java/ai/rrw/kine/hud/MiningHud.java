@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -55,7 +56,7 @@ public class MiningHud {
     }
 
     private static void render(GuiGraphicsExtractor graphics, DeltaTracker delta) {
-        if (!active) return;
+        if (!active || !Settings.displayMiningProgress) return;
         Minecraft mc = Minecraft.getInstance();
 
         double secondsLeft = ratePerTick > 0 ? (1.0 - progress) / ratePerTick / 20.0 : 0.0;

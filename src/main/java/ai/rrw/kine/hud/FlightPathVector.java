@@ -52,7 +52,7 @@ public final class FlightPathVector {
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!Settings.displayFlightPathVector) { have = false; return; }
+        if (!Settings.shows(Settings.displayFlightPathVector)) { have = false; return; }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { have = false; return; }

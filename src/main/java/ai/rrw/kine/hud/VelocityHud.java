@@ -37,8 +37,8 @@ public class VelocityHud {
         double groundSpeed = Motion.groundSpeed(player);
 
         List<String> lines = new ArrayList<>();
-        if (Settings.displaySpeed)       lines.add(String.format("Speed: %.1f m/s", speed));
-        if (Settings.displayGroundSpeed) lines.add(String.format("Ground speed: %.1f m/s", groundSpeed));
+        if (Settings.shows(Settings.displaySpeed))       lines.add(String.format("Speed: %.1f m/s", speed));
+        if (Settings.shows(Settings.displayGroundSpeed)) lines.add(String.format("Ground speed: %.1f m/s", groundSpeed));
         if (lines.isEmpty()) return;
 
         float scale = 1f; // TODO adjust using setting

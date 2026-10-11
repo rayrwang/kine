@@ -1,0 +1,7 @@
+{
+	"pack": {
+		"description": "Kine: thin, full-colour projectile outlines (changes every outline in the game while on)",
+		"min_format": 84,
+		"max_format": 84
+	}
+}

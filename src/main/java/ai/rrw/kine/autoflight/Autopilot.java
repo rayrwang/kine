@@ -69,6 +69,13 @@ public class Autopilot {
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null) { disengage(); resetWarn(); return; }   // left the world: never keep the lock
+        if (!Settings.autopilot) {
+            // switched off in the settings: let go quietly, without the AUTOPILOT OFF warning and its disconnect
+            while (toggleKey.consumeClick()) { }
+            engaged = false; lastFrameNanos = 0L; tripTicks = 0;
+            resetWarn();
+            return;
+        }
         while (toggleKey.consumeClick()) {
             if (engaged) disengage();
             else if (p.isFallFlying()) engage(p);   // engage even if too low; it trips off below, visibly

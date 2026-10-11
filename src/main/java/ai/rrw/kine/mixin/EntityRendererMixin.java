@@ -1,5 +1,6 @@
 package ai.rrw.kine.mixin;
 
+import ai.rrw.kine.Settings;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.world.entity.Entity;
@@ -17,7 +18,7 @@ public class EntityRendererMixin {
 
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void kine$colorProjectileGlow(Entity entity, EntityRenderState state, float partialTick, CallbackInfo ci) {
-        if (state.outlineColor != 0 && entity instanceof Projectile) {
+        if (Settings.projectileGlow && state.outlineColor != 0 && entity instanceof Projectile) {
             state.outlineColor = KINE_GLOW_COLOR;   // only when already glowing (EntityMixin makes projectiles glow)
         }
     }

@@ -38,7 +38,7 @@ public final class PathPrediction {
 
     private static void tick(Minecraft mc) {
         count = 0;
-        if (!Settings.flightRibbon && !Settings.displayFlightProfile) return;
+        if (!Settings.shows(Settings.flightRibbon) && !Settings.shows(Settings.displayFlightProfile)) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying() || !Autopilot.isEngaged()) return;
 

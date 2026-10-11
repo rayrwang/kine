@@ -16,7 +16,8 @@ import net.minecraft.util.Mth;
 
 /**
  * The flight director display: magenta bars for the commanded pitch (horizontal bar) and heading
- * (vertical bar), the altitude beside them, and TOO LOW TO ACTIVATE AUTOPILOT when it can't arm.
+ * (vertical bar), and TOO LOW TO ACTIVATE AUTOPILOT when it can't arm; and beside them the altitude, a
+ * display of its own.
  * Guidance only; FlightDirector holds the law.
  */
 public final class FlightDirectorHud {
@@ -37,7 +38,6 @@ public final class FlightDirectorHud {
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!Settings.displayFlightDirectors) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null) return;
@@ -46,6 +46,15 @@ public final class FlightDirectorHud {
         int H = mc.getWindow().getGuiScaledHeight();
         int cx = W / 2, cy = H / 2;
         int maxOff = HudLayout.directorTravel(H);
+
+        // current altitude, level with the crosshair and past the heading bar's full travel (cx + maxOff), so
+        // the moving bar never covers it
+        if (Settings.shows(Settings.displayAltitude)) {
+            String altS = Integer.toString((int) Math.round(p.getY()));
+            g.text(mc.font, altS, cx + maxOff + 8, cy - mc.font.lineHeight / 2, HudColors.GREEN, true);
+        }
+
+        if (!Settings.shows(Settings.displayFlightDirectors)) return;
 
         boolean landing = Nav.landing();
         if (FlightDirector.isTooLow() && !landing) {
@@ -56,11 +65,6 @@ public final class FlightDirectorHud {
             return;
         }
         if (!FlightDirector.isActive() && !landing) return;
-
-        // current altitude, level with the crosshair and past the heading bar's full travel (cx + maxOff), so
-        // the moving bar never covers it
-        String altS = Integer.toString((int) Math.round(p.getY()));
-        g.text(mc.font, altS, cx + maxOff + 8, cy - mc.font.lineHeight / 2, HudColors.GREEN, true);
 
         // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
         // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is the

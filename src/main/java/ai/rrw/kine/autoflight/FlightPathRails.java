@@ -49,7 +49,7 @@ public final class FlightPathRails {
 
     private static void tick(Minecraft mc) {
         count = 0;
-        if (!Settings.flightRibbon || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
+        if (!Settings.shows(Settings.flightRibbon) || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying() || PathPrediction.count() == 0) return;
 

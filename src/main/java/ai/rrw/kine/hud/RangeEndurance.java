@@ -59,7 +59,7 @@ public class RangeEndurance {
 
     private static void tick(Minecraft mc) {
         show = false;
-        if (!Settings.displayRangeEndurance) return;
+        if (!Settings.shows(Settings.displayRangeEndurance)) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
 

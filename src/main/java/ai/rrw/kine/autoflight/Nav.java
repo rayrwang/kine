@@ -1,6 +1,7 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.NavHud;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.ui.KineNavScreen;
@@ -60,9 +61,10 @@ public class Nav {
     private static KeyMapping navKey;
 
     // read by the autopilot and the flight director
-    public static Mode    mode()          { return mode; }
-    public static boolean steering()      { return (mode == Mode.SELECTED && hasHeading) || (mode == Mode.MANAGED && hasTarget); }
-    public static boolean landing()       { return landing; }
+    // With navigation switched off in the settings, nav reads as off: nothing steers, nothing lands.
+    public static Mode    mode()          { return Settings.navigation ? mode : Mode.OFF; }
+    public static boolean steering()      { return (mode() == Mode.SELECTED && hasHeading) || (mode() == Mode.MANAGED && hasTarget); }
+    public static boolean landing()       { return Settings.navigation && landing; }
     /** Descent angle for the landing program: steep up high to lose altitude fast, easing to a gentle flare near the ground. */
     public static float landingPitch() {
         double agl = Math.max(0, RadioAltimeter.agl());
@@ -113,8 +115,8 @@ public class Nav {
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
-        while (navKey.consumeClick()) mc.setScreen(new KineNavScreen());
-        if (mode == Mode.OFF) { clearLanding(); return; }
+        while (navKey.consumeClick()) if (Settings.navigation) mc.setScreen(new KineNavScreen());
+        if (mode() == Mode.OFF) { clearLanding(); return; }
 
         if (mode == Mode.MANAGED && hasTarget) {
             double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();

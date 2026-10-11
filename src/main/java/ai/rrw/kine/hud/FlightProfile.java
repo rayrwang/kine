@@ -73,7 +73,7 @@ public final class FlightProfile {
 
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || !Settings.displayFlightProfile || !p.isFallFlying()) {
+        if (p == null || mc.level == null || !Settings.shows(Settings.displayFlightProfile) || !p.isFallFlying()) {
             have = false; return;
         }
         if (cells == null) { cells = new int[COLS * ROWS]; pathY = new double[COLS]; hasPath = new boolean[COLS]; }

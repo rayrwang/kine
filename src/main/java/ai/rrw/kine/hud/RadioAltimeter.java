@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -45,7 +46,7 @@ public class RadioAltimeter {
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (agl < 0) return;
+        if (agl < 0 || !Settings.shows(Settings.displayHeightAboveGround)) return;
         Minecraft mc = Minecraft.getInstance();
 
         String text = "" + agl;

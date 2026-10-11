@@ -58,7 +58,8 @@ public final class NavHud {
         int lh = mc.font.lineHeight;
 
         // heading arc across the top, shown whatever the autopilot state
-        drawHeadingArc(g, mc, cx, cy);
+        if (Settings.shows(Settings.displayHeadingArc)) drawHeadingArc(g, mc, cx, cy);
+        boolean readouts = Settings.shows(Settings.displayNavReadouts);
 
         int durY  = HudLayout.warningRow(H, lh);
         int etaY  = HudLayout.annunciatorLower(H, lh);
@@ -66,10 +67,10 @@ public final class NavHud {
 
         Nav.Mode mode = Nav.mode();
         boolean landing = Nav.landing();
-        if (mode == Nav.Mode.MANAGED && Nav.hasTarget()) drawTargetColumn(g, mc, W, H);
+        if (readouts && mode == Nav.Mode.MANAGED && Nav.hasTarget()) drawTargetColumn(g, mc, W, H);
 
         // the centred nav block shows unless nav is off or the too-low warning has the slot
-        boolean navCenter = mode != Nav.Mode.OFF && !(FlightDirector.isTooLow() && !landing);
+        boolean navCenter = readouts && mode != Nav.Mode.OFF && !(FlightDirector.isTooLow() && !landing);
 
         String top = null, line2 = null;
         double dist = 0;
@@ -91,9 +92,11 @@ public final class NavHud {
         // vertical mode annunciator: two rows left of the nav block, shown whenever the director is armed
         drawModeAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
 
-        // autopilot status on the right, mirroring the vertical mode block; always shown
-        int apX = HudLayout.apLeftEdge(cx, halfCenter);
-        g.text(mc.font, "AP", apX, lineY, Autopilot.isEngaged() ? HudColors.GREEN : HudColors.RED, true);
+        // autopilot status on the right, mirroring the vertical mode block; shown whatever the autopilot state
+        if (readouts && Settings.autopilot) {
+            int apX = HudLayout.apLeftEdge(cx, halfCenter);
+            g.text(mc.font, "AP", apX, lineY, Autopilot.isEngaged() ? HudColors.GREEN : HudColors.RED, true);
+        }
 
         if (!navCenter) return;
 
@@ -177,7 +180,7 @@ public final class NavHud {
 
     /** Vertical mode annunciator (CLB, DESC, ALT* or ALT over the target altitude), left of the nav block. */
     private static void drawModeAnnunciator(GuiGraphicsExtractor g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
-        if (!Settings.displayFlightDirectors || !FlightDirector.isActive()) return;
+        if (!Settings.shows(Settings.displayFlightDirectors) || !FlightDirector.isActive()) return;
         int vm = FlightDirector.verticalMode();
         String l1; int col;
         if      (vm == FlightDirector.VM_CLB)      { l1 = "CLB";  col = HudColors.AMBER;  }   // climbing to target

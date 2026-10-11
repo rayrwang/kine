@@ -1,14 +1,22 @@
 package ai.rrw.kine.ui;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.hud.ThinOutlines;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
+import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Kine's settings (K). A switch for the whole mod at the top, one on each section's header, and a button per
+ * feature: on/off, or for the elytra, speed and altitude displays off, elytra only or always. A feature
+ * whose section or the whole mod is switched off greys out and keeps its own setting. Hovering a row shows
+ * its description on the right.
+ */
 public class KineSettingsScreen extends Screen {
 
     private static final int MARGIN  = 16;
@@ -17,16 +25,17 @@ public class KineSettingsScreen extends Screen {
     private static final int ROW_H    = 20;
     private static final int ROW_STEP = 22;
     private static final int GAP      = 8;     // between sections
+    private static final int SWITCH_W = 44;    // a section header's on/off button
 
     private final Screen parent;
 
-    // layout
+    // layout: every scrolling widget with its content-space y and the text shown when it's hovered
+    private static final int ALL = -2, OPTION = -1;   // Row.switchOf: the whole mod, a feature, else a section's index
+    private record Row(Button button, int baseY, String desc, Opt opt, int switchOf) {}
+    private final List<Row> rows = new ArrayList<>();
+    private int[] baseHeaderY;
     private int rowX, colW, headH;
     private int viewTop, viewBottom, contentHeight, maxScroll, scrollOffset;
-    private int[] baseHeaderY;
-    private int[] baseRowY;       // content-space y of each toggle row
-    private Opt[] rowOpt;
-    private Button[] rowButton;
     private int descTextTop;   // top of the description text on the right, below the reset button
 
     public KineSettingsScreen(Screen parent) {
@@ -34,14 +43,11 @@ public class KineSettingsScreen extends Screen {
         this.parent = parent;
     }
 
-    // option model
-    private record Opt(String name, String desc, Settings.Toggle toggle) {
-        static Opt of(String n, String d, Settings.Toggle t) { return new Opt(n, d, t); }
-        boolean get() { return toggle.get().getAsBoolean(); }
-        void set(boolean v) { toggle.set().accept(v); }
+    private record Opt(String name, String desc, Settings.Option option) {
+        static Opt of(String n, String d, Settings.Option o) { return new Opt(n, d, o); }
     }
 
-    private record Section(String title, Opt[] opts) {}
+    private record Section(Settings.Section section, Opt[] opts) {}
 
     // Descriptions: concise, most important first, similar lengths.
     private static final String DESC_SPEED =
@@ -59,7 +65,7 @@ public class KineSettingsScreen extends Screen {
 
     private static final String DESC_FLIGHT =
         "While gliding high enough to arm the autopilot, magenta bars show the pitch and heading it would "
-        + "fly, with your altitude and climb mode beside them. Guidance only.";
+        + "fly, with the climb mode beside them. Guidance only.";
     private static final String DESC_FPV =
         "Marks where your motion is taking you, not where you are looking; put it on the spot you want to "
         + "reach. Shows while gliding or after falling a few blocks.";
@@ -109,68 +115,119 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_WEAPON =
         "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
         + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";
+    private static final String DESC_MINING =
+        "While you break a block, shows how far through it you are and the time left, just below the "
+        + "crosshair.";
+    private static final String DESC_HEADING =
+        "A compass arc across the top of the screen with your heading boxed above its middle, and a green "
+        + "bug at the heading selected in the nav screen.";
+    private static final String DESC_ALTITUDE =
+        "Your height (Y level) in green, level with the crosshair to its right, clear of the flight "
+        + "director bars.";
+    private static final String DESC_AGL =
+        "Your height above whatever is straight below you, in amber above the hotbar. Water and leaves "
+        + "count as ground; over the void it hides.";
+    private static final String DESC_NAV_READOUTS =
+        "The selected heading or destination with its distance and ETA, the autopilot status (AP), a beam "
+        + "over the destination, and a warning if your elytras can't make the distance.";
+    private static final String DESC_AUTOPILOT =
+        "Press J while gliding high enough to engage the autopilot, which flies the efficient climb and "
+        + "cruise for you. Off: J does nothing.";
+    private static final String DESC_NAV =
+        "Press N for the nav screen: fly a heading or to coordinates, with landing at the destination. "
+        + "Off: N does nothing and the autopilot keeps its heading.";
+    private static final String DESC_OUTLINES =
+        "Keeps the red projectile outlines thin and at full colour. It changes every outline in the game "
+        + "while on; switching it reloads the game's resources.";
+    private static final String DESC_ALL =
+        "Switches every Kine feature off at once, and back on, keeping each one's own setting. K still opens "
+        + "this menu.";
+    private static final String DESC_SECTION =
+        "Switches every feature in this section off at once, and back on, keeping each one's own setting.";
+    private static final String HINT =
+        "Hover an option for details. ELYTRA ONLY shows a display only while you wear an elytra; ALWAYS "
+        + "shows it everywhere.";
+
 
     private static final Section[] SECTIONS = {
-        new Section("Heads-up display", new Opt[]{
-            Opt.of("Display speed", DESC_SPEED, Settings.DISPLAY_SPEED),
-            Opt.of("Display ground speed", DESC_GROUND, Settings.DISPLAY_GROUND_SPEED),
+        new Section(Settings.Section.HUD, new Opt[]{
             Opt.of("Display mob healths", DESC_HEALTH, Settings.DISPLAY_MOB_HEALTHS),
             Opt.of("Display mob names", DESC_NAMES, Settings.DISPLAY_MOB_NAMES),
+            Opt.of("Block breaking progress", DESC_MINING, Settings.DISPLAY_MINING_PROGRESS),
+            Opt.of("Display speed", DESC_SPEED, Settings.DISPLAY_SPEED),
+            Opt.of("Display ground speed", DESC_GROUND, Settings.DISPLAY_GROUND_SPEED),
         }),
-        new Section("Elytra flight", new Opt[]{
+        new Section(Settings.Section.FLIGHT, new Opt[]{
+            Opt.of("Heading arc", DESC_HEADING, Settings.DISPLAY_HEADING_ARC),
+            Opt.of("Altitude", DESC_ALTITUDE, Settings.DISPLAY_ALTITUDE),
+            Opt.of("Height above ground", DESC_AGL, Settings.DISPLAY_HEIGHT_ABOVE_GROUND),
+            Opt.of("Nav & AP readouts", DESC_NAV_READOUTS, Settings.DISPLAY_NAV_READOUTS),
             Opt.of("Flight directors", DESC_FLIGHT, Settings.DISPLAY_FLIGHT_DIRECTORS),
             Opt.of("Flight path vector", DESC_FPV, Settings.DISPLAY_FLIGHT_PATH_VECTOR),
             Opt.of("Flight profile map", DESC_PROFILE, Settings.DISPLAY_FLIGHT_PROFILE),
             Opt.of("Range & endurance", DESC_RANGE, Settings.DISPLAY_RANGE_ENDURANCE),
             Opt.of("Flight path rails", DESC_RIBBON, Settings.FLIGHT_PATH_RAILS),
+            Opt.of("Autopilot", DESC_AUTOPILOT, Settings.AUTOPILOT),
+            Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),
             Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
         }),
-        new Section("Safety", new Opt[]{
+        new Section(Settings.Section.SAFETY, new Opt[]{
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, Settings.ELYTRA_DURA_FAILSAFE),
             Opt.of("Fall prevention", DESC_FALL, Settings.FALL_PREVENTION),
             Opt.of("Water bucket clutch", DESC_CLUTCH, Settings.WATER_BUCKET_CLUTCH),
             Opt.of("AFK damage protection", DESC_AFK, Settings.AFK_DAMAGE_PROTECTION),
         }),
-        new Section("Combat", new Opt[]{
+        // ordered by ban risk, the riskiest last: client-side only, then movement keys, then fighting
+        new Section(Settings.Section.COMBAT, new Opt[]{
             Opt.of("Projectile targeting reticle", DESC_RETICLE, Settings.PROJECTILE_RETICLE),
             Opt.of("Projectile glow", DESC_GLOW, Settings.PROJECTILE_GLOW),
-            Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
+            Opt.of("Thin projectile outlines", DESC_OUTLINES, Settings.THIN_OUTLINES),
             Opt.of("Projectile dodge", DESC_DODGE, Settings.PROJECTILE_DODGE),
-            Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
             Opt.of("Auto weapon", DESC_WEAPON, Settings.AUTO_WEAPON),
+            Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
+            Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
         }),
     };
 
     @Override
     protected void init() {
+        // the outline pack can also be switched in the game's resource pack screen: take its state as the setting
+        if (Settings.enabled() && Settings.sectionOn(Settings.Section.COMBAT)
+            && Settings.thinOutlines != ThinOutlines.selected(this.minecraft)) Settings.THIN_OUTLINES.cycle();
+
         rowX = MARGIN;
         colW = Math.min(280, this.width / 2 - MARGIN - 8);
-        headH = this.font.lineHeight + 6;
+        headH = ROW_H + 4;
         viewTop = 30;
         int doneH = 18;
         viewBottom = this.height - doneH - 12;
-
-        int nOpts = 0;
-        for (Section s : SECTIONS) nOpts += s.opts().length;
-        rowOpt = new Opt[nOpts];
-        baseRowY = new int[nOpts];
-        rowButton = new Button[nOpts];
+        rows.clear();
         baseHeaderY = new int[SECTIONS.length];
 
-        int cY = 0, idx = 0;
+        int cY = 0;
+        Button all = Button.builder(allLabel(), b -> { Settings.setEnabled(!Settings.enabled()); changed(); })
+            .bounds(rowX, viewTop, colW, ROW_H).build();
+        rows.add(new Row(addRenderableWidget(all), cY, DESC_ALL, null, ALL));
+        cY += ROW_STEP + GAP;
         for (int s = 0; s < SECTIONS.length; s++) {
+            Settings.Section sec = SECTIONS[s].section();
             baseHeaderY[s] = cY;
+            Button sw = Button.builder(onOff(Settings.sectionOn(sec)), b -> { Settings.setSectionOn(sec, !Settings.sectionOn(sec)); changed(); })
+                .bounds(rowX + colW - SWITCH_W, viewTop + cY, SWITCH_W, ROW_H).build();
+            rows.add(new Row(addRenderableWidget(sw), cY, DESC_SECTION, null, s));
             cY += headH;
             for (Opt opt : SECTIONS[s].opts()) {
-                rowOpt[idx] = opt; baseRowY[idx] = cY;
-                rowButton[idx] = addToggle(rowX, viewTop + cY, colW, ROW_H, opt);
-                idx++; cY += ROW_STEP;
+                Button b = Button.builder(label(opt), btn -> { opt.option().cycle(); changed(); })
+                    .bounds(rowX, viewTop + cY, colW, ROW_H).build();
+                rows.add(new Row(addRenderableWidget(b), cY, opt.desc(), opt, OPTION));
+                cY += ROW_STEP;
             }
             cY += GAP;
         }
         contentHeight = cY;
         maxScroll = Math.max(0, contentHeight - (viewBottom - viewTop));
         scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+        refresh();
         layout();
 
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
@@ -182,40 +239,49 @@ public class KineSettingsScreen extends Screen {
         int resetX = this.width - MARGIN - resetW;
         if (resetX < minResetX) { resetX = minResetX; resetW = Math.max(60, this.width - MARGIN - minResetX); }
         descTextTop = viewTop + resetH + 6;
-        addRenderableWidget(Button.builder(Component.literal("Reset to defaults"), b -> resetAll())
+        addRenderableWidget(Button.builder(Component.literal("Reset to defaults"), b -> { Settings.resetDefaults(); changed(); })
             .bounds(resetX, viewTop, resetW, resetH).build());
     }
 
-    /** Restore defaults and refresh every toggle label to match. */
-    private void resetAll() {
-        Settings.resetDefaults();
-        for (int i = 0; i < rowButton.length; i++) {
-            rowButton[i].setMessage(label(rowOpt[i], rowOpt[i].get()));
+    /** After any change: relabel every button, and switch the outline pack if its effective setting moved. */
+    private void changed() {
+        refresh();
+        ThinOutlines.sync(this.minecraft);
+    }
+
+    private void refresh() {
+        for (Row r : rows) {
+            if (r.switchOf() == ALL) {
+                r.button().setMessage(allLabel());
+            } else if (r.switchOf() >= 0) {
+                r.button().setMessage(onOff(Settings.sectionOn(SECTIONS[r.switchOf()].section())));
+                r.button().active = Settings.enabled();
+            } else {
+                r.button().setMessage(label(r.opt()));
+                r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().option().section);
+            }
         }
     }
 
     /** Reposition rows for the current scroll offset and hide any not fully inside the viewport. */
     private void layout() {
-        for (int i = 0; i < rowButton.length; i++) {
-            int sy = viewTop + baseRowY[i] - scrollOffset;
-            rowButton[i].setY(sy);
-            rowButton[i].visible = sy >= viewTop && sy + ROW_H <= viewBottom;
+        for (Row r : rows) {
+            int sy = viewTop + r.baseY() - scrollOffset;
+            r.button().setY(sy);
+            r.button().visible = sy >= viewTop && sy + ROW_H <= viewBottom;
         }
     }
 
-    private Button addToggle(int x, int y, int w, int h, Opt opt) {
-        Button b = Button.builder(label(opt, opt.get()), btn -> {
-            boolean nv = !opt.get();
-            opt.set(nv);
-            btn.setMessage(label(opt, nv));
-            Settings.save();
-        }).bounds(x, y, w, h).build();
-        addRenderableWidget(b);
-        return b;
+    private static Component allLabel() {
+        return Component.literal("All features: " + (Settings.enabled() ? "ON" : "OFF"));
     }
 
-    private static Component label(Opt opt, boolean on) {
-        return Component.literal(opt.name() + ": " + (on ? "ON" : "OFF"));
+    private static Component onOff(boolean on) {
+        return Component.literal(on ? "ON" : "OFF");
+    }
+
+    private static Component label(Opt opt) {
+        return Component.literal(opt.name() + ": " + opt.option().label());
     }
 
     @Override
@@ -238,8 +304,10 @@ public class KineSettingsScreen extends Screen {
         graphics.enableScissor(0, viewTop, this.width, viewBottom);
         for (int s = 0; s < SECTIONS.length; s++) {
             int hy = viewTop + baseHeaderY[s] - scrollOffset;
-            graphics.text(this.font, Component.literal(SECTIONS[s].title()), rowX, hy, HEADER);
-            int dy = hy + this.font.lineHeight + 2;
+            int ty = hy + (ROW_H - this.font.lineHeight) / 2;
+            boolean on = Settings.enabled() && Settings.sectionOn(SECTIONS[s].section());
+            graphics.text(this.font, Component.literal(SECTIONS[s].section().title), rowX, ty, on ? HEADER : 0xFF777777);
+            int dy = hy + ROW_H + 1;
             graphics.fill(rowX, dy, rowX + colW, dy + 1, DIVIDER);
         }
         graphics.disableScissor();
@@ -253,22 +321,19 @@ public class KineSettingsScreen extends Screen {
             graphics.fill(barX, thumbY, barX + 2, thumbY + thumbH, 0xFF8A8A8A);
         }
 
-        // description of the hovered option, on the right
+        // description of the hovered row, on the right
         int descX = rowX + colW + MARGIN;
         int descW = this.width - descX - MARGIN;
         if (descW < 80) return;
 
-        Opt hovered = null;
-        for (int i = 0; i < rowOpt.length; i++) {
-            int sy = viewTop + baseRowY[i] - scrollOffset;
-            if (rowButton[i].visible && mouseX >= rowX && mouseX <= rowX + colW
-                && mouseY >= sy && mouseY <= sy + ROW_H) {
-                hovered = rowOpt[i];
-                break;
-            }
+        String hovered = null;
+        for (Row r : rows) {
+            Button b = r.button();
+            if (b.visible && mouseX >= b.getX() && mouseX <= b.getX() + b.getWidth()
+                && mouseY >= b.getY() && mouseY <= b.getY() + ROW_H) { hovered = r.desc(); break; }
         }
 
-        String text = hovered != null ? hovered.desc() : "Hover an option for details.";
+        String text = hovered != null ? hovered : HINT;
         int color = hovered != null ? 0xFFFFFFFF : 0xFF909090;
         List<FormattedCharSequence> lines = this.font.split(Component.literal(text), descW);
         int ty = descTextTop;

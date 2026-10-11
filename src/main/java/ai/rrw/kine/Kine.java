@@ -19,6 +19,7 @@ import ai.rrw.kine.hud.MobHealthHud;
 import ai.rrw.kine.hud.NavHud;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.hud.RangeEndurance;
+import ai.rrw.kine.hud.ThinOutlines;
 import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.ui.KineMenu;
 import net.fabricmc.api.ClientModInitializer;
@@ -41,6 +42,7 @@ public class Kine implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         Settings.load();
+        ThinOutlines.register();
         VelocityHud.register();
         MobHealthHud.register();
         MiningHud.register();
