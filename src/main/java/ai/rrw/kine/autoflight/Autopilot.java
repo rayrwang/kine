@@ -34,7 +34,8 @@ public class Autopilot {
     static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
     private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
     static final float LANDING_TURN_DPS = (float) (LandingModel.YAW_RATE * 20);   // the landing law's turn rate, 300 deg/s
-    private static final float LANDING_BUMP_DEG = 10f; // while landing, a look this far off the command is the pilot; less is a bump the autopilot takes back
+    private static final float LANDING_BUMP_DEG = 10f; // while landing, this much mouse movement within about half a second is the pilot; less is a bump taken back
+    private static final float LANDING_BUMP_DECAY = 0.5f;   // seconds: how fast the landing's tally of mouse movement fades
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
     private static final int   KICK_TICKS  = 30; // 1.5 s after an unattended disengage before we disconnect
@@ -47,6 +48,7 @@ public class Autopilot {
     private static float setPitch, setYaw;          // the view after our last turn (whole mouse counts from the command)
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
+    private static float landingMouse = 0f;         // while landing: the pilot's recent mouse movement (deg), fading
 
     // "AUTOPILOT OFF" warning and dead-man disconnect after a disengage in flight
     private static boolean warnActive = false;
@@ -113,11 +115,16 @@ public class Autopilot {
         if (dt <= 0f) return;
         if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
 
-        // a pilot's mouse disengages. While landing only a deliberate move does: an accidental bump near the ground
-        // is turned back below, since letting go there could cost the landing.
-        float drift = Nav.landing() ? LANDING_BUMP_DEG : MOUSE_EPS * 20f * dt;   // per-tick sensitivity, scaled to this frame
-        if (Math.abs(p.getXRot() - setPitch) > drift
-            || Math.abs(Mth.wrapDegrees(p.getYRot() - setYaw)) > drift) { disengage(); return; }
+        // a pilot's mouse disengages. While landing only a deliberate move does: the frames' mouse movement is tallied
+        // and fades over about half a second, so a small accidental bump near the ground is turned back below (letting
+        // go there could cost the landing), while any real movement passes LANDING_BUMP_DEG quickly. The tally, not one
+        // frame's movement: the view is turned back every frame, so a frame's movement never grows.
+        float drift = MOUSE_EPS * 20f * dt;                    // per-tick sensitivity, scaled to this frame
+        float moved = Math.max(Math.abs(p.getXRot() - setPitch), Math.abs(Mth.wrapDegrees(p.getYRot() - setYaw)));
+        if (Nav.landing()) {
+            landingMouse = landingMouse * (float) Math.exp(-dt / LANDING_BUMP_DECAY) + (moved > drift ? moved : 0f);
+            if (landingMouse > LANDING_BUMP_DEG) { disengage(); return; }
+        } else if (moved > drift) { disengage(); return; }
 
         // pitch: during the landing program follow the gentle descent; otherwise follow the director
         float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
@@ -192,6 +199,7 @@ public class Autopilot {
 
     private static void engage(LocalPlayer p) {
         engaged = true;
+        landingMouse = 0f;
         warnActive = false;   // engaging clears any pending "off" warning
         tripTicks = 0;
         holdView(p);

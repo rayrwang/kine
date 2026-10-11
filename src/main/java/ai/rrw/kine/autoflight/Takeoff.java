@@ -137,10 +137,8 @@ public final class Takeoff {
             pathCount = 0; planX = Double.NaN;
             return;
         }
-        // READY or not enough rockets: plan, every few ticks or when moved or turned
-        boolean moved = Double.isNaN(planX) || p.getX() != planX || p.getY() != planY || p.getZ() != planZ
-                     || p.getYRot() != planYaw;
-        if (moved || ++planAge >= PLAN_EVERY) {
+        // READY or not enough rockets: plan, at once the first time, then every PLAN_EVERY ticks (a plan is about 1 ms)
+        if (Double.isNaN(planX) || ++planAge >= PLAN_EVERY) {
             planAge = 0;
             planX = p.getX(); planY = p.getY(); planZ = p.getZ(); planYaw = p.getYRot();
             double target = cruiseFor(p.getY());
