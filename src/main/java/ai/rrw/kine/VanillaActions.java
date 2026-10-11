@@ -6,6 +6,7 @@ import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.util.InventoryClicks;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.player.Input;
@@ -24,7 +25,8 @@ import net.minecraft.world.entity.player.Input;
  *   <li>A turn made only for an attack is undone once the rotation has been sent ({@link #afterEntities}),
  *       so the camera never shows it.</li>
  *   <li>Inventory clicks run at the end of a tick, between ticks, each batch followed by the close packet
- *       a vanilla client sends when it closes its inventory.</li>
+ *       a vanilla client sends when it closes its inventory. Where a feature asks for it, the tick before the
+ *       clicks plays the inventory's opening (InventoryClicks.requestOpen): every key up, no action.</li>
  * </ul>
  */
 public final class VanillaActions {
@@ -33,6 +35,7 @@ public final class VanillaActions {
     /** Just before handleKeybinds, with no screen or overlay open. One action a tick. */
     public static void beforeKeybinds(Minecraft mc) {
         if (mc.player == null || mc.level == null || mc.gameMode == null) return;
+        if (InventoryClicks.isOpenTick()) { InventoryClicks.playOpen(); return; }   // the inventory "opens": no action this tick
         if (Takeoff.beforeKeybinds(mc)) return;
         if (Landing.beforeKeybinds(mc)) return;
         if (WaterClutch.beforeKeybinds(mc)) return;
@@ -50,6 +53,7 @@ public final class VanillaActions {
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);
         keys = FallPrevention.adjustInput(p, keys);   // last, so a dodge never steps off a cliff
+        if (InventoryClicks.isOpenTick()) keys = Input.EMPTY;   // the tick the inventory "opens" in: every key up
         return keys;
     }
 }

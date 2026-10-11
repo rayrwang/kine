@@ -12,6 +12,7 @@ import ai.rrw.kine.combat.AfkGuard;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.combat.WeaponSelect;
 import ai.rrw.kine.fireworks.FireworkFuel;
 import ai.rrw.kine.hud.FlightDirectorHud;
@@ -64,6 +65,7 @@ public class Kine implements ClientModInitializer {
         Nav.register();
         NavHud.register();
         ElytraGuard.register();
+        InventoryClicks.register();
         WaterClutch.register();
         AfkGuard.register();
         ProjectileTargeting.register();

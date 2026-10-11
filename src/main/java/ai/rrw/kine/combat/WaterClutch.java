@@ -10,17 +10,24 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
+
+import java.util.Random;
 
 /**
  * Automatic water-bucket clutch. While falling far enough to get hurt, it predicts where you will land;
@@ -33,76 +40,156 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  *       waterlogs it and leaves your feet dry, and using it on a chest or door opens it. While sneaking,
  *       the game skips the block and puts the source in the block above. Sneak is held as a key from the
  *       start of the dangerous fall to the end of the clutch, so the server has it before the use.</li>
- *   <li><b>As a vanilla client does it.</b> The place and the scoop go through the game's own pick and
- *       startUseItem just before its keybind step, after a turn by whole mouse counts, so the use packets
- *       and that tick's move packet carry the same rotation; the view turns back a tick later.</li>
+ *   <li><b>As a skilled player does it.</b> From the moment a fall would hurt, the view turns toward where you
+ *       will land (straight down until a landing is in sight) at auto aim's eased rate, so the use needs only a
+ *       small correction rather than a flick. The water goes in at a varied tick of the window in reach, keeping a
+ *       tick in hand before impact where the window allows. After the scoop the view eases back to where it was,
+ *       unless you move it first. The place and the scoop go through the game's own pick and startUseItem just
+ *       before its keybind step, after a turn by whole mouse counts, so the use packets and that tick's move
+ *       packet carry the same rotation.</li>
  *   <li><b>Bucket staging.</b> When a dangerous fall starts and the only water bucket is in the main
- *       inventory, it is swapped into the hotbar (an empty slot if there is one, else the largest stack)
- *       between ticks, followed by the inventory close packet.</li>
+ *       inventory, it is swapped into the hotbar (an empty slot if there is one, else the largest stack) as a
+ *       player would: one tick with the inventory "opened" (every key up, InventoryClicks.requestOpen), the swap
+ *       at that tick's end, then the close.</li>
  * </ul>
  * It does nothing where water evaporates (the Nether).
  */
 public final class WaterClutch {
     private WaterClutch() {}
 
-    private static final double HURT_FALL     = 3.5;   // only bother once the fall would actually do damage
+    private static final double HURT_MARGIN   = 0.5;   // a fall this far past the safe fall distance is worth clutching
     private static final double PLACE_REACH   = 4.4;   // place once the landing point is this close to the eye (just inside the 4.5 reach)
     private static final int    SIM_TICKS     = 12;    // how far ahead to simulate the fall (ticks)
     private static final int    GIVE_UP_TICKS = 20;    // stop holding the pose if the clutch never resolves
     private static final double H_DRAG        = 0.91;  // per-tick horizontal air drag
     private static final double GRAVITY       = 0.08;  // per-tick gravity
     private static final double V_DRAG        = 0.98;  // per-tick vertical drag
+    private static final float  PILOT_EPS     = 0.4f;  // a view change (deg) we didn't make: the pilot is looking around
+    private static final Random RNG = new Random();
 
-    private static boolean armed = false;              // a dangerous fall with a bucket to hand: sneak and watch
-    private static int     sneakTicks = 0;             // ticks the sneak key has been held for the clutch
+    /** Where the fall lands: a point on the surface, and in how many ticks (0: during this tick's move). */
+    private record Impact(Vec3 point, int ticks) {}
+
+    private static boolean armed = false;              // a dangerous fall with a bucket to hand: sneak, look down, watch
+    private static int     sneakTicks = 0;             // ticks the sneak key has been sent for the clutch
+    private static boolean fetching = false;           // the bucket is being brought into the hotbar (the open tick)
+    private static int     placeAt = -1;               // ticks-before-impact to place at, picked when in reach
     // state from placing the water to picking it up
     private static boolean active = false;
     private static InteractionHand clutchHand = InteractionHand.MAIN_HAND;
     private static Vec3    sourceSpot = null;          // where the water went, so the pickup can aim back at it
-    private static int     restoreSlot = -1;          // hotbar slot to switch back to (-1: no switch)
-    private static boolean turned = false;            // the view was turned for the clutch
-    private static float   restorePitch = 0f;
-    private static float   restoreYaw = 0f;
-    private static boolean restorePending = false;    // turn the view back at the end of this tick
+    private static int     restoreSlot = -1;           // hotbar slot to switch back to (-1: no switch)
     private static int     ticks = 0;
+    // the view: where it was when the fall began, and easing back there afterwards
+    private static boolean tracking = false;           // the view has been turned for this fall
+    private static float   restoreYaw = 0f, restorePitch = 0f;
+    private static boolean returning = false;
+    private static float   lastSetYaw, lastSetPitch;   // the view after our last turn
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(WaterClutch::tick);
     }
 
-    /** Hold sneak while armed or mid-clutch. */
+    /** Hold sneak while armed or mid-clutch (not in the tick the inventory "opens", when every key is up). */
     public static Input adjustInput(LocalPlayer p, Input keys) {
-        if (!Settings.waterBucketClutch || !(armed || active)) { sneakTicks = 0; return keys; }
+        if (!Settings.waterBucketClutch || !(armed || active) || InventoryClicks.isOpenTick()) { sneakTicks = 0; return keys; }
         sneakTicks++;
         if (keys.shift()) return keys;
         return new Input(keys.forward(), keys.backward(), keys.left(), keys.right(), keys.jump(), true, keys.sprint());
     }
 
-    // End of tick: arm or disarm, stage the bucket, and turn the view back after a finished clutch.
+    // End of tick: arm or disarm, bring the bucket to the hotbar, turn the view toward the landing, and ease it
+    // back after a clutch.
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (restorePending && p != null) {
-            MouseTurn.toward(p, restoreYaw, restorePitch);
-            restorePending = false;
-        }
         if (p == null || mc.level == null || mc.gameMode == null || !Settings.waterBucketClutch) {
             if (active) finish(mc, p);
-            armed = false;
+            armed = false; fetching = false; tracking = false; returning = false;
             return;
         }
+        if (fetching && InventoryClicks.isOpenTick()) { stageBucketToHotbar(mc, p); fetching = false; }   // the open tick's end
         if (active) {
             // a dry landing, gliding, or timed out (standing in the water also counts as on the ground: the
             // scoop happens before the next keybind step)
             if (p.onGround() && !p.isInWater() || p.isFallFlying() || ++ticks > GIVE_UP_TICKS) finish(mc, p);
-            return;
+        } else {
+            boolean was = armed;
+            armed = dangerousFall(mc, p) && haveBucket(p) && !evaporates(mc, p);
+            if (armed && !was) {   // a new dangerous fall: remember the view, and bring the bucket up if it's in the pack
+                if (!tracking && !returning) { restoreYaw = p.getYRot(); restorePitch = p.getXRot(); }
+                tracking = true; returning = false; placeAt = -1;
+                if (needsFetch(p) && InventoryClicks.available(mc, p)) { InventoryClicks.requestOpen(); fetching = true; }
+            }
+            if (armed) track(mc, p);
+            else if (tracking) startReturn(p);   // the fall ended without a clutch (water, a ladder): look back
         }
-        armed = dangerousFall(p) && haveBucket(p) && !evaporates(mc, p);
-        if (armed) stageBucketToHotbar(mc, p);   // move a water bucket into the hotbar early, while there is still time
+        if (returning && !armed && !active) stepReturn(mc, p);
     }
 
-    private static boolean dangerousFall(LocalPlayer p) {
-        return !p.isFallFlying() && !p.onGround() && !p.isInWater() && !p.isInLava()
-            && p.fallDistance >= HURT_FALL && p.getDeltaMovement().y() < 0;
+    // A fall that will hurt: falling (not gliding, swimming or in lava), and either already past the safe fall
+    // distance or about to land where the total fall would pass it, or with no ground in sight (a long drop).
+    // Judged ahead of time, so the view has the whole fall to turn.
+    private static boolean dangerousFall(Minecraft mc, LocalPlayer p) {
+        if (p.isFallFlying() || p.onGround() || p.isInWater() || p.isInLava() || p.getDeltaMovement().y() >= 0) return false;
+        double hurt = p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + HURT_MARGIN;
+        if (p.fallDistance >= hurt) return true;
+        Impact imp = predictImpact(mc, p);
+        return imp == null || p.fallDistance + (p.getY() - imp.point().y()) >= hurt;
+    }
+
+    // Turn toward where the fall lands, or straight down until a landing is in sight, at auto aim's eased rate.
+    private static void track(Minecraft mc, LocalPlayer p) {
+        Impact imp = predictImpact(mc, p);
+        float[] look = imp != null ? lookFor(mc, p, imp.point(), null, ClipContext.Fluid.NONE) : new float[]{ p.getYRot(), 90f };
+        turnToward(mc, p, look[0], look[1]);
+    }
+
+    // Where to look to use the bucket on a point below. Straight down, keeping the yaw, when a ray straight down
+    // meets the same surface (or, for the scoop, the same water block): from nearly right above it, the yaw toward
+    // a point a few hundredths of a block to one side swings all over as you drift, which spins the view about the
+    // vertical. Both the exact vertical and the steepest pitch whole mouse counts reach are tested, so a ray just
+    // off vertical by a block edge can't meet the next column. Otherwise at the point (under the edge of a ledge).
+    private static float[] lookFor(Minecraft mc, LocalPlayer p, Vec3 target, BlockPos block, ClipContext.Fluid fluid) {
+        Vec3 eye = p.getEyePosition();
+        double reachDown = eye.y - target.y + 2.0;
+        Vec3 steepest = Ballistics.dirOf(p.getYRot(), 90.0 - MouseTurn.sens(mc, p) * 0.15);
+        if (meets(p, eye, new Vec3(0, -1, 0).scale(reachDown), target, block, fluid)
+            && meets(p, eye, steepest.scale(reachDown / Math.max(0.5, -steepest.y)), target, block, fluid))
+            return new float[]{ p.getYRot(), 90f };
+        Vec3 d = target.subtract(eye);
+        return new float[]{ (float) Math.toDegrees(Math.atan2(-d.x, d.z)), (float) Math.toDegrees(-Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z))) };
+    }
+
+    // Whether a ray from the eye meets the target: the given block, or else a top face at the target's height.
+    private static boolean meets(LocalPlayer p, Vec3 eye, Vec3 ray, Vec3 target, BlockPos block, ClipContext.Fluid fluid) {
+        BlockHitResult h = p.level().clip(new ClipContext(eye, eye.add(ray), ClipContext.Block.OUTLINE, fluid, p));
+        if (h.getType() != HitResult.Type.BLOCK) return false;
+        return block != null ? h.getBlockPos().equals(block)
+                             : h.getDirection() == Direction.UP && Math.abs(h.getLocation().y - target.y) < 0.01;
+    }
+
+    private static void turnToward(Minecraft mc, LocalPlayer p, float yaw, float pitch) {
+        double count = MouseTurn.sens(mc, p) * 0.15;
+        float dYaw = AimControl.step(Mth.wrapDegrees(yaw - p.getYRot()), 0f, count);
+        float dPitch = AimControl.step(pitch - p.getXRot(), 0f, count);
+        MouseTurn.toward(p, p.getYRot() + dYaw, Mth.clamp(p.getXRot() + dPitch, -90f, 90f));
+        lastSetYaw = p.getYRot(); lastSetPitch = p.getXRot();
+    }
+
+    private static void startReturn(LocalPlayer p) {
+        tracking = false; returning = true;
+        lastSetYaw = p.getYRot(); lastSetPitch = p.getXRot();
+    }
+
+    // One step of easing the view back to where it was before the fall; the pilot moving it ends the return.
+    private static void stepReturn(Minecraft mc, LocalPlayer p) {
+        if (Math.abs(Mth.wrapDegrees(p.getYRot() - lastSetYaw)) > PILOT_EPS || Math.abs(p.getXRot() - lastSetPitch) > PILOT_EPS) {
+            returning = false;
+            return;
+        }
+        turnToward(mc, p, restoreYaw, restorePitch);
+        double count = MouseTurn.sens(mc, p) * 0.15;
+        if (Math.abs(Mth.wrapDegrees(restoreYaw - p.getYRot())) <= count && Math.abs(restorePitch - p.getXRot()) <= count) returning = false;
     }
 
     /** Place or scoop, just before the game's keybind step (VanillaActions). True if it acted or holds the view. */
@@ -110,23 +197,23 @@ public final class WaterClutch {
         LocalPlayer p = mc.player;
         if (!Settings.waterBucketClutch || p == null) return false;
         if (active) { resolve(mc, p); return true; }
-        if (!armed || sneakTicks < 1) return false;           // the server must already have the sneak
+        if (!armed || sneakTicks < 1 || fetching) return false;   // the server must already have the sneak
 
-        Vec3 land = predictImpact(mc, p);
-        if (land == null) return false;                       // no landing in range yet
-        Vec3 eye = p.getEyePosition();
-        if (land.distanceTo(eye) > PLACE_REACH) return false; // not close enough yet
+        Impact imp = predictImpact(mc, p);
+        if (imp == null) return false;                       // no landing in range yet
+        if (imp.point().distanceTo(p.getEyePosition()) > PLACE_REACH) return false;   // not close enough yet
+        // a varied tick in the window, keeping one tick in hand before impact where the window allows
+        if (placeAt < 0) placeAt = imp.ticks() <= 1 ? imp.ticks() : 1 + RNG.nextInt(imp.ticks());
+        if (imp.ticks() > placeAt) return false;
         if (!selectWaterBucket(p)) return false;
 
-        restoreYaw = p.getYRot();
-        restorePitch = p.getXRot();
-        turned = true;
-        aimAt(p, land);
+        float[] look = lookFor(mc, p, imp.point(), null, ClipContext.Fluid.NONE);   // the bucket's own ray ignores fluids when full
+        MouseTurn.toward(p, look[0], look[1]);   // the last small correction: the view has been turning this way all fall
         MinecraftInvoker game = (MinecraftInvoker) mc;
         game.invokePick(1.0F);
         game.invokeStartUseItem();   // the bucket raycasts along this rotation (the packet carries it) -> source at the feet block
         if (p.getItemInHand(clutchHand).is(Items.BUCKET)) {
-            sourceSpot = new Vec3(land.x(), land.y() + 0.5, land.z());   // the source sits in the block just above the surface
+            sourceSpot = new Vec3(imp.point().x(), imp.point().y() + 0.5, imp.point().z());   // the source sits in the block just above the surface
             active = true;
             ticks = 0;
         } else {
@@ -138,8 +225,10 @@ public final class WaterClutch {
     /** Keep aiming at the placed water until you are in it, then scoop it back up. */
     private static void resolve(Minecraft mc, LocalPlayer p) {
         // keep looking at the water (it can be off-centre under an edge), so the pickup ray hits it
-        if (sourceSpot != null) aimAt(p, sourceSpot);
-        else MouseTurn.toward(p, p.getYRot(), 90f);
+        if (sourceSpot != null) {
+            float[] look = lookFor(mc, p, sourceSpot, BlockPos.containing(sourceSpot), ClipContext.Fluid.SOURCE_ONLY);   // an empty bucket's ray
+            MouseTurn.toward(p, look[0], look[1]);
+        } else MouseTurn.toward(p, p.getYRot(), 90f);
         if (p.isInWater()) {
             MinecraftInvoker game = (MinecraftInvoker) mc;
             game.invokePick(1.0F);
@@ -148,23 +237,17 @@ public final class WaterClutch {
         }
     }
 
-    private static void aimAt(LocalPlayer p, Vec3 target) {
-        Vec3 d = target.subtract(p.getEyePosition());
-        double dh = Math.sqrt(d.x * d.x + d.z * d.z);
-        MouseTurn.toward(p, (float) Math.toDegrees(Math.atan2(-d.x, d.z)), (float) Math.toDegrees(-Math.atan2(d.y, dh)));
-    }
-
     private static void finish(Minecraft mc, LocalPlayer p) {
         if (p != null) {
-            if (turned) restorePending = true;   // turn back at the end of this tick, after the use's rotation has gone out
+            startReturn(p);   // ease back from the end of this tick, after the use's rotation has gone out
             if (restoreSlot >= 0) p.getInventory().setSelectedSlot(restoreSlot);   // the game sends the change, as for a number key
         }
         active = false;
         armed = false;
-        turned = false;
         sourceSpot = null;
         restoreSlot = -1;
         ticks = 0;
+        placeAt = -1;
     }
 
     private static boolean evaporates(Minecraft mc, LocalPlayer p) {
@@ -178,15 +261,22 @@ public final class WaterClutch {
         return false;
     }
 
+    // The only water bucket is in the main inventory, not the hotbar or the offhand.
+    private static boolean needsFetch(LocalPlayer p) {
+        if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return false;
+        for (int i = 0; i < 9; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return false;
+        return true;
+    }
+
     /**
-     * Simulate the fall (gravity and drag) and return a point on top of the surface you will land on, or
-     * null if no landing is near. Each tick it tests the hitbox's footprint against the collision shapes
-     * of every block under it, as the game's own collision does, so a thin shape under an edge of the
+     * Simulate the fall (gravity and drag) and return a point on top of the surface you will land on and in how
+     * many ticks, or null if no landing is near. Each tick it tests the hitbox's footprint against the collision
+     * shapes of every block under it, as the game's own collision does, so a thin shape under an edge of the
      * hitbox (a fence post, an end rod) is found; a test at the corners would miss it and place the water
      * a block too low. It takes the highest top the footprint touches and aims at the part of it under the
      * footprint.
      */
-    private static Vec3 predictImpact(Minecraft mc, LocalPlayer p) {
+    private static Impact predictImpact(Minecraft mc, LocalPlayer p) {
         AABB box = p.getBoundingBox();
         Vec3 vel = p.getDeltaMovement();
         double offX = 0, offY = 0, offZ = 0;
@@ -225,7 +315,7 @@ public final class WaterClutch {
                     }
                 }
             }
-            if (bestTop > Double.NEGATIVE_INFINITY) return new Vec3(aimX, bestTop, aimZ);
+            if (bestTop > Double.NEGATIVE_INFINITY) return new Impact(new Vec3(aimX, bestTop, aimZ), i);
 
             offX += vx; offY += vy; offZ += vz;
             vx *= H_DRAG; vz *= H_DRAG; vy = (vy - GRAVITY) * V_DRAG;
@@ -233,14 +323,12 @@ public final class WaterClutch {
         return null;
     }
 
-    /** If the only water bucket is in the main inventory, swap it into the hotbar so it is ready. */
+    /** At the end of the tick the inventory "opened" in: swap the main-inventory water bucket into the hotbar,
+     *  then close as a vanilla client does. */
     private static void stageBucketToHotbar(Minecraft mc, LocalPlayer p) {
-        if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return;
-        for (int i = 0; i < 9; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return;  // already in hotbar
-
         MultiPlayerGameMode gm = mc.gameMode;
         AbstractContainerMenu menu = p.inventoryMenu;
-        if (gm == null || !InventoryClicks.available(mc, p)) return;   // a screen or container is open, or the cursor is busy
+        if (gm == null || !needsFetch(p) || !InventoryClicks.available(mc, p)) return;   // a screen or container is open, or the cursor is busy
 
         int src = -1;                                            // inventory menu slot holding the bucket (9 to 35: main inventory)
         for (int i = 9; i <= 35; i++) {
@@ -251,7 +339,7 @@ public final class WaterClutch {
         // hotbar slot: empty first, else the largest stack (the hotbar is inventory menu slots 36 to 44)
         int target = Hotbar.slotToDisplace(hb -> menu.slots.get(36 + hb).getItem());
         gm.handleContainerInput(menu.containerId, src, target, ContainerInput.SWAP, p);   // number-key swap of the bucket and the hotbar slot
-        InventoryClicks.close(mc, p);
+        InventoryClicks.closeAsVanilla(mc, p);
     }
 
     /** Put a water bucket in a hand for startUseItem, which tries the main hand first: a hotbar bucket is
