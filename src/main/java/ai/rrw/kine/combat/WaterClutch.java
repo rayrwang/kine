@@ -66,7 +66,10 @@ public final class WaterClutch {
 
     private static final double HURT_MARGIN   = 0.5;   // a fall this far past the safe fall distance is worth clutching
     private static final double PLACE_REACH   = 4.4;   // place once the landing point is this close to the eye (just inside the 4.5 reach)
-    private static final int    SIM_TICKS     = 12;    // how far ahead to simulate the fall (ticks)
+    // how far ahead to simulate the fall (ticks): 3 s, about 150 blocks at full falling speed, so a safe landing
+    // (water, slime) is seen from the start of most falls; at 12 a 20-block fall into water first looked like a long
+    // drop, armed, and turned the view until the water came in sight (client test, 2026-10-11)
+    private static final int    SIM_TICKS     = 60;
     private static final int    GIVE_UP_TICKS = 20;    // stop holding the pose if the clutch never resolves
     private static final double H_DRAG        = 0.91;  // per-tick horizontal air drag
     private static final double GRAVITY       = 0.08;  // per-tick gravity
