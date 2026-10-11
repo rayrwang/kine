@@ -227,14 +227,14 @@ public class ProjectileTargeting {
     // (aimGap), within ACQUIRE_DEG, in line of sight and in reach of the draw as it is now.
     private static Entity acquire(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec spec, double lead,
                                   Entity covered, Predicate<Entity> hurtable) {
-        if (covered != null) return covered;
+        if (covered != null && visible(level, p, eye, covered)) return covered;
         Vec3 look = p.getLookAngle();
         Entity best = null; double bestGap = ACQUIRE_DEG;
         for (Entity e : level.getEntities(p, new AABB(eye, eye).inflate(AIM_RANGE), hurtable)) {
             Vec3 to = e.getBoundingBox().getCenter().subtract(eye);
             double dist = to.length();
             if (dist < 1e-3 || dist > AIM_RANGE || to.scale(1.0 / dist).dot(look) < SEARCH_COS) continue;
-            if (!losClear(level, p, eye, e.getBoundingBox().getCenter())) continue;
+            if (!visible(level, p, eye, e)) continue;
             Ballistics.Solution s = solve(p, spawn, e, spec, lead);
             if (Math.abs(s.miss()) > REACH_MISS) continue;   // a bow not drawn far enough yet
             double gap = aimGap(look, to.scale(1.0 / dist), Ballistics.dirOf(s.yaw(), s.pitch()));
@@ -262,8 +262,13 @@ public class ProjectileTargeting {
     // (The caller also lets it go once the view is more than HOLD_DEG off its solved aim.)
     private static boolean holds(Entity e, LocalPlayer p, ClientLevel level, Vec3 eye, Predicate<Entity> hurtable) {
         if (e == null || e.isRemoved() || !e.isAlive() || e.level() != level || !hurtable.test(e)) return false;
-        Vec3 c = e.getBoundingBox().getCenter();
-        return c.distanceTo(eye) <= AIM_RANGE && losClear(level, p, eye, c);
+        return e.getBoundingBox().getCenter().distanceTo(eye) <= AIM_RANGE && visible(level, p, eye, e);
+    }
+
+    // In view: a clear line from the eye to the target's centre or to its eyes (a target behind a low wall shows
+    // its head). The reticle's ring can reach through a thin wall to a target behind it; this keeps those out.
+    private static boolean visible(ClientLevel level, LocalPlayer p, Vec3 eye, Entity e) {
+        return losClear(level, p, eye, e.getBoundingBox().getCenter()) || losClear(level, p, eye, e.getEyePosition());
     }
 
     private static boolean losClear(ClientLevel level, Entity self, Vec3 from, Vec3 to) {
