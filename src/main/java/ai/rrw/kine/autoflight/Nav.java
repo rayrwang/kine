@@ -153,6 +153,7 @@ public class Nav {
                 clearLanding();   // pilot took over and flew off: resume flying to the target (the trip's, if aimed)
             }
         }
+        if (landing && p.getAbilities().flying) clearLanding();   // creative or spectator flight: the landing lets go (RW)
         if (landing) {
             if (p.onGround() && !p.isFallFlying()) touchedDown();
             else law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);

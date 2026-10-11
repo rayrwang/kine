@@ -64,6 +64,7 @@ public final class FlightDirectorHud {
             return;
         }
         if (Takeoff.usesWarningRow()) return;   // the takeoff's prompt has the row, and the law flies nothing until it hands over
+        if (!p.isFallFlying()) return;   // the bars are for elytra flight only, never in creative free flight (RW); the takeoff's above
 
         boolean landing = Nav.landing();
         if (FlightDirector.isTooLow() && !landing && !Landing.valid()) {   // a landing spot on offer has the row instead
