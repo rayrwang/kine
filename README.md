@@ -83,9 +83,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
 - Support multiple versions & forge
 
-## Technical Details*
-
-\*written by Opus 4.8, revised by Opus 5.5
+## Technical Details
 
 Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (K), and the switches are saved in `config/kine.json`.
 
