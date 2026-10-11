@@ -1,6 +1,9 @@
 package ai.rrw.kine.combat;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The chance that an arrow hits its target, from the game's own launch spread and arrow physics
@@ -16,7 +19,8 @@ import java.util.List;
  *
  * Not modelled: water (drag 0.6 instead of 0.99), targets that dodge or deflect arrows, other entities in the
  * way, and any change in the target's motion after the shot (it moves at a constant velocity, one box move per
- * arrow tick).
+ * arrow tick). The target's box is where it will be when the arrow spawns, which the caller works out: the client
+ * draws other entities behind the server, and the release reaches the server after a network trip.
  */
 public final class HitChance {
     private HitChance() {}
@@ -154,12 +158,11 @@ public final class HitChance {
         return r;
     }
 
-    private static volatile double[][] cachedRolls = new double[0][];
+    // one set per count: the chance job uses 4,096 and the best-aim search 1,024 then 4,096, on two threads
+    private static final Map<Integer, double[][]> cachedRolls = new ConcurrentHashMap<>();
 
     private static double[][] rollsCached(int n) {
-        double[][] r = cachedRolls;
-        if (r.length != n) cachedRolls = r = rolls(n);
-        return r;
+        return cachedRolls.computeIfAbsent(n, HitChance::rolls);
     }
 
     /** The chance the shot hits, over n fixed spread rolls (4,096 is a good default), the same every call. */
@@ -271,29 +274,45 @@ public final class HitChance {
         double halfH = (b.maxY() - b.minY()) / 2 + 0.3;
 
         Aim best = null;
+        List<Aim> tried = new ArrayList<>();
         double stepV = halfH / 4, stepL = halfW / 2;
         int[] rollsByRound = {1024, 4096, 4096};
         for (int round = 0; round < 3; round++) {
             int nv = round == 0 ? 4 : 1, nl = round == 0 ? 2 : 1;
             double v0 = best == null ? 0 : best.up(), l0 = best == null ? 0 : best.side();
-            Aim roundBest = null;
+            tried = new ArrayList<>();
             for (int i = -nv; i <= nv; i++)
                 for (int j = -nl; j <= nl; j++) {
-                    double v = v0 + i * stepV, l = l0 + j * stepL;
-                    Aim a = aimAt(shot, target, blocks, maxTicks, aimer, cx, cy, cz, lx, lz, v, l, rollsByRound[round]);
-                    if (a == null) continue;
-                    boolean better = roundBest == null || a.chance() > roundBest.chance() + 0.005
-                        || (a.chance() > roundBest.chance() - 0.005 && Math.hypot(v, l) < Math.hypot(roundBest.up(), roundBest.side()));
-                    if (better) roundBest = a;
+                    Aim a = aimAt(shot, target, blocks, maxTicks, aimer, cx, cy, cz, lx, lz, v0 + i * stepV, l0 + j * stepL, rollsByRound[round]);
+                    if (a != null) tried.add(a);
                 }
-            if (roundBest == null) return null;
-            best = roundBest;
+            if (tried.isEmpty()) return null;
+            best = nearestCentreOfBest(tried);
             stepV /= 2; stepL /= 2;
         }
-        // the box centre itself, at full count, as a floor: the search never does worse than aiming at the centre
+        // the box centre itself, at the last round's count, as a floor: the search never does worse than aiming at
+        // the centre, and the centre wins any tie with the last round
         Aim centre = aimAt(shot, target, blocks, maxTicks, aimer, cx, cy, cz, lx, lz, 0, 0, 4096);
-        if (centre != null && centre.chance() >= best.chance() - 0.005) return centre;
-        return best;
+        if (centre != null) tried.add(centre);
+        return nearestCentreOfBest(tried);
+    }
+
+    /** Chances within this of each other count as equal in the best-aim search. */
+    static final double TIE = 0.005;
+
+    /**
+     * Of a round's aims, the one nearest the box centre among those within TIE of the round's best chance. Two
+     * passes, so a run of near-ties can't walk the choice away from the best (comparing each aim only with the
+     * last one kept can drift by TIE at every step).
+     */
+    static Aim nearestCentreOfBest(List<Aim> aims) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (Aim a : aims) max = Math.max(max, a.chance());
+        Aim pick = null;
+        for (Aim a : aims)
+            if (a.chance() >= max - TIE && (pick == null || Math.hypot(a.up(), a.side()) < Math.hypot(pick.up(), pick.side())))
+                pick = a;
+        return pick;
     }
 
     public static Aim bestAim(Shot shot, Target target, List<Box> blocks, int maxTicks, Aimer aimer) {

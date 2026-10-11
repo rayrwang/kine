@@ -245,21 +245,33 @@ public final class Ballistics {
         return Math.toDegrees(Math.atan2(-(s * ux - kmx), s * uz - kmz));
     }
 
-    /** Ballistic solve with target lead: a point along the launch direction from `eye`. The outer loop
-     *  refines the lead, since the flight time depends on the arc; each pass solves pitch, then yaw. */
-    public static Vec3 solveAim(Vec3 eye, Vec3 center, Vec3 targetMotion, Spec spec, Vec3 shooterMotion, boolean onGround) {
+    /** A solved aim: the launch yaw and pitch, and how far the shot passes above (+) or below (-) the led point
+     *  where it crosses that point's range, in blocks: about zero in reach, far off out of reach (the pitch is
+     *  then the one that carries furthest). */
+    public record Solution(double yaw, double pitch, double miss) {}
+
+    /** Ballistic solve with target lead. The outer loop refines the lead, since the flight time depends on the
+     *  arc; each pass solves pitch, then yaw. */
+    public static Solution solve(Vec3 eye, Vec3 center, Vec3 targetMotion, Spec spec, Vec3 shooterMotion, boolean onGround) {
         Vec3 lead = center;
         double yaw = Math.toDegrees(Math.atan2(-(center.x - eye.x), center.z - eye.z));
-        double pitch = 0.0;
+        double pitch = 0.0, miss = 0.0;
         for (int outer = 0; outer < LEAD_ITERS; outer++) {
             Vec3 d = lead.subtract(eye);
             double horiz = Math.sqrt(d.x * d.x + d.z * d.z);
             if (horiz < 1e-3) break;
             pitch = solvePitch(eye, yaw, spec, horiz, d.y, shooterMotion, onGround);
             yaw   = solveYaw(eye, lead, pitch, spec, shooterMotion);
+            miss  = vMissAtRange(eye, yaw, pitch, spec, horiz, d.y, shooterMotion, onGround);
             int k = ticksToHoriz(simulate(eye, launchVel((float) yaw, (float) pitch, spec, shooterMotion, onGround), spec, null).path(), eye, horiz);
             lead = center.add(targetMotion.scale(k));
         }
-        return eye.add(dirOf(yaw, pitch));   // the caller recovers yaw and pitch from the direction to this point
+        return new Solution(yaw, pitch, miss);
+    }
+
+    /** The solve as a point along the launch direction from `eye` (the caller recovers yaw and pitch from it). */
+    public static Vec3 solveAim(Vec3 eye, Vec3 center, Vec3 targetMotion, Spec spec, Vec3 shooterMotion, boolean onGround) {
+        Solution s = solve(eye, center, targetMotion, spec, shooterMotion, onGround);
+        return eye.add(dirOf(s.yaw(), s.pitch()));
     }
 }

@@ -103,8 +103,8 @@ public class KineSettingsScreen extends Screen {
         "Outlines every projectile in red, visible through walls, in flight and after it lands, including "
         + "other players' projectiles.";
     private static final String DESC_AUTOAIM =
-        "Turns your view so bow, crossbow and trident shots hit the target nearest your reticle, leading "
-        + "moving targets. Move the mouse to break the lock. An aimbot: servers may ban it.";
+        "Turns your view so bow, crossbow and trident shots hit the target nearest your aim, and stays on it "
+        + "as it moves, leading it. Move the mouse to break the lock. An aimbot: servers may ban it.";
     private static final String DESC_DODGE =
         "Presses movement keys to step you off a projectile's line when it is about to hit you. On foot only; "
         + "can't dodge point-blank or very fast shots. Lower ban risk than the aimbot.";

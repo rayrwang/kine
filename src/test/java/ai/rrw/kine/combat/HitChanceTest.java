@@ -86,4 +86,14 @@ class HitChanceTest {
         assertEquals(0.0, open.up(), 1e-12);
         assertEquals(0.0, open.side(), 1e-12);
     }
+
+    static HitChance.Aim aim(double chance, double up) { return new HitChance.Aim(0, 0, 1, 0, 0, 0, chance, up, 0); }
+
+    @Test
+    void nearTiesDontWalkTheBestAimAwayFromTheBest() {
+        // the best chance far from the centre, then points each a little worse and a little nearer: compared one
+        // by one with the last kept, each would replace it and the pick would end 1.2 points below the best
+        List<HitChance.Aim> aims = List.of(aim(0.800, 3), aim(0.796, 2), aim(0.792, 1), aim(0.788, 0.5));
+        assertEquals(0.796, HitChance.nearestCentreOfBest(aims).chance(), 1e-12);
+    }
 }

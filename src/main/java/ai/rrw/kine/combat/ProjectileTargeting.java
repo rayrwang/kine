@@ -16,6 +16,8 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
@@ -31,7 +33,9 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.TridentItem;
 import net.minecraft.world.item.component.ChargedProjectiles;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
@@ -55,16 +59,20 @@ public class ProjectileTargeting {
     private static final int    LINE_PX     = 1;     // reticle line thickness in GUI pixels
     private static final float  MIN_SEG_PX2 = 1.0f;  // shortest segment drawn, squared pixels (bridges thin ellipse tips)
 
-    // aim assist
-    private static final float AIM_SMOOTH     = 0.35f; // ease fraction/tick toward solution
-    private static final float AIM_MAX_STEP   = 10f;   // deg/tick cap
-    private static final float MOUSE_EPS      = 0.4f;  // mouse drift (deg) that releases the lock
-    private static final int   COOLDOWN_TICKS = 10;    // ticks aim stays off after you look away
-    // open-sky fallback, used only when the projectile's path hits no block
-    private static final double CONE_DEG      = 6.0;                              // acquisition half-angle
-    private static final double CONE_COS      = Math.cos(Math.toRadians(CONE_DEG));
-    private static final double CONE_HOLD_COS = Math.cos(Math.toRadians(10.0));   // wider angle to keep an existing lock
-    private static final double CONE_RANGE    = 80.0;                             // max fallback acquisition distance (blocks)
+    // aim assist (the turn itself: AimControl)
+    private static final float  MOUSE_EPS      = 0.4f;   // mouse drift (deg) that releases the lock
+    private static final int    COOLDOWN_TICKS = 10;     // ticks aim stays off after you look away
+    private static final double ACQUIRE_DEG    = 6.0;    // a target is picked up when the view is this close to aiming at it (aimGap)
+    private static final double HOLD_DEG       = 10.0;   // and kept while the view stays this close
+    private static final int    ARC_STEPS      = 16;     // points along aimGap's arc
+    private static final double REACH_MISS     = 0.5;    // blocks: a solved shot that passes further from the led point can't reach it
+    private static final double AIM_RANGE      = 128.0;  // farthest target picked up or kept (blocks)
+    private static final double SEARCH_COS     = Math.cos(Math.toRadians(60.0));   // cut before the solve: a long shot aims up to about 45 degrees above its target
+    // How much older the client's view of a target is than where the target will be when the shot spawns, besides
+    // the round trip: a living entity is drawn 2 ticks behind the last position the server sent (InterpolationHandler's
+    // 3 steps, at the 2 or 3 tick update interval), and a bow or trident fires with the rotation sent the tick before
+    // its release (the release packet carries none, and handleKeybinds runs before the tick's move packet).
+    private static final double INTERP_TICKS   = 2.0;
 
     // colours
     private static final int COLOR_RING   = 0xFFFFFFFF;
@@ -85,7 +93,9 @@ public class ProjectileTargeting {
     private static boolean aiming = false;
     private static float lastAimYaw, lastAimPitch;
     private static int cooldown = 0;
-    private static Entity coneLock = null;   // last target picked by the open-sky cone, kept while it stays in view
+    private static Entity lock = null;                // the target auto aim holds, kept from tick to tick
+    private static float lastSolYaw, lastSolPitch;    // its solved aim last tick, for the turn's feed-forward
+    private static boolean haveLastSol = false;
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
@@ -106,9 +116,14 @@ public class ProjectileTargeting {
                 float pow = (t * t + 2f * t) / 3f;
                 if (pow > 1f) pow = 1f;
                 if (pow < 0.1f) return null;
-                return new Held(new Spec(0.05, 0.99, pow * 3.0, 0.0, false, true), use);   // arrow
+                return new Held(new Spec(0.05, 0.99F, pow * 3.0, 0.0, false, true), use);   // arrow
             }
-            if (use.is(Items.TRIDENT)) return new Held(new Spec(0.05, 0.99, 2.5, 0.0, false, true), use);
+            if (use.is(Items.TRIDENT)) {
+                // TridentItem.releaseUsing: thrown only after 10 ticks of use, never with Riptide, not if it would break
+                if (p.getTicksUsingItem() < TridentItem.THROW_THRESHOLD_TIME
+                    || EnchantmentHelper.getTridentSpinAttackStrength(use, p) > 0.0F || use.nextDamageWillBreak()) return null;
+                return new Held(new Spec(0.05, 0.99F, 2.5, 0.0, false, true), use);
+            }
         }
         Spec s = specForHeld(p.getMainHandItem());
         if (s != null) return new Held(s, p.getMainHandItem());
@@ -118,16 +133,17 @@ public class ProjectileTargeting {
 
     private static Spec specForHeld(ItemStack stack) {
         var it = stack.getItem();
+        // gravity from each entity's getDefaultGravity, drag ThrowableProjectile's 0.99F, launch from the item's use
         if (it == Items.SNOWBALL || it == Items.EGG || it == Items.ENDER_PEARL)
-            return new Spec(0.03, 0.99, 1.5, 0.0, true, false);
+            return new Spec(0.03, 0.99F, 1.5, 0.0, true, false);
         if (it == Items.SPLASH_POTION || it == Items.LINGERING_POTION)
-            return new Spec(0.03, 0.99, 0.5, -20.0, true, false);
+            return new Spec(0.05, 0.99F, 0.5, -20.0, true, false);   // AbstractThrownPotion
         if (it == Items.EXPERIENCE_BOTTLE)
-            return new Spec(0.03, 0.99, 0.7, -20.0, true, false);
+            return new Spec(0.07, 0.99F, 0.7, -20.0, true, false);   // ThrownExperienceBottle
         if (it == Items.CROSSBOW && CrossbowItem.isCharged(stack)) {
             ChargedProjectiles cp = stack.get(DataComponents.CHARGED_PROJECTILES);
             if (cp != null && cp.contains(Items.FIREWORK_ROCKET)) return null; // firework physics differ
-            return new Spec(0.05, 0.99, 3.15, 0.0, false, true, false);   // arrow, fired along the view without the shooter's motion (CrossbowItem.shootProjectile)
+            return new Spec(0.05, 0.99F, 3.15, 0.0, false, true, false);   // arrow, fired along the view without the shooter's motion (CrossbowItem.shootProjectile)
         }
         return null;
     }
@@ -207,30 +223,47 @@ public class ProjectileTargeting {
         return best;
     }
 
-    // Open-sky fallback: the entity nearest the look ray within a cone, in line of sight and range. The
-    // previous target is kept while it stays inside a wider cone, to avoid flicker.
-    private static Entity coneTarget(LocalPlayer p, ClientLevel level, Vec3 eye, Predicate<Entity> which) {
+    // The target auto aim picks up: the one the reticle covers, else the one the view is nearest to aiming at
+    // (aimGap), within ACQUIRE_DEG, in line of sight and in reach of the draw as it is now.
+    private static Entity acquire(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec spec, double lead,
+                                  Entity covered, Predicate<Entity> hurtable) {
+        if (covered != null) return covered;
         Vec3 look = p.getLookAngle();
-        AABB search = new AABB(eye, eye).inflate(CONE_RANGE);
-
-        Entity best = null; double bestCos = CONE_COS;   // most centred new target (narrow cone)
-        boolean keepLock = false;                        // is the previous target still in the wide cone?
-
-        for (Entity e : level.getEntities(p, search, which)) {
-            Vec3 c = e.getBoundingBox().getCenter();
-            Vec3 to = c.subtract(eye);
+        Entity best = null; double bestGap = ACQUIRE_DEG;
+        for (Entity e : level.getEntities(p, new AABB(eye, eye).inflate(AIM_RANGE), hurtable)) {
+            Vec3 to = e.getBoundingBox().getCenter().subtract(eye);
             double dist = to.length();
-            if (dist < 1e-3 || dist > CONE_RANGE) continue;
-            double cos = to.scale(1.0 / dist).dot(look);
-            if (cos < CONE_HOLD_COS) continue;            // outside even the wide cone
-            if (!losClear(level, p, eye, c)) continue;    // terrain in the way
-            if (e == coneLock) keepLock = true;           // previous target still visible and in the wide cone
-            if (cos > bestCos) { bestCos = cos; best = e; }
+            if (dist < 1e-3 || dist > AIM_RANGE || to.scale(1.0 / dist).dot(look) < SEARCH_COS) continue;
+            if (!losClear(level, p, eye, e.getBoundingBox().getCenter())) continue;
+            Ballistics.Solution s = solve(p, spawn, e, spec, lead);
+            if (Math.abs(s.miss()) > REACH_MISS) continue;   // a bow not drawn far enough yet
+            double gap = aimGap(look, to.scale(1.0 / dist), Ballistics.dirOf(s.yaw(), s.pitch()));
+            if (gap < bestGap) { bestGap = gap; best = e; }
         }
-
-        if (keepLock) return coneLock;                    // stick with the current target
-        coneLock = best;                                  // else take the most centred (or none)
         return best;
+    }
+
+    // How far the view is from aiming at a target, degrees: its distance to the arc from the target's centre to its
+    // solved aim. Pointing at the target, at the aim point or anywhere between counts as on it: a far target's shot
+    // needs the view well above it (about 7 degrees at 40 blocks), and the view travels along this arc as auto aim
+    // lifts it.
+    private static double aimGap(Vec3 look, Vec3 toTarget, Vec3 solved) {
+        double best = Double.MAX_VALUE;
+        for (int i = 0; i <= ARC_STEPS; i++) {
+            double t = i / (double) ARC_STEPS;
+            Vec3 d = toTarget.scale(1 - t).add(solved.scale(t));
+            double len = d.length();
+            if (len > 1e-9) best = Math.min(best, Math.toDegrees(Math.acos(Mth.clamp(look.dot(d) / len, -1.0, 1.0))));
+        }
+        return best;
+    }
+
+    // Whether auto aim keeps its target: still there, still one the shot can hurt, in range and in line of sight.
+    // (The caller also lets it go once the view is more than HOLD_DEG off its solved aim.)
+    private static boolean holds(Entity e, LocalPlayer p, ClientLevel level, Vec3 eye, Predicate<Entity> hurtable) {
+        if (e == null || e.isRemoved() || !e.isAlive() || e.level() != level || !hurtable.test(e)) return false;
+        Vec3 c = e.getBoundingBox().getCenter();
+        return c.distanceTo(eye) <= AIM_RANGE && losClear(level, p, eye, c);
     }
 
     private static boolean losClear(ClientLevel level, Entity self, Vec3 from, Vec3 to) {
@@ -238,28 +271,42 @@ public class ProjectileTargeting {
             ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self)).getType() == HitResult.Type.MISS;
     }
 
-    // Ballistic solve with target lead, for a target entity (a dragon part leads with its parent's motion), at the
-    // box centre moved to the best point AimAdvisor last found for it.
-    private static Vec3 solveAim(LocalPlayer p, Vec3 eye, Entity target, Spec spec) {
-        Vec3 center = target.getBoundingBox().getCenter().add(AimAdvisor.aimOffset(target, eye, p.level().getGameTime()));
-        Entity velSrc = target instanceof EnderDragonPart part ? part.parentMob : target;
-        Vec3 tv = new Vec3(velSrc.getX() - velSrc.xOld, velSrc.getY() - velSrc.yOld, velSrc.getZ() - velSrc.zOld);
-        return Ballistics.solveAim(eye, center, tv, spec, shooterMotion(p, spec), p.onGround());
+    // A target's motion per tick (a dragon part moves with its parent).
+    private static Vec3 motion(Entity target) {
+        Entity m = target instanceof EnderDragonPart part ? part.parentMob : target;
+        return new Vec3(m.getX() - m.xOld, m.getY() - m.yOld, m.getZ() - m.zOld);
     }
 
-    private static float ease(float cur, float target, boolean wrap) {
-        float delta = wrap ? Mth.wrapDegrees(target - cur) : target - cur;
-        return cur + Mth.clamp(delta * AIM_SMOOTH, -AIM_MAX_STEP, AIM_MAX_STEP);
+    // Ticks between the target position the client shows and the target's position when the shot spawns, before
+    // the flight itself: the drawing lag, the tick a release waits for its rotation, and the round trip (the
+    // server's measure of it, from the player list).
+    private static double leadTicks(Minecraft mc, LocalPlayer p, ItemStack item) {
+        double t = INTERP_TICKS + (item.is(Items.CROSSBOW) ? 0 : 1);   // a crossbow fires with a use packet, which carries its rotation
+        ClientPacketListener conn = mc.getConnection();
+        PlayerInfo info = conn != null ? conn.getPlayerInfo(p.getUUID()) : null;
+        if (info != null) t += info.getLatency() / 50.0;
+        return t;
     }
+
+    // Ballistic solve with target lead, for a target entity, from where it will be when the shot spawns, at the box
+    // centre moved to the best point AimAdvisor last found for it.
+    private static Ballistics.Solution solve(LocalPlayer p, Vec3 spawn, Entity target, Spec spec, double lead) {
+        Vec3 tv = motion(target);
+        Vec3 center = target.getBoundingBox().getCenter().add(tv.scale(lead))
+                            .add(AimAdvisor.aimOffset(target, spawn, p.level().getGameTime()));
+        return Ballistics.solve(spawn, center, tv, spec, shooterMotion(p, spec), p.onGround());
+    }
+
+    private static void dropLock() { aiming = false; lock = null; haveLastSol = false; }
 
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player; ClientLevel level = mc.level;
-        if (p == null || level == null) { aiming = false; valid = false; return; }
-        if (!Settings.projectileReticle && !Settings.autoAim) { aiming = false; valid = false; return; }
+        if (p == null || level == null) { dropLock(); valid = false; return; }
+        if (!Settings.projectileReticle && !Settings.autoAim) { dropLock(); valid = false; return; }
 
         valid = false; hitBox = null; hitId = -1; noDamage = null;
         Held held = heldShot(p);
-        if (held == null) { aiming = false; return; }
+        if (held == null) { dropLock(); return; }
         Spec spec = held.spec();
 
         Vec3 eye = p.getEyePosition();
@@ -272,33 +319,51 @@ public class ProjectileTargeting {
         boolean piercing = Enchant.level(held.item(), Enchantments.PIERCING) > 0;
         Predicate<Entity> hurtable = hittable.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
         Ballistics.Collider<Entity> collider = collider(level, p, hittable);
-
-        // reticle from the current aim gives the candidate target
-        Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
-        Entity tgt = null;
-        if (s0.impact() != null) {
-            double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * ANG_PER_UNC * SPREAD_MULT);
-            tgt = bestTarget(p, level, s0.impact(), r0, hurtable);
-        } else if (Settings.autoAim && spec.weapon()) {
-            tgt = coneTarget(p, level, eye, hurtable);   // open-sky fallback: pick by angle from the look ray
-        }
+        double lead = spec.weapon() ? leadTicks(mc, p, held.item()) : 0;
 
         // aim assist, weapons only (bow, crossbow, trident), with target lead
         Entity locked = null;
         boolean overridden = aiming && (Math.abs(Mth.wrapDegrees(p.getYRot() - lastAimYaw)) > MOUSE_EPS
                                      || Math.abs(p.getXRot() - lastAimPitch) > MOUSE_EPS);
-        if (overridden) { cooldown = COOLDOWN_TICKS; aiming = false; }
-        if (cooldown > 0) { cooldown--; aiming = false; }
-        else if (tgt != null && spec.weapon() && Settings.autoAim) {
-            Vec3 aimAt = solveAim(p, spawn, tgt, spec);
-            Vec3 d = aimAt.subtract(spawn).normalize();
-            float fyaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
-            float fpitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
-            // turned as a mouse would, by whole counts, so the rotation sent is one a vanilla client could send
-            MouseTurn.toward(p, ease(p.getYRot(), fyaw, true), Mth.clamp(ease(p.getXRot(), fpitch, false), -90f, 90f));
-            lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
-            locked = tgt;
-        } else aiming = false;
+        if (overridden) { cooldown = COOLDOWN_TICKS; dropLock(); }
+        if (cooldown > 0) { cooldown--; dropLock(); }
+        else if (!spec.weapon() || !Settings.autoAim) dropLock();
+        else {
+            // The held target stays held from tick to tick; leading it moves the shot off where it stands now, so
+            // what the reticle covers can't be what keeps it. Otherwise pick one up.
+            Entity tgt = holds(lock, p, level, eye, hurtable) ? lock : null;
+            boolean kept = tgt != null;
+            if (!kept) {
+                Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
+                Entity covered = null;
+                if (s0.impact() != null) {
+                    double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * ANG_PER_UNC * SPREAD_MULT);
+                    covered = bestTarget(p, level, s0.impact(), r0, hurtable);
+                }
+                tgt = acquire(p, level, eye, spawn, spec, lead, covered, hurtable);
+            }
+            Ballistics.Solution sol = tgt == null ? null : solve(p, spawn, tgt, spec, lead);
+            // a held target whose aim jumps away (a teleport) or that goes behind you is let go, not chased
+            if (kept && aimGap(p.getLookAngle(), tgt.getBoundingBox().getCenter().subtract(eye).normalize(),
+                               Ballistics.dirOf(sol.yaw(), sol.pitch())) > HOLD_DEG) sol = null;
+            if (sol == null) dropLock();
+            else if (Math.abs(sol.miss()) > REACH_MISS) {
+                // held, but out of reach of the draw as it is now: hold the view still rather than lob toward it
+                lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
+                lock = tgt; locked = tgt; haveLastSol = false;
+            } else {
+                float yaw = (float) sol.yaw(), pitch = (float) sol.pitch();
+                boolean same = tgt == lock && haveLastSol;
+                double count = MouseTurn.sens(mc, p) * 0.15;   // degrees per mouse count
+                float dYaw = AimControl.step(Mth.wrapDegrees(yaw - p.getYRot()), same ? Mth.wrapDegrees(yaw - lastSolYaw) : 0f, count);
+                float dPitch = AimControl.step(pitch - p.getXRot(), same ? pitch - lastSolPitch : 0f, count);
+                // turned as a mouse would, by whole counts, so the rotation sent is one a vanilla client could send
+                MouseTurn.toward(p, p.getYRot() + dYaw, Mth.clamp(p.getXRot() + dPitch, -90f, 90f));
+                lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
+                lock = tgt; locked = tgt;
+                lastSolYaw = yaw; lastSolPitch = pitch; haveLastSol = true;
+            }
+        }
 
         // final reticle, after any aim correction this tick
         Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
@@ -313,7 +378,7 @@ public class ProjectileTargeting {
         String why = spec.weapon() && tgtF != null ? NoDamage.reason(tgtF, spawn, type, piercing) : null;
         if (spec.weapon() && tgtF != null && why == null)
             AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec,
-                              shooterMotion(p, spec), p.onGround(), tgtF, locked != null);
+                              shooterMotion(p, spec), p.onGround(), tgtF, locked != null, lead);
         if (sf.impact() == null) return;
         impact = sf.impact(); normal = sf.normal();
         radius = r; hitBox = tgtF != null ? tgtF.getBoundingBox() : null;

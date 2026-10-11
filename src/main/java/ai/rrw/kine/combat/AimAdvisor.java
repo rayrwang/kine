@@ -33,6 +33,13 @@ public final class AimAdvisor {
     private static final int STALE_TICKS = 20;          // older results are neither shown nor aimed at
     private static final int MAX_FLIGHT_TICKS = 200;
     private static final int MAX_BLOCK_READS = 60_000;  // block positions read per hand-over, at most
+    private static final int SHAPE_CACHE_TICKS = 10;    // block shapes read are reused this long
+
+    // block collision shapes by position, read on the game thread and reused for a few ticks: the path moves a
+    // little each tick, and a long shot reads thousands of positions (about 9,000 at 110 blocks)
+    private static final Map<Long, List<Box>> shapes = new HashMap<>();
+    private static ClientLevel shapesLevel = null;
+    private static long shapesTime = Long.MIN_VALUE;
 
     private record ChanceResult(int targetId, double chance, long gameTime) {}
     private record BestResult(int targetId, double up, double side, long gameTime) {}
@@ -54,19 +61,21 @@ public final class AimAdvisor {
     /**
      * Called each client tick with the shot as aimed now: dir is the launch direction before the spread, and
      * shooterMotion the shooter's per-tick motion as the aim uses it (zero for a weapon that doesn't pass it
-     * on). Starts the chance job, and the best-aim job if wanted, when their workers are free. Every weapon
-     * here shoots with uncertainty 1.
+     * on). leadTicks: how far behind the target's position when the shot spawns the client shows it (drawing lag,
+     * the release's wait and the round trip); the target is moved on by that much of its motion. Starts the
+     * chance job, and the best-aim job if wanted, when their workers are free. Every weapon here shoots with
+     * uncertainty 1.
      */
     public static void update(ClientLevel level, Vec3 spawn, Vec3 dir, Ballistics.Spec spec, Vec3 shooterMotion, boolean onGround,
-                              Entity target, boolean wantBest) {
+                              Entity target, boolean wantBest, double leadTicks) {
         boolean doChance = !chanceBusy.get(), doBest = wantBest && !bestBusy.get();
         if (!doChance && !doBest) return;
 
         Shot shot = new Shot(spawn.x, spawn.y, spawn.z, dir.x, dir.y, dir.z, spec.speed(), 1.0,
                              shooterMotion.x, onGround ? 0.0 : shooterMotion.y, shooterMotion.z);
-        AABB bb = target.getBoundingBox();
         Entity mover = target instanceof EnderDragonPart part ? part.parentMob : target;
         Vec3 targetMotion = new Vec3(mover.getX() - mover.xOld, mover.getY() - mover.yOld, mover.getZ() - mover.zOld);
+        AABB bb = target.getBoundingBox().move(targetMotion.scale(leadTicks));
         Target tgt = new Target(new Box(bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ),
                                 targetMotion.x, targetMotion.y, targetMotion.z);
         HitChance.Aimer aimer = (px, py, pz) -> {
@@ -74,35 +83,58 @@ public final class AimAdvisor {
                 .subtract(spawn).normalize();
             return new double[]{d.x, d.y, d.z};
         };
-        int maxTicks = ticksPast(shot, tgt);
-        List<List<Box>> perTick = blocksAlong(level, shot, maxTicks);
-        HitChance.Blocks blocks = age -> age < perTick.size() ? perTick.get(age) : List.of();
         int id = target.getId();
         long now = level.getGameTime();
+        if (level != shapesLevel || now < shapesTime || now - shapesTime >= SHAPE_CACHE_TICKS) {
+            shapes.clear(); shapesLevel = level; shapesTime = now;
+        }
 
-        if (doChance && chanceBusy.compareAndSet(false, true)) {
-            chanceWorker.execute(() -> {
-                try {
-                    lastChance = new ChanceResult(id, HitChance.chance(shot, tgt, blocks, ROLLS, maxTicks), now);
-                } catch (RuntimeException e) {
-                    lastChance = null;
-                } finally {
-                    chanceBusy.set(false);
-                }
-            });
+        if (doChance) {
+            int maxTicks = ticksPast(shot, tgt);
+            List<List<Box>> perTick = blocksAlong(level, shot, maxTicks, 0.0);
+            if (perTick == null) lastChance = new ChanceResult(id, Double.NaN, now);   // too many blocks to read: no number rather than a wrong one
+            else if (chanceBusy.compareAndSet(false, true)) {
+                HitChance.Blocks blocks = byAge(perTick);
+                chanceWorker.execute(() -> {
+                    try {
+                        lastChance = new ChanceResult(id, HitChance.chance(shot, tgt, blocks, ROLLS, maxTicks), now);
+                    } catch (RuntimeException e) {
+                        lastChance = null;
+                    } finally {
+                        chanceBusy.set(false);
+                    }
+                });
+            }
         }
-        if (doBest && bestBusy.compareAndSet(false, true)) {
-            bestWorker.execute(() -> {
-                try {
-                    HitChance.Aim a = HitChance.bestAim(shot, tgt, blocks, maxTicks, aimer);
-                    lastBest = a == null ? null : new BestResult(id, a.up(), a.side(), now);
-                } catch (RuntimeException e) {
-                    lastBest = null;
-                } finally {
-                    bestBusy.set(false);
-                }
-            });
+        if (doBest) {
+            // The search aims at points over the whole box, not along the shot as aimed now (which, right after a
+            // target is picked up, can be degrees off): read blocks along the shot at the box centre, widened to
+            // cover the farthest point it tries (a little past the box's half height and half width).
+            Box b = tgt.box();
+            double[] c = aimer.aim(b.centerX(), b.centerY(), b.centerZ());
+            Shot centreShot = shot.aimed(c[0], c[1], c[2]);
+            double halfH = (b.maxY() - b.minY()) / 2 + 0.3, halfW = Math.max(b.maxX() - b.minX(), b.maxZ() - b.minZ()) / 2;
+            int maxTicks = ticksPast(centreShot, tgt);
+            List<List<Box>> perTick = blocksAlong(level, centreShot, maxTicks, 1.2 * Math.max(halfH, halfW));
+            if (perTick == null) lastBest = null;   // too many blocks to read: aim at the centre
+            else if (bestBusy.compareAndSet(false, true)) {
+                HitChance.Blocks blocks = byAge(perTick);
+                bestWorker.execute(() -> {
+                    try {
+                        HitChance.Aim a = HitChance.bestAim(shot, tgt, blocks, maxTicks, aimer);
+                        lastBest = a == null ? null : new BestResult(id, a.up(), a.side(), now);
+                    } catch (RuntimeException e) {
+                        lastBest = null;
+                    } finally {
+                        bestBusy.set(false);
+                    }
+                });
+            }
         }
+    }
+
+    private static HitChance.Blocks byAge(List<List<Box>> perTick) {
+        return age -> age < perTick.size() ? perTick.get(age) : List.of();
     }
 
     /** The latest hit chance for this target, or NaN if there is none from the last second. */
@@ -142,9 +174,11 @@ public final class AimAdvisor {
     /**
      * For each tick of the flight (index = the projectile's age, 1 on its first tick), the collision boxes of the
      * blocks it can meet then: those around that tick's no-spread move, widened by how far the spread can carry
-     * the projectile by then (all three axes, so along the path too) plus the hit margin and a little slack.
+     * the projectile by then (all three axes, so along the path too), the hit margin, a little slack and `widen`.
+     * Null if that would read more than MAX_BLOCK_READS block positions: an incomplete list would let arrows fly
+     * through terrain.
      */
-    private static List<List<Box>> blocksAlong(ClientLevel level, Shot s, int maxTicks) {
+    private static List<List<Box>> blocksAlong(ClientLevel level, Shot s, int maxTicks, double widen) {
         double len = Math.sqrt(s.aimX() * s.aimX() + s.aimY() * s.aimY() + s.aimZ() * s.aimZ());
         double x = s.x(), y = s.y(), z = s.z();
         double vx = s.aimX() / len * s.speed() + s.inheritX();
@@ -154,25 +188,24 @@ public final class AimAdvisor {
         double travelled = 0;
         int reads = 0;
 
-        Map<Long, List<Box>> shapes = new HashMap<>();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         List<List<Box>> out = new ArrayList<>(maxTicks + 1);
         out.add(List.of());
         for (int age = 1; age <= maxTicks; age++) {
             double nx = x + vx, ny = y + vy, nz = z + vz;
             travelled += Math.sqrt(vx * vx + vy * vy + vz * vz);
-            double r = reach * travelled + 0.8;
+            double r = reach * travelled + 0.8 + widen;
             int x0 = (int) Math.floor(Math.min(x, nx) - r), x1 = (int) Math.floor(Math.max(x, nx) + r);
             int y0 = (int) Math.floor(Math.min(y, ny) - r), y1 = (int) Math.floor(Math.max(y, ny) + r);
             int z0 = (int) Math.floor(Math.min(z, nz) - r), z1 = (int) Math.floor(Math.max(z, nz) + r);
             List<Box> near = new ArrayList<>();
-            for (int bx = x0; bx <= x1 && reads < MAX_BLOCK_READS; bx++)
+            for (int bx = x0; bx <= x1; bx++)
                 for (int by = y0; by <= y1; by++)
                     for (int bz = z0; bz <= z1; bz++) {
                         long key = BlockPos.asLong(bx, by, bz);
                         List<Box> sh = shapes.get(key);
                         if (sh == null) {
-                            reads++;
+                            if (++reads > MAX_BLOCK_READS) return null;
                             pos.set(bx, by, bz);
                             VoxelShape v = level.getBlockState(pos).getCollisionShape(level, pos);
                             if (v.isEmpty()) sh = List.of();
