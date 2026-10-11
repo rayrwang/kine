@@ -3,8 +3,10 @@ package ai.rrw.kine.combat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.combat.Ballistics.Spec;
+import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.hud.ScreenProjection;
+import ai.rrw.kine.util.Enchant;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -14,16 +16,22 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.world.damagesource.DamageType;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ChargedProjectiles;
+import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -33,6 +41,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector4f;
 
 import java.util.Optional;
+import java.util.function.Predicate;
 
 public class ProjectileTargeting {
 
@@ -59,6 +68,7 @@ public class ProjectileTargeting {
     // colours
     private static final int COLOR_RING   = 0xFFFFFFFF;
     private static final int COLOR_ENTITY = 0xFF55FF55;
+    private static final int COLOR_NO_DAMAGE = HudColors.AMBER;   // a target the shot can't hurt
 
 
     // reticle state, written each tick and read each frame
@@ -68,6 +78,7 @@ public class ProjectileTargeting {
     private static double radius = 0;
     private static AABB hitBox = null;
     private static int hitId = -1;   // the shown target's entity id, for the hit chance; -1 when none
+    private static String noDamage = null;   // why the shot can't hurt the shown target (NoDamage), or null
 
     // aim state
     private static boolean aiming = false;
@@ -83,21 +94,25 @@ public class ProjectileTargeting {
             ProjectileTargeting::render);
     }
 
-    // which projectile, and its flight parameters
-    private static Spec specFor(LocalPlayer p) {
+    // which projectile, its flight parameters, and the item it comes from
+    private record Held(Spec spec, ItemStack item) {}
+
+    private static Held heldShot(LocalPlayer p) {
         if (p.isUsingItem()) {
-            var it = p.getUseItem().getItem();
-            if (it == Items.BOW) {
+            ItemStack use = p.getUseItem();
+            if (use.is(Items.BOW)) {
                 float t = p.getTicksUsingItem() / 20f;
                 float pow = (t * t + 2f * t) / 3f;
                 if (pow > 1f) pow = 1f;
                 if (pow < 0.1f) return null;
-                return new Spec(0.05, 0.99, pow * 3.0, 0.0, false, true);   // arrow
+                return new Held(new Spec(0.05, 0.99, pow * 3.0, 0.0, false, true), use);   // arrow
             }
-            if (it == Items.TRIDENT) return new Spec(0.05, 0.99, 2.5, 0.0, false, true);
+            if (use.is(Items.TRIDENT)) return new Held(new Spec(0.05, 0.99, 2.5, 0.0, false, true), use);
         }
         Spec s = specForHeld(p.getMainHandItem());
-        return s != null ? s : specForHeld(p.getOffhandItem());
+        if (s != null) return new Held(s, p.getMainHandItem());
+        s = specForHeld(p.getOffhandItem());
+        return s != null ? new Held(s, p.getOffhandItem()) : null;
     }
 
     private static Spec specForHeld(ItemStack stack) {
@@ -127,20 +142,31 @@ public class ProjectileTargeting {
         return Ballistics.launchVel(yaw, pitch, spec, shooterMotion(p, spec), p.onGround());
     }
 
-    private static boolean canHit(Entity e) {
-        if (e instanceof EnderDragonPart) return true;   // dragon hitboxes aren't LivingEntity
-        return e instanceof LivingEntity && e.isAlive() && !e.isSpectator();
+    // What the projectile can hit (Projectile.canHitEntity): live, pickable mobs and players, and dragon parts.
+    // Arrows and tridents pass through players the shooter's team can't harm (AbstractArrow.canHitEntity).
+    private static Predicate<Entity> hittable(LocalPlayer self, boolean arrow) {
+        return e -> {
+            if (e instanceof EnderDragonPart) return true;   // dragon hitboxes aren't LivingEntity
+            if (!(e instanceof LivingEntity) || !e.canBeHitByProjectile()) return false;
+            return !(arrow && e instanceof Player other && !self.canHarmPlayer(other));
+        };
+    }
+
+    // the damage an arrow or trident from this item does, for the shield rules
+    private static Holder<DamageType> damageType(ClientLevel level, ItemStack item) {
+        return level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE)
+                    .getOrThrow(item.is(Items.TRIDENT) ? DamageTypes.TRIDENT : DamageTypes.ARROW);
     }
 
     // Stops a simulated flight at the first block or entity (the reticle).
-    private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self) {
+    private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self, Predicate<Entity> hittable) {
         return (pos, next, tick) -> {
             BlockHitResult bhr = level.clip(new ClipContext(pos, next,
                 ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
             Vec3 segEnd = bhr.getType() != HitResult.Type.MISS ? bhr.getLocation() : next;
 
             Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
-            for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), ProjectileTargeting::canHit)) {
+            for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), hittable)) {
                 Optional<Vec3> h = entityHit(level, self, e.getBoundingBox(), pos, segEnd, HitChance.margin(tick));
                 if (h.isPresent()) {
                     double d = pos.distanceToSqr(h.get());
@@ -169,9 +195,9 @@ public class ProjectileTargeting {
     }
 
     // the entity nearest the reticle centre p, among those the spread disc (radius r) overlaps
-    private static Entity bestTarget(Entity self, ClientLevel level, Vec3 p, double r) {
+    private static Entity bestTarget(Entity self, ClientLevel level, Vec3 p, double r, Predicate<Entity> which) {
         Entity best = null; double bd = Double.MAX_VALUE;
-        for (Entity e : level.getEntities(self, new AABB(p, p).inflate(r + 2.0), ProjectileTargeting::canHit)) {
+        for (Entity e : level.getEntities(self, new AABB(p, p).inflate(r + 2.0), which)) {
             if (e.getBoundingBox().inflate(r).contains(p.x, p.y, p.z)) {
                 double d = e.getBoundingBox().getCenter().distanceToSqr(p);
                 if (d < bd) { bd = d; best = e; }
@@ -182,14 +208,14 @@ public class ProjectileTargeting {
 
     // Open-sky fallback: the entity nearest the look ray within a cone, in line of sight and range. The
     // previous target is kept while it stays inside a wider cone, to avoid flicker.
-    private static Entity coneTarget(LocalPlayer p, ClientLevel level, Vec3 eye) {
+    private static Entity coneTarget(LocalPlayer p, ClientLevel level, Vec3 eye, Predicate<Entity> which) {
         Vec3 look = p.getLookAngle();
         AABB search = new AABB(eye, eye).inflate(CONE_RANGE);
 
         Entity best = null; double bestCos = CONE_COS;   // most centred new target (narrow cone)
         boolean keepLock = false;                        // is the previous target still in the wide cone?
 
-        for (Entity e : level.getEntities(p, search, ProjectileTargeting::canHit)) {
+        for (Entity e : level.getEntities(p, search, which)) {
             Vec3 c = e.getBoundingBox().getCenter();
             Vec3 to = c.subtract(eye);
             double dist = to.length();
@@ -230,21 +256,30 @@ public class ProjectileTargeting {
         if (p == null || level == null) { aiming = false; valid = false; return; }
         if (!Settings.projectileReticle && !Settings.autoAim) { aiming = false; valid = false; return; }
 
-        valid = false; hitBox = null; hitId = -1;
-        Spec spec = specFor(p);
-        if (spec == null) { aiming = false; return; }
+        valid = false; hitBox = null; hitId = -1; noDamage = null;
+        Held held = heldShot(p);
+        if (held == null) { aiming = false; return; }
+        Spec spec = held.spec();
 
         Vec3 eye = p.getEyePosition();
         Vec3 spawn = new Vec3(eye.x, p.getEyeY() - 0.1F, eye.z);   // where the server spawns the projectile
 
+        // Weapons fire arrows or tridents. Some targets they hit take no damage (NoDamage); the reticle still
+        // shows those, and auto aim leaves them alone.
+        Predicate<Entity> hittable = hittable(p, spec.weapon());
+        Holder<DamageType> type = damageType(level, held.item());
+        boolean piercing = Enchant.level(held.item(), Enchantments.PIERCING) > 0;
+        Predicate<Entity> hurtable = hittable.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
+        Ballistics.Collider<Entity> collider = collider(level, p, hittable);
+
         // reticle from the current aim gives the candidate target
-        Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
+        Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
         Entity tgt = null;
         if (s0.impact() != null) {
             double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * ANG_PER_UNC * SPREAD_MULT);
-            tgt = bestTarget(p, level, s0.impact(), r0);
+            tgt = bestTarget(p, level, s0.impact(), r0, hurtable);
         } else if (Settings.autoAim && spec.weapon()) {
-            tgt = coneTarget(p, level, eye);   // open-sky fallback: pick by angle from the look ray
+            tgt = coneTarget(p, level, eye, hurtable);   // open-sky fallback: pick by angle from the look ray
         }
 
         // aim assist, weapons only (bow, crossbow, trident), with target lead
@@ -265,21 +300,24 @@ public class ProjectileTargeting {
         } else aiming = false;
 
         // final reticle, after any aim correction this tick
-        Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider(level, p));
+        Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
         Entity tgtF = locked;
         double r = 0;
         if (sf.impact() != null) {
             r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
-            if (tgtF == null) tgtF = bestTarget(p, level, sf.impact(), r);
+            if (tgtF == null) tgtF = bestTarget(p, level, sf.impact(), r, hittable);
         }
-        // the hit chance of the shot as aimed now, and the best point to aim at while auto aim holds a target
-        if (spec.weapon() && tgtF != null)
+        // the hit chance of the shot as aimed now, and the best point to aim at while auto aim holds a target;
+        // for a target the shot can't hurt, the reason instead
+        String why = spec.weapon() && tgtF != null ? NoDamage.reason(tgtF, spawn, type, piercing) : null;
+        if (spec.weapon() && tgtF != null && why == null)
             AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec,
                               shooterMotion(p, spec), p.onGround(), tgtF, locked != null);
         if (sf.impact() == null) return;
         impact = sf.impact(); normal = sf.normal();
         radius = r; hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
         hitId = tgtF != null && spec.weapon() ? tgtF.getId() : -1;
+        noDamage = why;
         valid = true;
     }
 
@@ -301,7 +339,8 @@ public class ProjectileTargeting {
         Vec3 u = (Math.abs(n.y) < 0.99 ? n.cross(new Vec3(0, 1, 0)) : n.cross(new Vec3(1, 0, 0))).normalize();
         Vec3 w = n.cross(u).normalize();
         Vec3 ic = impact.add(n.scale(0.01));
-        int ringColor = hitBox != null ? COLOR_ENTITY : COLOR_RING;
+        int targetColor = noDamage != null ? COLOR_NO_DAMAGE : COLOR_ENTITY;
+        int ringColor = hitBox != null ? targetColor : COLOR_RING;
         // Walk the ring, drawing a segment only once the projected point has moved at least a pixel. At
         // shallow angles the ellipse's tips bunch into sub-pixel steps that would round to nothing and
         // split the ring into two arcs.
@@ -318,10 +357,11 @@ public class ProjectileTargeting {
                 anchor = s;
             }                                                  // else keep the anchor and bridge to a later point
         }
-        if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, COLOR_ENTITY);
+        if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, targetColor);
 
-        // the hit chance of the shot as aimed now, beside the crosshair
-        if (hitId >= 0 && mc.level != null) {
+        // beside the crosshair: why the shot can't hurt the target, or else its hit chance as aimed now
+        if (noDamage != null) g.text(mc.font, noDamage, W / 2 + 6, H / 2 + 4, COLOR_NO_DAMAGE, true);
+        else if (hitId >= 0 && mc.level != null) {
             double c = AimAdvisor.chance(hitId, mc.level.getGameTime());
             if (!Double.isNaN(c)) g.text(mc.font, Math.round(c * 100) + "%", W / 2 + 6, H / 2 + 4, COLOR_ENTITY, true);
         }

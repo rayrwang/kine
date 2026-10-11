@@ -7,7 +7,8 @@
 		"EntityMixin",
 		"EntityRendererMixin",
 		"LivingEntityMixin",
-		"MinecraftFrameMixin"
+		"MinecraftFrameMixin",
+		"ShulkerAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1
