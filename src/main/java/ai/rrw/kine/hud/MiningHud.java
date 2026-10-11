@@ -59,14 +59,20 @@ public class MiningHud {
         if (!active || !Settings.displayMiningProgress) return;
         Minecraft mc = Minecraft.getInstance();
 
-        double secondsLeft = ratePerTick > 0 ? (1.0 - progress) / ratePerTick / 20.0 : 0.0;
-        // sub-second precision for normal breaks; roll up to m/h when mining fatigue makes it long
-        String left = secondsLeft >= 60 ? KineTime.format(secondsLeft) : String.format("%.1fs", secondsLeft);
-        String text = String.format("%.0f%%   %s left", progress * 100.0, left);
+        String text = text(progress, ratePerTick);
 
         int w = mc.font.width(text);
         int x = mc.getWindow().getGuiScaledWidth() / 2 - w / 2;
         int y = HudLayout.miningRow(mc.getWindow().getGuiScaledHeight());
         graphics.text(mc.font, text, x, y, 0xFFFFFFFF, true);
+    }
+
+    /** The readout: progress, and the time left at the current rate; "--" for a block that can't be broken
+     *  (bedrock and the like, where the game's progress rate is 0). */
+    static String text(double progress, double ratePerTick) {
+        double secondsLeft = ratePerTick > 0 ? (1.0 - progress) / ratePerTick / 20.0 : Double.POSITIVE_INFINITY;
+        // sub-second precision for normal breaks; roll up to m/h when mining fatigue makes it long
+        String left = secondsLeft >= 60 ? KineTime.format(secondsLeft) : String.format("%.1fs", secondsLeft);
+        return String.format("%.0f%%   %s left", progress * 100.0, left);
     }
 }

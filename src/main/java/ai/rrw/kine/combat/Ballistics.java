@@ -181,34 +181,36 @@ public final class Ballistics {
     static double solvePitch(Vec3 eye, double yaw, Spec spec, double horiz, double dy, Vec3 shooterMotion, boolean onGround) {
         double seed = seedPitch(spec, horiz, dy);
         double p0 = Double.isNaN(seed) ? -45.0 : seed;       // beyond the drag-free range: start at 45 degrees up
-        double p1 = p0 - 1.0;                                 // 1 degree higher, for the first secant slope
+        // 1 degree higher, for the first secant slope; lower instead when higher would pass straight up
+        double p1 = p0 - 1.0 >= -MAX_PITCH ? p0 - 1.0 : p0 + 1.0;
         double f0 = vMissAtRange(eye, yaw, p0, spec, horiz, dy, shooterMotion, onGround);
         double f1 = vMissAtRange(eye, yaw, p1, spec, horiz, dy, shooterMotion, onGround);
         for (int i = 0; i < PITCH_ITERS; i++) {
             if (Math.abs(f1) < MISS_OK) break;
             double den = f1 - f0;
             if (Math.abs(den) < 1e-9) break;
-            double p2 = Mth.clamp(p1 - f1 * (p1 - p0) / den, -89.0, 89.0);
+            double p2 = Mth.clamp(p1 - f1 * (p1 - p0) / den, -MAX_PITCH, MAX_PITCH);
             p0 = p1; f0 = f1; p1 = p2; f1 = vMissAtRange(eye, yaw, p1, spec, horiz, dy, shooterMotion, onGround);
         }
         // accept only a low-arc answer: there, aiming a little lower lands lower
         if (Math.abs(f1) < MISS_OK
-            && vMissAtRange(eye, yaw, Math.min(89.0, p1 + 0.5), spec, horiz, dy, shooterMotion, onGround) < f1) return p1;
+            && vMissAtRange(eye, yaw, Math.min(MAX_PITCH, p1 + 0.5), spec, horiz, dy, shooterMotion, onGround) < f1) return p1;
         return bracketPitch(eye, yaw, spec, horiz, dy, shooterMotion, onGround);
     }
 
     static final double MISS_OK = 0.02;   // vertical miss (blocks) a pitch solve accepts
+    static final double MAX_PITCH = 89.99;   // steepest pitch tried, up or down (a target 1 block out and 50 up needs 89.07)
 
     // From 10 degrees below the line of sight (always short), step up 2 degrees at a time to the first pitch
     // that is not short, then close the bracket by regula falsi (the Illinois variant, which can't stall on
     // one side). With no sign change before the miss starts falling (out of range), the best pitch seen.
     private static double bracketPitch(Vec3 eye, double yaw, Spec spec, double horiz, double dy, Vec3 shooterMotion, boolean onGround) {
         double los = -Math.toDegrees(Math.atan2(dy, horiz));
-        double a = Math.min(89.0, los + 10.0);
+        double a = Math.min(MAX_PITCH, los + 10.0);
         double fa = vMissAtRange(eye, yaw, a, spec, horiz, dy, shooterMotion, onGround);
         if (fa >= 0) return a;
         double b = Double.NaN, fb = Double.NaN;
-        for (double p = a - 2.0; p >= -89.0; p -= 2.0) {
+        for (double p = a - 2.0; p >= -MAX_PITCH; p -= 2.0) {
             double f = vMissAtRange(eye, yaw, p, spec, horiz, dy, shooterMotion, onGround);
             if (f >= 0) { b = p; fb = f; break; }
             if (f < fa) break;   // the miss is falling again: past the longest range, so out of reach

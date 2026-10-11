@@ -22,6 +22,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.joml.Vector4f;
 
 /**
  * The navigation display: the heading arc across the top, the annunciator rows above the crosshair
@@ -38,6 +39,8 @@ public final class NavHud {
     private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
     private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
     private static final double ETA_TC         = 12.0;   // time constant (s) that smooths the porpoise wobble out of the ETA
+    private static final float  BEAM_NEAR_W    = 0.05f;  // the beam is cut where it passes this close in front of the camera
+    private static final float  BEAM_MARGIN    = 2.0f;   // and this many half-screens from the centre, well off screen
 
     private static double etaShown = Double.NaN;  // smoothed ETA on display (s)
     private static long   etaNanos = 0L;          // wall-clock time of the last ETA update
@@ -94,10 +97,12 @@ public final class NavHud {
         // vertical mode annunciator: two rows left of the nav block, shown whenever the director is armed
         drawModeAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
 
-        // autopilot status on the right, mirroring the vertical mode block; shown whatever the autopilot state
+        // autopilot status on the right, mirroring the vertical mode block; shown whatever the autopilot state.
+        // Green during a rocket takeoff too (RW): it is flying the aircraft and hands over to the autopilot.
         if (readouts && Settings.autopilot) {
             int apX = HudLayout.apLeftEdge(cx, halfCenter);
-            g.text(mc.font, "AP", apX, lineY, Autopilot.isEngaged() ? HudColors.GREEN : HudColors.RED, true);
+            boolean flying = Autopilot.isEngaged() || Takeoff.active();
+            g.text(mc.font, "AP", apX, lineY, flying ? HudColors.GREEN : HudColors.RED, true);
         }
 
         if (!navCenter) return;
@@ -198,7 +203,7 @@ public final class NavHud {
 
     /** A beam over the target column from the bottom of the world to the top of the build height,
      *  projected to the screen and drawn as a HUD element, so it shows through terrain like Baritone's goal
-     *  beam. */
+     *  beam. Only the part in view is drawn. */
     private static void drawTargetColumn(GuiGraphicsExtractor g, Minecraft mc, int W, int H) {
         if (mc.level == null) return;
         double baseY = mc.level.getMinY(), topY = mc.level.getMaxY() + 1;   // -64 and 320 in the overworld
@@ -207,9 +212,10 @@ public final class NavHud {
         Vec3 c = cam.position();
         double wx = Nav.targetX() + 0.5, wz = Nav.targetZ() + 0.5;
 
-        float[] base = ScreenProjection.project(vp, c, wx, baseY, wz, W, H, 0.0f);
-        float[] top  = ScreenProjection.project(vp, c, wx, topY,  wz, W, H, 0.0f);
-        if (base == null || top == null) return;   // an end is behind the camera: skip this frame
+        Vector4f[] seg = clipSegment(ScreenProjection.clip(vp, c, wx, baseY, wz), ScreenProjection.clip(vp, c, wx, topY, wz));
+        if (seg == null) return;   // no part of the beam in view
+        float[] base = ScreenProjection.toScreen(seg[0], W, H);
+        float[] top  = ScreenProjection.toScreen(seg[1], W, H);
 
         double ddx = wx - c.x, ddz = wz - c.z;
         double dist = Math.sqrt(ddx * ddx + ddz * ddz);
@@ -218,6 +224,34 @@ public final class NavHud {
             g.fill(-hl, -width / 2, hl, width / 2, COLUMN_BODY);
             g.fill(-hl, -1, hl, 1, COLUMN_CORE);
         });
+    }
+
+    /**
+     * The part of the segment a-b (clip space, before the perspective divide) in front of the camera and within
+     * BEAM_MARGIN half-screens of the centre, as its two ends in clip space, or null if no part is. Cut here, a
+     * beam with one end behind the camera still shows (close to the target and in the landing spiral the top end
+     * is), and its ends stay at sane pixel coordinates.
+     */
+    static Vector4f[] clipSegment(Vector4f a, Vector4f b) {
+        float t0 = 0f, t1 = 1f;
+        for (int i = 0; i < 5; i++) {   // each plane as a linear function of the point, at least 0 inside
+            float da = inside(i, a), db = inside(i, b);
+            if (da < 0 && db < 0) return null;
+            if (da < 0) t0 = Math.max(t0, da / (da - db));
+            else if (db < 0) t1 = Math.min(t1, da / (da - db));
+        }
+        if (t0 > t1) return null;
+        return new Vector4f[]{ new Vector4f(a).lerp(b, t0), new Vector4f(a).lerp(b, t1) };
+    }
+
+    private static float inside(int plane, Vector4f v) {
+        return switch (plane) {
+            case 0 -> v.w - BEAM_NEAR_W;
+            case 1 -> BEAM_MARGIN * v.w + v.x;
+            case 2 -> BEAM_MARGIN * v.w - v.x;
+            case 3 -> BEAM_MARGIN * v.w + v.y;
+            default -> BEAM_MARGIN * v.w - v.y;
+        };
     }
 
     /** Forget the smoothed ETA, so a new destination starts fresh instead of easing from the old one. */

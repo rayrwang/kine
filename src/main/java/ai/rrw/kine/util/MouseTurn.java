@@ -14,9 +14,10 @@ import net.minecraft.util.Mth;
 public final class MouseTurn {
     private MouseTurn() {}
 
-    /** A turn made, in counts, so it can be undone exactly as a vanilla client would turn back. */
-    public record Turn(int countsX, int countsY) {
-        public static final Turn NONE = new Turn(0, 0);
+    /** A turn made: its counts, and how far it moved the view (degrees), which is less than the counts ask for
+     *  when the game clamps the turn (a boat holds its passenger within 105 degrees of its heading). */
+    public record Turn(int countsX, int countsY, float movedYaw, float movedPitch) {
+        public static final Turn NONE = new Turn(0, 0, 0f, 0f);
     }
 
     /** The turn per mouse count before Entity.turn's 0.15, as MouseHandler.turnPlayer computes it. */
@@ -31,20 +32,38 @@ public final class MouseTurn {
     public static Turn toward(LocalPlayer p, float yaw, float pitch) {
         double sens = sens(Minecraft.getInstance(), p);
         double deg = sens * 0.15;
-        int kx = (int) Math.round(Mth.wrapDegrees(yaw - p.getYRot()) / deg);
-        int ky = (int) Math.round((Mth.clamp(pitch, -90f, 90f) - p.getXRot()) / deg);
-        // stay inside the pitch limits, where the game would clamp the turn and undo() couldn't return exactly
-        if (p.getXRot() + ky * deg > 90.0) ky--;
-        if (p.getXRot() + ky * deg < -90.0) ky++;
+        int kx = yawCounts(Mth.wrapDegrees(yaw - p.getYRot()), deg);
+        int ky = pitchCounts(Mth.clamp(pitch, -90f, 90f) - p.getXRot(), p.getXRot(), deg);
         if (kx == 0 && ky == 0) return Turn.NONE;
+        float yaw0 = p.getYRot(), pitch0 = p.getXRot();
         p.turn(kx * sens, ky * sens);
-        return new Turn(kx, ky);
+        return new Turn(kx, ky, p.getYRot() - yaw0, p.getXRot() - pitch0);
     }
 
-    /** Turn back by the same counts. */
+    /** Turn back by as far as the turn moved the view, in whole counts at the sensitivity now. The view returns to
+     *  where it was (within half a count) even when a boat's clamp cut the turn short, or a spyglass started since
+     *  has made a count smaller, where turning back by the same counts would leave it moved; a turn the game made
+     *  in between (a boat turning its passenger) stays. */
     public static void undo(LocalPlayer p, Turn t) {
-        if (t.countsX() == 0 && t.countsY() == 0) return;
+        if (t.movedYaw() == 0f && t.movedPitch() == 0f) return;
         double sens = sens(Minecraft.getInstance(), p);
-        p.turn(-t.countsX() * sens, -t.countsY() * sens);
+        double deg = sens * 0.15;
+        int kx = yawCounts(-t.movedYaw(), deg);
+        int ky = pitchCounts(-t.movedPitch(), p.getXRot(), deg);
+        if (kx != 0 || ky != 0) p.turn(kx * sens, ky * sens);
+    }
+
+    /** The whole counts nearest a yaw turn of dYaw degrees, at deg degrees a count. */
+    static int yawCounts(double dYaw, double deg) {
+        return (int) Math.round(dYaw / deg);
+    }
+
+    /** The whole counts nearest a pitch turn of dPitch degrees from pitchNow, at deg degrees a count, kept inside the
+     *  pitch limits, where the game would clamp the turn and it couldn't be turned back exactly. */
+    static int pitchCounts(double dPitch, float pitchNow, double deg) {
+        int ky = (int) Math.round(dPitch / deg);
+        if (pitchNow + ky * deg > 90.0) ky--;
+        if (pitchNow + ky * deg < -90.0) ky++;
+        return ky;
     }
 }

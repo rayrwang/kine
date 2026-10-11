@@ -7,6 +7,7 @@ import ai.rrw.kine.fireworks.RocketBurn;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.mixin.MinecraftInvoker;
+import ai.rrw.kine.util.ElytraLife;
 import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -19,6 +20,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Input;
@@ -28,6 +30,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
@@ -48,7 +51,7 @@ public final class Takeoff {
     private Takeoff() {}
 
     /** What the warning row says while standing with rockets in hand. */
-    public enum Status { NONE, READY, BLOCKED, ROCKETS, WORN, STARS, WATER, AUTOPILOT }
+    public enum Status { NONE, READY, BLOCKED, ROCKETS, WORN, WORN_CRUISE, STARS, WATER, AUTOPILOT }
 
     private enum Phase { IDLE, LOOK_UP, JUMP, CLIMB }
 
@@ -60,6 +63,9 @@ public final class Takeoff {
     private static final int   EMPTY_TICKS = 2;        // ticks with no rocket pushing before the next is fired
     private static final int   MAX_FAILED_USES = 3;
     private static final double CRUISE_MIN_AGL = 60;   // the cruise is at least this far above the takeoff spot
+    // Without terrain avoidance the autopilot arms only with 140 clear blocks below (FlightDirector's ENGAGE_AGL),
+    // so the cruise is at least that far up, plus a margin for ground that rises along the climb.
+    private static final double CRUISE_MIN_AGL_NO_AVOIDANCE = 140 + 10;
     private static final int   PATH_TICKS = 421;       // rolled out for the rails (they draw 420 ticks)
     private static final int   PLAN_EVERY = 4;         // ticks between re-plans while standing still
     private static final int   STOP_MESSAGE_TICKS = 60;
@@ -68,13 +74,17 @@ public final class Takeoff {
     private static Phase phase = Phase.IDLE;
     private static Status status = Status.NONE;
     private static int needed = 0;                     // rockets needed if each burns its shortest
+    private static int climbTicks = 0;                 // the planned takeoff's ticks to the hand-over
+    private static double cruiseAgl = 0;               // the planned cruise's height above the takeoff spot
     private static float yaw, cmdPitch, setPitch, setYaw;
     private static long lastFrameNanos = 0L;
     private static int jumpTick, pending, failedUses, fired, stopTicks, armWait, emptyTicks;
+    private static int sinceUse, shortestBurn, seenId = -1, seenTicks;   // the rocket last seen pushing, for the log
+    private static boolean loggedDetached = false;
     private static boolean lean;
     private static double groundY, cruise;
 
-    // planning while standing: re-planned every PLAN_EVERY ticks or when the player moves or turns
+    // planning while standing: re-planned every PLAN_EVERY ticks (planX is NaN until the first plan)
     private static int planAge = 0;
     private static double planX = Double.NaN, planY, planZ;
     private static float planYaw;
@@ -89,6 +99,10 @@ public final class Takeoff {
     /** Rockets the takeoff from here needs if each burns its shortest. */
     public static int needed() { return needed; }
     /** Whether the takeoff has the warning row (its prompt, its status or its stop message). */
+    /** The attitude the takeoff is flying the view to, for the flight director bars: straight up, then the lean. */
+    public static float commandedPitch() { return phase == Phase.CLIMB && lean ? (float) TakeoffModel.CLIMB_PITCH : -90f; }
+    public static float commandedYaw()   { return yaw; }
+
     public static boolean usesWarningRow() { return Settings.takeoff && (active() || stopTicks > 0 || status != Status.NONE); }
     /** The planned path for the rails, relative to the player: points 0 to pathCount() - 1, one per tick. */
     public static int pathCount() { return pathCount; }
@@ -109,6 +123,7 @@ public final class Takeoff {
     // ---- per tick, at the end ----
 
     private static void tick(Minecraft mc) {
+        if (mc.isPaused()) return;   // singleplayer paused: the game's ticks still come, but the world stands still
         if (stopTicks > 0) stopTicks--;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { reset(); status = Status.NONE; return; }
@@ -117,7 +132,7 @@ public final class Takeoff {
             case IDLE -> idle(mc, p);
             case LOOK_UP -> {
                 if (pilotKeys(mc) || !p.onGround() || Autopilot.isEngaged() || !holding(p)) { stop(); return; }
-                if (p.getXRot() <= -89.5f) { phase = Phase.JUMP; jumpTick = 0; }
+                if (TakeoffModel.lookedUp(p.getXRot(), MouseTurn.sens(mc, p) * 0.15)) { phase = Phase.JUMP; jumpTick = 0; }
             }
             case JUMP -> {
                 if (pilotKeys(mc)) { stop(); return; }
@@ -151,8 +166,27 @@ public final class Takeoff {
             TakeoffModel.Plan mean = TakeoffModel.fromGround(p.getX(), p.getY(), p.getZ(), planYaw, target,
                 (int) Math.round(RocketBurn.meanTicks(d)), terrain, top, PATH_TICKS);
             keepPath(mean, p);
+            climbTicks = Math.max(worst.ticks(), mean.ticks());   // the slower of the two
+            cruiseAgl = target - p.getY();
         }
-        if (heldRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
+        if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p)) { status = Status.WORN_CRUISE; pathCount = 0; }
+        else if (heldRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
+    }
+
+    // Whether the best elytra the takeoff could fly on lasts the climb and still has the durability failsafe's
+    // reserve at the cruise. Only an elytra that wears out is judged, as the failsafe judges only those; a spare
+    // counts when the failsafe is on, since it swaps one in when the worn one trips its warning.
+    private static boolean elytraLasts(LocalPlayer p) {
+        ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
+        if (!chest.is(Items.ELYTRA) || !chest.isDamageableItem()) return true;
+        double best = ElytraLife.flightSeconds(chest);
+        if (Settings.elytraDuraFailsafe) {
+            for (int i = 9; i < p.inventoryMenu.slots.size(); i++) {   // the slots the failsafe swaps from
+                ItemStack st = p.inventoryMenu.slots.get(i).getItem();
+                if (st.is(Items.ELYTRA) && st.isDamageableItem()) best = Math.max(best, ElytraLife.flightSeconds(st));
+            }
+        }
+        return TakeoffModel.elytraLasts(best, climbTicks, ElytraGuard.landingReserveSeconds(cruiseAgl));
     }
 
     /** What the row should say while standing; NONE when nothing to offer (not on the ground, no elytra, no rocket). */
@@ -168,9 +202,14 @@ public final class Takeoff {
         return Status.READY;
     }
 
-    // The cruise the takeoff climbs to: the autopilot's, but at least CRUISE_MIN_AGL above the takeoff spot.
     private static double cruiseFor(double ground) {
-        return Math.max(FlightDirector.targetAltitude(), ground + CRUISE_MIN_AGL);
+        return cruiseFor(FlightDirector.targetAltitude(), ground, Settings.terrainAvoidance);
+    }
+
+    // The cruise the takeoff climbs to: the autopilot's, but at least CRUISE_MIN_AGL above the takeoff spot, or
+    // CRUISE_MIN_AGL_NO_AVOIDANCE without terrain avoidance, so the autopilot can arm at the hand-over.
+    static double cruiseFor(double target, double ground, boolean terrainAvoidance) {
+        return Math.max(target, ground + (terrainAvoidance ? CRUISE_MIN_AGL : CRUISE_MIN_AGL_NO_AVOIDANCE));
     }
 
     // Anything that stops motion or holds fluid at head height or above, in any column the player stands in.
@@ -217,7 +256,9 @@ public final class Takeoff {
         LocalPlayer p = mc.player;
         if (p == null || !Settings.takeoff) return false;
         if (phase == Phase.IDLE) {
-            if (status != Status.READY || !mc.options.keyAttack.consumeClick()) return false;
+            if (status != Status.READY) return false;
+            if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.ENTITY) return false;   // that click attacks
+            if (!mc.options.keyAttack.consumeClick()) return false;
             while (mc.options.keyAttack.consumeClick()) { }
             mc.options.keyAttack.setDown(false);     // a held click would go on to break the block in view
             start(p);
@@ -226,7 +267,30 @@ public final class Takeoff {
         while (mc.options.keyAttack.consumeClick()) { }   // no swings or block breaking during the takeoff
         if (phase != Phase.CLIMB) return true;
 
-        if (attachedRocket(mc, p) != null) { pending = 0; failedUses = 0; emptyTicks = 0; return true; }   // one is burning
+        sinceUse++;
+        FireworkRocketEntity burning = attachedRocket(mc, p);
+        if (burning != null) {
+            if (burning.getId() != seenId) { seenId = burning.getId(); seenTicks = 0; loggedDetached = false; }
+            seenTicks++;
+            pending = 0; failedUses = 0; emptyTicks = 0; return true;   // one is burning
+        }
+        if (seenId != -1) {
+            // The rocket seen pushing no longer reads as attached. While it is still in the client's world it is
+            // still burning (and boosting: the client applies the boost from its own copy), so it isn't doubled.
+            Entity still = mc.level.getEntity(seenId);
+            if (still instanceof FireworkRocketEntity && !still.isRemoved()) {
+                if (!loggedDetached) Kine.LOGGER.info("Kine takeoff: rocket {} still in the world but not attached, {} ticks after its use", seenId, sinceUse);
+                loggedDetached = true;
+                emptyTicks = 0;
+                return true;
+            }
+            // RW saw rockets 5 ticks apart in his game (2026-10-11 17:53): each seen, then gone. A rocket burns at least
+            // 10 * (1 + its flight duration) ticks, so one gone sooner was removed by the server; logged to find out why.
+            if (sinceUse < shortestBurn)
+                Kine.LOGGER.info("Kine takeoff: rocket {} removed after {} ticks seen, {} ticks after its use (shortest burn {})",
+                    seenId, seenTicks, sinceUse, shortestBurn);
+            seenId = -1;
+        }
         // none seen: wait a tick more before taking it as burnt out, so a rocket missed for one tick is never doubled
         if (++emptyTicks < EMPTY_TICKS && fired > 0) return true;
         if (pending > 0) {
@@ -256,6 +320,7 @@ public final class Takeoff {
         ((MinecraftInvoker) mc).invokeStartUseItem();
         fired++;
         pending = USE_WAIT;
+        sinceUse = 0; shortestBurn = 10 * (1 + heldDuration(p)); seenId = -1;
         Kine.LOGGER.info("Kine takeoff: rocket {} at y {} (rockets in hand {}, failed uses {})",
             fired, String.format("%.1f", p.getY()), heldRockets(p), failedUses);
         return true;
@@ -311,7 +376,7 @@ public final class Takeoff {
         lean = false;
         groundY = p.getY();
         cruise = cruiseFor(groundY);
-        fired = 0; pending = 0; failedUses = 0; armWait = 0; emptyTicks = 0;
+        fired = 0; pending = 0; failedUses = 0; armWait = 0; emptyTicks = 0; sinceUse = 0; shortestBurn = 0; seenId = -1;
         stopTicks = 0;
     }
 
@@ -398,7 +463,10 @@ public final class Takeoff {
         String s;
         int color;
         if (active()) { s = "TAKEOFF"; color = HudColors.GREEN; }
-        else if (stopTicks > 0) { s = "TAKEOFF STOPPED"; color = HudColors.RED; }
+        else if (stopTicks > 0) {
+            if (Landing.valid()) return;   // the row is LEFT CLICK TO LAND's, the one to act on
+            s = "TAKEOFF STOPPED"; color = HudColors.RED;
+        }
         else {
             switch (status) {
                 case READY -> { s = "LEFT CLICK TO TAKE OFF"; color = HudColors.GREEN; }
@@ -409,6 +477,7 @@ public final class Takeoff {
                     color = HudColors.RED;
                 }
                 case WORN -> { s = "ELYTRA TOO WORN TO TAKE OFF"; color = HudColors.RED; }
+                case WORN_CRUISE -> { s = "ELYTRA TOO WORN TO REACH CRUISE"; color = HudColors.RED; }
                 case STARS -> { s = "ROCKETS WITH STARS WOULD HURT YOU"; color = HudColors.RED; }
                 case WATER -> { s = "CAN'T TAKE OFF FROM WATER"; color = HudColors.RED; }
                 case AUTOPILOT -> { s = "TURN ON THE AUTOPILOT TO TAKE OFF"; color = HudColors.RED; }

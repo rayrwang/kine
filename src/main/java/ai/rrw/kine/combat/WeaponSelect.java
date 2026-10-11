@@ -30,9 +30,10 @@ import net.minecraft.world.item.enchantment.Enchantments;
  * between near-equal weapons.
  *
  * <p>Moving a weapon from the main inventory uses a hotbar slot: an empty one first, else the largest
- * stack, as the water-bucket clutch does. That number-key swap is an inventory click, so it waits for the
- * end of the tick (between ticks, where a vanilla client clicks in its inventory screen) and is followed by
- * the inventory close packet; the slot is selected the tick after. Selecting a hotbar slot is a number-key
+ * stack, as the water-bucket clutch does. That number-key swap is an inventory click, made as a player
+ * would: one tick with the inventory "opened" (every key up, InventoryClicks.requestOpen), the swap at that
+ * tick's end (between ticks, where a vanilla client clicks in its inventory screen), then the close as a
+ * vanilla client closes it; the slot is selected the tick after. Selecting a hotbar slot is a number-key
  * press: the game sends the change itself before the next attack.
  */
 public final class WeaponSelect {
@@ -40,22 +41,32 @@ public final class WeaponSelect {
 
     private static final double SWITCH_MARGIN = 1.10;   // switch only if the best scores 10% over what is held
 
-    private static int pendingFrom = -1, pendingTo = -1;   // a swap from the main inventory to make at the tick's end
+    private static int pendingFrom = -1;                    // a weapon to swap in from the main inventory at the open tick's end
+    private static ItemStack pendingStack = ItemStack.EMPTY;  // and the weapon, to check it is still there then
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(WeaponSelect::endTick);
     }
 
-    // The swap chosen this tick, made between ticks, then the close packet; the slot is selected next tick.
+    // At the end of the tick the inventory "opened" in: the swap chosen, made between ticks, then the close as a
+    // vanilla client closes it; the slot is selected next tick. One batch a tick: if the clutch (earlier in the
+    // tick's end) clicked in this opening, the weapon waits for the aura's next pick.
     private static void endTick(Minecraft mc) {
-        int from = pendingFrom, to = pendingTo;
-        pendingFrom = pendingTo = -1;
         LocalPlayer p = mc.player;
-        if (from < 0 || p == null || mc.gameMode == null || !InventoryClicks.available(mc, p)) return;
+        if (p == null) { pendingFrom = -1; pendingStack = ItemStack.EMPTY; return; }
+        if (pendingFrom < 0 || !InventoryClicks.isOpenTick()) return;   // nothing to do, or the open tick is still to come
+        int from = pendingFrom;
+        ItemStack want = pendingStack;
+        pendingFrom = -1; pendingStack = ItemStack.EMPTY;
+        if (mc.gameMode == null || !InventoryClicks.available(mc, p) || !InventoryClicks.claimBatch()) return;
         AbstractContainerMenu menu = p.inventoryMenu;
-        mc.gameMode.handleContainerInput(menu.containerId, from, to, ContainerInput.SWAP, p);   // number-key swap
-        InventoryClicks.close(mc, p);
-        p.getInventory().setSelectedSlot(to);
+        int to = -1;
+        if (!want.isEmpty() && ItemStack.matches(menu.getSlot(from).getItem(), want)) {   // the weapon is still there
+            to = Hotbar.slotToDisplace(p.getInventory().getNonEquipmentItems()::get);   // chosen now, after anything moved since
+            mc.gameMode.handleContainerInput(menu.containerId, from, to, ContainerInput.SWAP, p);   // number-key swap
+        }
+        InventoryClicks.closeAsVanilla(mc, p);   // the opened inventory closes, clicked in or not
+        if (to >= 0) p.getInventory().setSelectedSlot(to);
     }
 
     /**
@@ -85,12 +96,13 @@ public final class WeaponSelect {
         }
 
         // The best is in the main inventory: number-key swap it into the hotbar through the player menu, at the
-        // end of this tick.
+        // end of the next tick, which plays the inventory's opening.
         AbstractContainerMenu menu = p.inventoryMenu;
         if (!InventoryClicks.available(mc, p)) return false;                         // a screen or container is open, or the cursor is busy
         if (menu.getSlot(bestIdx).getItem() != items.get(bestIdx)) return false;     // menu slot doesn't match the inventory index
         pendingFrom = bestIdx;
-        pendingTo = Hotbar.slotToDisplace(items::get);                  // empty slot first, else the largest stack
+        pendingStack = items.get(bestIdx);
+        InventoryClicks.requestOpen();
         return true;
     }
 

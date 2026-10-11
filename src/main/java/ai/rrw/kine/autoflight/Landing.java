@@ -126,6 +126,8 @@ public final class Landing {
             if (nTop < top - MAX_DROP) return false;
             BlockState s = level.getBlockState(new BlockPos(nx, nTop - 1, nz));
             if (Nav.DANGER.contains(s.getBlock()) || s.getFluidState().is(FluidTags.LAVA)) return false;
+            // fire, berry bushes, wither roses and powder snow don't block motion: one sits at the heightmap's height
+            if (Nav.DANGER.contains(level.getBlockState(new BlockPos(nx, nTop, nz)).getBlock())) return false;
         }
         return true;
     }

@@ -1,12 +1,15 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.util.Enchant;
 import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
@@ -18,6 +21,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
@@ -28,6 +32,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,16 +42,17 @@ import java.util.Map;
  * screen. It attacks mobs in reach with line of sight, as a vanilla client would: just before the game's
  * keybind step it turns toward the target by whole mouse counts, has the game pick what that rotation's
  * crosshair is on, and attacks through the game's own startAttack only if that is a target; the player's
- * move packet then carries that rotation, and once it has gone out the turn is undone by the same counts,
- * so your view never moves (the server sees a flick there and back). For that one tick your walking
- * follows the turned rotation, as it would for a vanilla client.
+ * move packet then carries that rotation, and once it has gone out the view is turned back by whole counts
+ * to where it was, so your view never moves (the server sees a flick there and back). For that one tick
+ * your walking follows the turned rotation, as it would for a vanilla client.
  *
  * <p>From the 26.1.2 combat code: a hit's damage is scaled by {@code 0.2 + 0.8*charge^2}, the charge
  * resets on every swing, and a struck mob takes full damage again only after 10 ticks. So the aura
  * picks a mode from the number of targets and the weapon:
  * <ul>
- *   <li><b>Sweep</b>: a Sweeping Edge sword on the ground against a cluster. Wait for a full charge and
- *       hit the mob with the most neighbours in its sweep box.</li>
+ *   <li><b>Sweep</b>: a Sweeping Edge sword on the ground against a cluster, when the hit will sweep (not a
+ *       sprint hit, not moving fast). Wait for a full charge and hit the mob with the most neighbours in its
+ *       sweep box.</li>
  *   <li><b>Spam</b>: a crowd of fresh targets. Swing every tick at the nearest mob not hit in the last
  *       10 ticks. Each hit does only the 20% floor, but many hits on many mobs beat waiting.</li>
  *   <li><b>Wait</b>: one or a few targets. Strike on a full charge, so every hit lands full damage.</li>
@@ -78,11 +84,18 @@ public final class KillAura {
     private static int tick = 0;
     private static int lastHurtTime = 0;   // player's hurtTime last tick, to spot a fresh incoming hit
     private static int lastWeaponTick = -100;   // last tick auto weapon selection ran
+    private static Item lastHeld = null;        // the main-hand item when last checked, to see a switch
 
     private static MouseTurn.Turn flick = MouseTurn.Turn.NONE;   // this tick's turn toward a target, undone after it is sent
+    private static int attacksSent = 0;   // attacks the game has sent (MultiPlayerGameModeMixin)
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);   // toggled from the settings menu (K)
+    }
+
+    /** The game sent an attack or a spear's stab (MultiPlayerGameModeMixin). */
+    public static void onAttackSent() {
+        attacksSent++;
     }
 
     private static void onTick(Minecraft mc) {
@@ -96,6 +109,18 @@ public final class KillAura {
     public static void beforeKeybinds(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (!Settings.killAura || p == null || mc.level == null || mc.gameMode == null || !p.isAlive() || p.isUsingItem()) return;
+        if (p.isSpectator()) return;   // a spectator's startAttack spectates the mob: the server moves the camera into it
+        // A new item in the main hand (auto weapon's, or yours): the game sends the slot change at the start of the
+        // tick after the switch, this one, and the server takes the item's attack damage and speed only when it next
+        // ticks the player, so a swing now would hit with the old item's. Swing from the next tick.
+        Item heldItem = p.getMainHandItem().getItem();
+        if (heldItem != lastHeld) { lastHeld = heldItem; return; }
+        // The game's startAttack refuses while missTime is up: after a click in the air, and after an inventory
+        // close (InventoryClicks.closeAsVanilla) until the tick after next, as for a vanilla client.
+        if (mc.missTime > 0) return;
+        // Your own right-click goes in this tick's keybind step, along whatever the crosshair is on then: with a
+        // swing's turn on, toward the aura's target (a pearl, a potion, a crossbow bolt). No swing in that tick.
+        if (useClicked(mc)) return;
 
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         Vec3 eye = p.getEyePosition();
@@ -121,38 +146,35 @@ public final class KillAura {
             boolean holdingWeapon = cur.is(h -> h.is(ItemTags.SWORDS)) || cur.is(h -> h.is(ItemTags.AXES));
             if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
                 lastWeaponTick = tick;
-                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched: swing next tick, once the server has it
+                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched: no swing until the server has it (lastHeld)
             }
         }
 
         ItemStack held = p.getMainHandItem();
+        // A spear stabs along the rotation the server already has (the last move packet's), not this tick's turn,
+        // so a flick would stab whatever is in your view: no swing with one.
+        if (held.has(DataComponents.PIERCING_WEAPON)) return;
         boolean sweepSword = held.is(h -> h.is(ItemTags.SWORDS)) && Enchant.level(held, Enchantments.SWEEPING_EDGE) > 0;
         float charge = p.getAttackStrengthScale(0.5f);
 
-        // Sweep: a Sweeping Edge sword, on the ground, fully charged, against a cluster.
-        if (sweepSword && p.onGround() && charge >= FULL_CHARGE) {
-            LivingEntity hub = bestSweepTarget(inReach);
+        // Sweep: a Sweeping Edge sword, fully charged, against a cluster, when the hit will sweep.
+        if (sweepSword && sweeps(p) && charge >= FULL_CHARGE) {
+            LivingEntity hub = bestSweepTarget(p, inReach);
             if (hub != null) {
                 LivingEntity hit = attack(mc, p, hub);
                 if (hit != null) {
-                    AABB box = hit.getBoundingBox().inflate(SWEEP_X, SWEEP_Y, SWEEP_Z);   // the sweep caught these too
-                    for (LivingEntity o : inReach) if (o != hit && box.intersects(o.getBoundingBox())) lastHit.put(o.getId(), tick);
+                    for (LivingEntity o : inReach) if (swept(p, hit, o)) lastHit.put(o.getId(), tick);   // the sweep caught these too
+                    return;
                 }
-                return;
+                // the crosshair couldn't be put on it: on to the others below
             }
         }
 
-        // Otherwise the nearest mob that takes full damage again (not hit in the last 10 ticks).
-        int fresh = 0;
-        LivingEntity nearest = null;
-        double best = Double.MAX_VALUE;
-        for (LivingEntity t : inReach) {
-            if (refractory(t)) continue;
-            fresh++;
-            double d = eye.distanceToSqr(t.getBoundingBox().getCenter());
-            if (d < best) { best = d; nearest = t; }
-        }
-        if (nearest == null) return;   // every target was hit too recently: a swing would do nothing
+        // Otherwise the mobs that take full damage again (not hit in the last 10 ticks), nearest first.
+        List<LivingEntity> fresh = new ArrayList<>();
+        for (LivingEntity t : inReach) if (!refractory(t)) fresh.add(t);
+        if (fresh.isEmpty()) return;   // every target was hit too recently: a swing would do nothing
+        fresh.sort(Comparator.comparingDouble(t -> eye.distanceToSqr(t.getBoundingBox().getCenter())));
 
         // Spam or wait: a spammed hit does the 20% floor, one per fresh mob, and a mob is fresh every 10
         // ticks, so spam deals about 0.02 * N * base per tick. Waiting deals one full hit per attack delay D
@@ -160,11 +182,29 @@ public final class KillAura {
         // sword, 3 for a netherite axe. Enchantments add little to the floor hit, so they raise this a bit.
         int spamMin = spamThreshold(p.getCurrentItemAttackStrengthDelay());
 
-        if (fresh >= spamMin) {
-            attack(mc, p, nearest);                          // crowd: swing every tick
+        if (fresh.size() >= spamMin) {
+            attackFirst(mc, p, fresh);                       // crowd: swing every tick
         } else if (charge >= FULL_CHARGE) {
-            attack(mc, p, nearest);                          // few: only on a full charge
+            attackFirst(mc, p, fresh);                       // few: only on a full charge
         }
+    }
+
+    /** Attack the first of these the crosshair can be put on: a block in the way of one (tall grass, a cobweb)
+     *  stops the game's pick, so the next is tried rather than none. Returns the entity hit, or null. */
+    private static LivingEntity attackFirst(Minecraft mc, LocalPlayer p, List<LivingEntity> targets) {
+        for (LivingEntity t : targets) {
+            LivingEntity hit = attack(mc, p, t);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    /** Whether the game's keybind step will use an item for you this tick (Minecraft.handleKeybinds): a right-click
+     *  waiting, or right-click held with the delay between uses run out. */
+    private static boolean useClicked(Minecraft mc) {
+        KeyMapping use = mc.options.keyUse;
+        return ((KeyMappingAccessor) use).kine$getClickCount() > 0
+            || use.isDown() && ((MinecraftInvoker) mc).kine$getRightClickDelay() == 0;
     }
 
     /** Fresh targets in reach from which spamming beats waiting, for a weapon with this attack delay
@@ -231,10 +271,11 @@ public final class KillAura {
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         if (mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() instanceof LivingEntity hit
             && isTarget(hit, p) && eyeToBox(eye, hit.getBoundingBox()) <= reach) {
-            // startAttack returns false after hitting an entity too; an attack resets the charge, so read that
-            float charge = p.getAttackStrengthScale(0.0f);
+            // startAttack returns false after hitting an entity too, and the charge can't tell (it is already 0 the
+            // tick after the held item changes), so see whether the game sent the attack
+            int sent = attacksSent;
             game.invokeStartAttack();
-            if (p.getAttackStrengthScale(0.0f) < charge) {
+            if (attacksSent != sent) {
                 flick = turn;   // the attack went out with this turn: keep it for this tick's move packet
                 lastHit.put(hit.getId(), tick);
                 return hit;
@@ -260,18 +301,33 @@ public final class KillAura {
         return new Vec3(Mth.clamp(eye.x, in.minX, in.maxX), Mth.clamp(eye.y, in.minY, in.maxY), Mth.clamp(eye.z, in.minZ, in.maxZ));
     }
 
-    /** The fresh target whose sweep box catches the most others (at least one, else null). */
-    private static LivingEntity bestSweepTarget(List<LivingEntity> targets) {
+    /** The fresh target whose sweep catches the most others (at least one, else null). */
+    private static LivingEntity bestSweepTarget(LocalPlayer p, List<LivingEntity> targets) {
         LivingEntity best = null;
         int bestN = 0;
         for (LivingEntity t : targets) {
             if (refractory(t)) continue;
-            AABB box = t.getBoundingBox().inflate(SWEEP_X, SWEEP_Y, SWEEP_Z);
             int n = 0;
-            for (LivingEntity o : targets) if (o != t && box.intersects(o.getBoundingBox())) n++;
+            for (LivingEntity o : targets) if (swept(p, t, o)) n++;
             if (n > bestN) { bestN = n; best = t; }
         }
         return best;
+    }
+
+    /** Whether a full-charge sword hit now sweeps (Player.isSweepAttack): on the ground, not sprinting (a sprint
+     *  hit knocks back instead), and moving less than 2.5 times your speed, which the server reads from your last
+     *  move. */
+    private static boolean sweeps(LocalPlayer p) {
+        double dx = p.getX() - p.xo, dz = p.getZ() - p.zo;
+        double max = p.getSpeed() * 2.5;
+        return p.onGround() && !p.isSprinting() && dx * dx + dz * dz < max * max;
+    }
+
+    /** Whether a sweep around a hit on `hit` reaches `o` (Player.doSweepAttack): o's box meets the hit mob's box
+     *  grown by the sweep inflation, and o is within 3 blocks of the player. */
+    private static boolean swept(LocalPlayer p, LivingEntity hit, LivingEntity o) {
+        return o != hit && hit.getBoundingBox().inflate(SWEEP_X, SWEEP_Y, SWEEP_Z).intersects(o.getBoundingBox())
+            && p.distanceToSqr(o) < 9.0;
     }
 
     /** Distance from the eye to the nearest point of a bounding box (how vanilla measures melee reach). */
@@ -282,9 +338,11 @@ public final class KillAura {
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
+    // Against outline shapes, as the game's crosshair pick (Entity.pick) is: tall grass, cobwebs and sugar cane
+    // have no collision but stop the pick.
     private static boolean lineOfSight(LocalPlayer p, Vec3 eye, LivingEntity t) {
         Vec3 aim = t.getBoundingBox().getCenter();
-        BlockHitResult hit = p.level().clip(new ClipContext(eye, aim, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+        BlockHitResult hit = p.level().clip(new ClipContext(eye, aim, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
         return hit.getType() == HitResult.Type.MISS
             || hit.getLocation().distanceToSqr(eye) >= aim.distanceToSqr(eye) - 1.0e-3;
     }

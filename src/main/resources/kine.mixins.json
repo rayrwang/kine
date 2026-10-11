@@ -10,6 +10,8 @@
 		"MinecraftInvoker",
 		"MinecraftTickMixin",
 		"KeyboardInputMixin",
+		"MultiPlayerGameModeMixin",
+		"KeyMappingAccessor",
 		"FireworkRocketAccessor"
 	],
 	"injectors": {

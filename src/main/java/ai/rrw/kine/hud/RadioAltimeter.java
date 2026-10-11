@@ -10,7 +10,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.shapes.VoxelShape;
+
+import java.util.function.IntToDoubleFunction;
 
 public class RadioAltimeter {
 
@@ -32,17 +37,27 @@ public class RadioAltimeter {
         if (p == null || mc.level == null) { agl = -1; return; }
 
         int x = p.getBlockX(), z = p.getBlockZ();
-        int start = (int) Math.floor(p.getY()) - 1;          // first block below feet
-        int bottom = mc.level.getMinY();                     // scan down to the world floor
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-
-        int groundY = Integer.MIN_VALUE;                     // sentinel: nothing found yet
-        for (int y = start; y >= bottom; y--) {
+        agl = agl(p.getY(), mc.level.getMinY(), y -> {
             pos.set(x, y, z);
-            if (!mc.level.getBlockState(pos).isAir()) { groundY = y; break; }
+            BlockState state = mc.level.getBlockState(pos);
+            if (state.isAir()) return Double.NaN;
+            VoxelShape shape = state.getCollisionShape(mc.level, pos);
+            return shape.isEmpty() ? 1.0 : shape.max(Direction.Axis.Y);
+        });
+    }
+
+    /** Whole blocks from the feet (at height y) down to the ground: the first block that isn't air, scanning from
+     *  the block the feet are in (a slab or farmland underfoot is that block) down to the world floor minY. The
+     *  ground's surface is the top of that block's collision shape (half way up a slab), or the whole block for
+     *  one without (water, grass). topAt gives a block's top above its base, NaN for air. -1 when the column is
+     *  empty (the void): unknown, hidden. */
+    static int agl(double y, int minY, IntToDoubleFunction topAt) {
+        for (int by = (int) Math.floor(y); by >= minY; by--) {
+            double top = topAt.applyAsDouble(by);
+            if (!Double.isNaN(top)) return Math.max(0, (int) Math.round(y - (by + top)));
         }
-        if (groundY == Integer.MIN_VALUE) { agl = -1; return; }   // no ground in the whole column (void): unknown, hidden
-        agl = Math.max(0, (int) Math.round(p.getY() - (groundY + 1)));   // surface is groundY+1
+        return -1;
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {

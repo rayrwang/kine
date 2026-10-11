@@ -31,15 +31,17 @@ public class ElytraGuard {
     // tuning, with generous margins
     private static final double DESCENT_RATE = 6.0;    // assumed safe descent rate (blocks/sec) when budgeting
     private static final double BASE_MARGIN  = 15.0;   // flat reserve (sec) for approach / mistakes
-    private static final int    GRACE_TICKS  = 100;    // 5 s for the pilot to take control before the failsafe fires
+    static final int            GRACE_TICKS  = 100;    // 5 s for the pilot to take control before the failsafe fires
     private static final int    ALMOST_BREAK_DUR = 3;  // at or under this, swap to any wing with more life
     private static final int    CRITICAL_DUR = 2;      // disconnect at once at or under this durability (about to break)
     private static final int    CHEST_SLOT   = 6;      // chestplate slot index in the player inventory menu
-    private static final int    SWAP_COOLDOWN = 40;    // ticks between successful auto-swaps
+    private static final int    SWAP_COOLDOWN = 40;    // ticks between auto-swap attempts
 
     private static boolean warning = false;   // read by the HUD
     private static int graceTicks = 0;
     private static int swapCooldown = 0;
+    private static boolean swapRequested = false;   // the next tick is the inventory's opening for a swap
+    private static double  swapMinSeconds;          // the flight time the swap's wing must clear (from the request)
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ElytraGuard::tick);
@@ -50,11 +52,21 @@ public class ElytraGuard {
     }
 
     private static void tick(Minecraft mc) {
+        if (mc.isPaused()) return;   // singleplayer paused: the elytra wears no further, so the grace waits too
+        // A swap was asked for last tick, so this is the tick the inventory "opened" in: its end is when the clicks go.
+        if (swapRequested) {
+            swapRequested = false;
+            if (InventoryClicks.isOpenTick() && finishSwap(mc)) {
+                graceTicks = 0;
+                return;   // fresh elytra equipped; re-evaluate next tick
+            }
+        }
         warning = false;
         if (!Settings.elytraDuraFailsafe) { graceTicks = 0; return; }
 
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || !p.isFallFlying()) { graceTicks = 0; swapCooldown = 0; return; }
+        // not gliding, or dead (a body keeps gliding until it lands): nothing to guard
+        if (p == null || mc.level == null || !p.isFallFlying() || p.isDeadOrDying()) { graceTicks = 0; swapCooldown = 0; return; }
 
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
         if (!chest.is(Items.ELYTRA) || !chest.isDamageableItem()) { graceTicks = 0; return; }
@@ -78,37 +90,73 @@ public class ElytraGuard {
                 double minTargetSeconds = (remaining <= ALMOST_BREAK_DUR)
                     ? secondsLeft + 0.001                                 // any wing with strictly more flight time
                     : reserve;                                            // must clear the warning
-                if (tryAutoSwap(mc, p, minTargetSeconds)) {
-                    swapCooldown = SWAP_COOLDOWN;
-                    graceTicks = 0;
-                    return;   // fresh elytra equipped; re-evaluate next tick
+                // a wing worth swapping to: the next tick plays the inventory's opening, and the swap goes at its end
+                if (mc.gameMode != null && InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick()
+                        && canTakeOff(p) && bestSpare(p.inventoryMenu, minTargetSeconds) >= 0) {
+                    InventoryClicks.requestOpen();
+                    swapRequested = true; swapMinSeconds = minTargetSeconds;
+                    return;   // the grace waits for the swap, as it did when the swap went at once
                 }
             }
         }
 
-        if (warning && Autopilot.isEngaged()) {
-            graceTicks++;
-            // CRITICAL_DUR counts raw points, since the wing breaks at the same point whatever its Unbreaking
-            if (graceTicks >= GRACE_TICKS || remaining <= CRITICAL_DUR) bailOut(mc);
-        } else {
-            graceTicks = 0;   // pilot took control, or we're safe again
-        }
+        graceTicks = graceAfter(graceTicks, warning, Autopilot.isEngaged(), Nav.landing());
+        // CRITICAL_DUR counts raw points, since the wing breaks at the same point whatever its Unbreaking. It
+        // still fires during the autopilot's own landing.
+        if (warning && Autopilot.isEngaged() && (graceTicks >= GRACE_TICKS || remaining <= CRITICAL_DUR)) bailOut(mc);
+    }
+
+    /** The grace count after a tick: it counts while the warning is up and the autopilot flies, and starts over
+     *  once the pilot takes control or the warning clears. During the autopilot's own landing it holds: the
+     *  autopilot is doing what the warning asks. */
+    static int graceAfter(int graceTicks, boolean warning, boolean engaged, boolean landing) {
+        if (!warning || !engaged) return 0;   // pilot took control, or we're safe again
+        return landing ? graceTicks : graceTicks + 1;
     }
 
     /**
      * Hot-swap to the spare elytra with the most flight time left (ElytraLife.flightSeconds), but only if
-     * that best wing clears {@code minTargetSeconds} of flight. The caller sets the bar: enough to clear
+     * that best wing clears {@code swapMinSeconds} of flight. The request sets the bar: enough to clear
      * the land-immediately warning in normal use, or just longer-lived than the current wing when almost
      * broken. Swaps with three container clicks (pick up the spare, swap it into the chest slot, put the old
      * wing in the spare's slot), only with no screen or container open and an empty cursor, so no item is
-     * stranded. It runs at the end of a tick, between ticks, where a vanilla client clicks in its inventory
-     * screen, and ends with the inventory close packet a vanilla client sends on closing it.
+     * stranded. As a vanilla client does it: the tick before plays the inventory's opening (every key up, no
+     * action), the clicks go at that tick's end, between ticks, and the close does what closing the inventory
+     * does. The close goes even when the swap is no longer wanted, since the inventory was "opened". Returns
+     * whether the spare is now worn: the clicks predict the server's result, and a swap that did nothing must not
+     * reset the failsafe's grace.
      */
-    private static boolean tryAutoSwap(Minecraft mc, LocalPlayer p, double minTargetSeconds) {
+    private static boolean finishSwap(Minecraft mc) {
+        LocalPlayer p = mc.player;
         MultiPlayerGameMode gm = mc.gameMode;
-        if (gm == null || !InventoryClicks.available(mc, p)) return false;   // a screen or container is open, or the cursor is busy
+        if (p == null || gm == null || !InventoryClicks.available(mc, p)) return false;   // a screen or container is open, or the cursor is busy
+        if (!InventoryClicks.claimBatch()) return false;   // another feature clicked in this opening (and closed it)
         AbstractContainerMenu menu = p.inventoryMenu;
+        boolean swapped = false;
+        int bestSlot = (p.isFallFlying() && canTakeOff(p)) ? bestSpare(menu, swapMinSeconds) : -1;
+        if (bestSlot >= 0) {
+            ItemStack spare = menu.slots.get(bestSlot).getItem().copy();
+            int cid = menu.containerId;
+            gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // cursor <- spare
+            gm.handleContainerInput(cid, CHEST_SLOT, 0, ContainerInput.PICKUP, p);  // chest <-> cursor (the cursor holds the worn wing)
+            gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // worn wing -> the emptied slot
+            swapCooldown = SWAP_COOLDOWN;   // taken or not, no retry at once
+            swapped = ItemStack.matches(p.getItemBySlot(EquipmentSlot.CHEST), spare);
+            if (swapped) Kine.LOGGER.info("Kine: auto-swapped to a fresher elytra ({} s of flight)", (int) ElytraLife.flightSeconds(spare));
+            else Kine.LOGGER.warn("Kine: elytra auto-swap did not take");
+        }
+        InventoryClicks.closeAsVanilla(mc, p);
+        return swapped;
+    }
 
+    // Whether the worn wing can come off: not with Curse of Binding outside creative (ArmorSlot.mayPickup), where
+    // the swap's clicks would do nothing.
+    private static boolean canTakeOff(LocalPlayer p) {
+        return p.inventoryMenu.slots.get(CHEST_SLOT).mayPickup(p);
+    }
+
+    // The inventory menu slot of the spare elytra with the most flight time left, if it clears minSeconds; else -1.
+    private static int bestSpare(AbstractContainerMenu menu, double minSeconds) {
         int bestSlot = -1;
         double bestSeconds = -1.0;
         for (int i = 9; i < menu.slots.size(); i++) {          // 9 to 45: main inventory, hotbar, offhand
@@ -118,15 +166,7 @@ public class ElytraGuard {
                 if (secs > bestSeconds) { bestSeconds = secs; bestSlot = i; }
             }
         }
-        if (bestSlot < 0 || bestSeconds < minTargetSeconds) return false;  // nothing with enough flight time left
-
-        int cid = menu.containerId;
-        gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // cursor <- spare
-        gm.handleContainerInput(cid, CHEST_SLOT, 0, ContainerInput.PICKUP, p);  // chest <-> cursor (the cursor holds the worn wing)
-        gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // worn wing -> the emptied slot
-        InventoryClicks.close(mc, p);
-        Kine.LOGGER.info("Kine: auto-swapped to a fresher elytra ({} s of flight)", (int) bestSeconds);
-        return true;
+        return (bestSlot >= 0 && bestSeconds >= minSeconds) ? bestSlot : -1;   // nothing with enough flight time left
     }
 
 
@@ -159,7 +199,7 @@ public class ElytraGuard {
         HudDraw.scaledText(g, font, "LOW DURABILITY",   W / 2, cy,            color, 2.0f, false);
         HudDraw.scaledText(g, font, "LAND IMMEDIATELY", W / 2, cy + big + 4,  color, 2.0f, false);
 
-        if (Autopilot.isEngaged()) {
+        if (Autopilot.isEngaged() && !Nav.landing()) {   // during its own landing the grace holds: no countdown
             int secs = Math.max(0, (GRACE_TICKS - graceTicks + 19) / 20);
             HudDraw.scaledText(g, font, "autopilot disconnect in " + KineTime.format(secs) + ", take control",
                 W / 2, cy + 2 * big + 14, HudColors.WHITE, 1.0f, false);

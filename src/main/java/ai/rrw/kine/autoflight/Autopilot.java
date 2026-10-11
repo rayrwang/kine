@@ -71,7 +71,9 @@ public class Autopilot {
     // control(), so it tracks at the frame rate instead of stepping 20 times a second.
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (p == null) { disengage(); resetWarn(); return; }   // left the world: never keep the lock
+        // left the world, or died (a body keeps gliding until it lands): never keep the lock or the dead-man
+        if (p == null || p.isDeadOrDying()) { disengage(); resetWarn(); return; }
+        if (mc.isPaused()) return;   // singleplayer paused: the world stands still, so the trip delay and the dead-man wait
         if (!Settings.autopilot) {
             // switched off in the settings: let go quietly, without the AUTOPILOT OFF warning and its disconnect
             while (toggleKey.consumeClick()) { }
@@ -106,7 +108,7 @@ public class Autopilot {
         if (!engaged) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || (!FlightDirector.isActive() && !Nav.landing())) return;   // tick() performs the actual disengage
+        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing())) return;   // tick() performs the actual disengage
 
         long now = System.nanoTime();
         if (lastFrameNanos == 0L) { lastFrameNanos = now; holdView(p); return; }
@@ -137,7 +139,8 @@ public class Autopilot {
         // whether terrain avoidance or the nav law is flying, since both fly toward that heading.
         boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
         if ((apLeft ^ apRight) && Nav.mode() != Nav.Mode.MANAGED) {   // don't fight the coordinate nav while it's flying
-            float base = Nav.hasHeading() ? Nav.selectedHeading()
+            // from the selected heading only in SELECTED: with nav off a remembered heading is hidden and stale
+            float base = (Nav.mode() == Nav.Mode.SELECTED && Nav.hasHeading()) ? Nav.selectedHeading()
                                           : (float) Compass.heading(cmdYaw);   // current heading, as compass
             Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
         }
@@ -152,10 +155,11 @@ public class Autopilot {
             if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
                 // imminent wall: hard bank toward the open side at elevated authority, the look slewed
                 // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
+                // The side is the one planned, not re-read from the heading 179 deg away, which a frame
+                // spanning two ticks can carry past the wrap to the blocked side.
                 float velYaw = (float) Motion.trackYaw(p, cmdYaw);
-                float off  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
-                float ed   = (float) FlightModel3D.EMERGENCY_DELTA;
-                float bankTarget = velYaw + Math.max(-ed, Math.min(ed, off));
+                float bankTarget = velYaw + (float) TurnController.bankOffset(TurnGuard.desiredHeading(), velYaw,
+                    TurnGuard.emergencySide(), FlightModel3D.EMERGENCY_DELTA);
                 float maxStep = EMERGENCY_FLICK_DPS * dt;
                 cmdYaw += Math.max(-maxStep, Math.min(maxStep, Mth.wrapDegrees(bankTarget - cmdYaw)));
             } else {

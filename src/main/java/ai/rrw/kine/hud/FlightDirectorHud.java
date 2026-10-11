@@ -57,7 +57,13 @@ public final class FlightDirectorHud {
         }
 
         if (!Settings.shows(Settings.displayFlightDirectors)) return;
-        if (Takeoff.usesWarningRow()) return;   // the takeoff has the row, and the law flies nothing until it hands over
+        float partial = delta.getGameTimeDeltaPartialTick(false);
+        if (Takeoff.active()) {
+            // the takeoff flies the view: the bars show its commanded attitude, as they show the autopilot's (RW)
+            bars(g, p, partial, cx, cy, maxOff, H, Takeoff.commandedPitch(), Mth.wrapDegrees(Takeoff.commandedYaw() - p.getYRot()));
+            return;
+        }
+        if (Takeoff.usesWarningRow()) return;   // the takeoff's prompt has the row, and the law flies nothing until it hands over
 
         boolean landing = Nav.landing();
         if (FlightDirector.isTooLow() && !landing && !Landing.valid()) {   // a landing spot on offer has the row instead
@@ -70,24 +76,31 @@ public final class FlightDirectorHud {
         if (!FlightDirector.isActive() && !landing) return;
 
         // Interpolate both inputs to the bar between ticks so it tracks at the framerate, not the 20 Hz
-        // tick rate. getViewXRot is the same smoothed pitch the camera uses; the commanded pitch is the
-        // landing descent while landing, otherwise the porpoise lerped from its previous-tick value.
-        float partial = delta.getGameTimeDeltaPartialTick(false);
+        // tick rate. The commanded pitch is the landing descent while landing, otherwise the porpoise lerped
+        // from its previous-tick value.
         float cmdNow  = landing ? Nav.landingPitch() : Mth.lerp(partial, FlightDirector.commandedPitchOld(), FlightDirector.commandedPitch());
-        float pitchNow = p.getViewXRot(partial);
-        float k = H * 0.35f / 30f;                     // 35% of the screen height per 30 degrees
-        int off = (int) Math.max(-maxOff, Math.min(maxOff, (cmdNow - pitchNow) * k));
-        int barY = cy + off;
 
         // The vertical bar is the heading director: it deflects toward the heading the autopilot steers to,
         // the terrain-avoidance heading while that is steering, else the nav heading (the autopilot's order).
-        int barX = cx;
         Float yawErr = null;
         if (Settings.terrainAvoidance && TurnGuard.steering()) {
             yawErr = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - p.getYRot());
         } else if (Nav.steering()) {
             yawErr = Mth.wrapDegrees(Nav.desiredYaw(p) - p.getYRot());
         }
+        bars(g, p, partial, cx, cy, maxOff, H, cmdNow, yawErr);
+    }
+
+    // The two bars for a commanded pitch and a heading error (null: no heading bar deflection). getViewXRot is
+    // the same smoothed pitch the camera uses.
+    private static void bars(GuiGraphicsExtractor g, LocalPlayer p, float partial, int cx, int cy, int maxOff, int H,
+                             float cmdNow, Float yawErr) {
+        float pitchNow = p.getViewXRot(partial);
+        float k = H * 0.35f / 30f;                     // 35% of the screen height per 30 degrees
+        int off = (int) Math.max(-maxOff, Math.min(maxOff, (cmdNow - pitchNow) * k));
+        int barY = cy + off;
+
+        int barX = cx;
         if (yawErr != null) {
             // compare against the per-tick heading, not the interpolated view yaw, so the offset doesn't sawtooth
             float rawOff = Math.max(-maxOff, Math.min(maxOff, yawErr * k));

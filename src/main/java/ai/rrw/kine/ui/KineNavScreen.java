@@ -74,15 +74,17 @@ public class KineNavScreen extends Screen {
 
         int dialTop = top + bh + 22;                       // just below the mode buttons
         int avail   = (this.height - 30) - dialTop;        // room down to above the Done button
-        dialR  = Math.max(40, Math.min(90, (avail - 50) / 2));   // leaves room for the HDG label and the "use current" button
+        // leaves room for the HDG label and the "use current" button, shrinking on short screens (GUI height
+        // 240 to 265) rather than pushing the button onto Done
+        dialR  = Math.max(20, Math.min(90, (avail - 50) / 2));
         dialCx = cx;
         dialCy = dialTop + dialR;
 
         int fw = 92, fh = 20, fy = top + bh + 40;
         xBox = new EditBox(this.font, cx - fw - 8, fy, fw, fh, Component.literal("X"));
         zBox = new EditBox(this.font, cx + 8,      fy, fw, fh, Component.literal("Z"));
-        xBox.setMaxLength(8);
-        zBox.setMaxLength(8);
+        xBox.setMaxLength(9);                  // the world border's -29999984
+        zBox.setMaxLength(9);
         if (Nav.hasTarget()) {                 // restore a destination already set; no default
             xBox.setValue(Integer.toString(Nav.targetX()));
             zBox.setValue(Integer.toString(Nav.targetZ()));
@@ -112,7 +114,10 @@ public class KineNavScreen extends Screen {
 
     private void applyManaged() {
         Integer x = parseInt(xBox.getValue()), z = parseInt(zBox.getValue());
-        if (x != null && z != null) Nav.setTarget(x, z);           // commits only once both coordinates parse
+        if (x == null || z == null) return;                        // commits only once both coordinates parse
+        // and only a change: setting the same target again would cancel a landing in progress
+        if (Nav.mode() == Nav.Mode.MANAGED && Nav.hasTarget() && x == Nav.targetX() && z == Nav.targetZ()) return;
+        Nav.setTarget(x, z);
     }
 
     /** Commit the typed altitude; an empty box or a lone "-" is ignored. Called on Enter, when the box

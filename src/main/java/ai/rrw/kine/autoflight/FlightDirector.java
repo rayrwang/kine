@@ -48,6 +48,10 @@ public class FlightDirector {
     }
 
     private static void tick(Minecraft mc) {
+        // singleplayer paused: the aircraft is frozen, so the law's cycle and the planner's cadence and stuck
+        // counter wait too. Run on the frozen state, the law would resume out of phase, and the stuck counter
+        // would hand control back during the pause.
+        if (mc.isPaused()) return;
         LAW.startTick();
         LocalPlayer p = mc.player;
         // Once, when there first is a player: set the starting cruise from the initial facing.

@@ -25,14 +25,27 @@ public final class TurnController {
     private boolean emergency = false;
     private int stuckTicks = 0;          // ticks within one turn-around that hasn't come around yet (boxed)
     private int emergencyCount = 0;      // turn-arounds since last getting clear; trips the endless-wall hand-off
-    private double emergencyRefDist = 0; // dest distance when the current turn-around streak began
+    private double emergencyRefX = 0, emergencyRefZ = 0;   // where the current turn-around streak began
     private double escapeHeading = 0.0;
+    private int escapeSide = 1;          // the side the planner chose for the turn-around (+1 or -1 in yaw), kept with it
     private double committedFloor = Double.NaN;   // trough floor latched with the committed leg (NaN until first plan)
 
     public int action() { return action; }
     /** Trough altitude the live law should fly to this tick: the cruise floor, or higher to climb over
      *  rising terrain. Held across a committed leg, like the heading. */
     public double floor() { return committedFloor; }
+    /** The side of the emergency bank, fixed when it was planned: +1 turns toward increasing yaw, -1 the other way. */
+    public int emergencySide() { return escapeSide; }
+
+    /** The emergency bank's look offset from the track (deg), toward the escape heading on the planned side and at
+     *  most maxDelta. The escape heading lies 179 deg off the course when planned, so once the track turns a degree
+     *  or two further (a frame that spans two ticks) the wrapped offset points the other way, toward the wall; an
+     *  offset more than 90 deg off the planned side is that wrap, and is turned back to the planned side. */
+    static double bankOffset(double escapeHeading, double velYaw, int side, double maxDelta) {
+        double off = FlightModel3D.wrap180(escapeHeading - velYaw);
+        if (off * side < -90.0) off += side * 360.0;
+        return Math.max(-maxDelta, Math.min(maxDelta, off));
+    }
 
     /** Decide the heading to fly this tick. `live` is the current seeded aircraft state. */
     public double update(FlightModel3D.State live, double destX, double destZ, Terrain2D terrain) {
@@ -63,9 +76,12 @@ public final class TurnController {
             TurnPlanner.Plan pl = TurnPlanner.plan(live, destBearing, destX, destZ, terrain);
             committedFloor = pl.floor;               // adopt the planner's trough floor (cruise, or raised to climb over)
             if (pl.action == TurnPlanner.EMERGENCY) {
-                if (emergencyCount == 0)                     // start of a streak: remember how far the dest was
-                    emergencyRefDist = Math.hypot(destX - live.x, destZ - live.z);
+                if (emergencyCount == 0) {                   // start of a streak: remember where it began
+                    emergencyRefX = live.x; emergencyRefZ = live.z;
+                }
                 emergency = true; escapeHeading = pl.heading; action = TurnPlanner.EMERGENCY; stuckTicks = 0;
+                // the planner put the escape heading 179 deg to the open side of this course: keep that side
+                escapeSide = FlightModel3D.wrap180(pl.heading - FlightModel3D.velYaw(live.vx, live.vz)) < 0 ? -1 : 1;
                 if (++emergencyCount >= MAX_EMERGENCIES) {   // keeps reversing against one wall: endless, hand off
                     emergency = false; emergencyCount = 0; action = TurnPlanner.DISENGAGE;
                 }
@@ -76,9 +92,12 @@ public final class TurnController {
             } else {
                 committedHeading = destBearing; action = TurnPlanner.STRAIGHT;
                 // reset the streak only on real progress past the wall, not because the path is briefly
-                // clear while still approaching it
+                // clear while still approaching it. Progress is toward this tick's destination from where the
+                // streak began: with a selected heading or no nav the destination is a point kept 3000 blocks
+                // ahead, so the distance to it never falls, but the distance gained from the start still grows.
                 if (emergencyCount > 0
-                    && Math.hypot(destX - live.x, destZ - live.z) < emergencyRefDist - PROGRESS_RESET)
+                    && Math.hypot(destX - live.x, destZ - live.z)
+                       < Math.hypot(destX - emergencyRefX, destZ - emergencyRefZ) - PROGRESS_RESET)
                     emergencyCount = 0;
             }
         }

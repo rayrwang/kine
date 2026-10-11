@@ -21,6 +21,8 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.LiquidBlockContainer;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -65,6 +67,7 @@ public final class WaterClutch {
     private static final double GRAVITY       = 0.08;  // per-tick gravity
     private static final double V_DRAG        = 0.98;  // per-tick vertical drag
     private static final float  PILOT_EPS     = 0.4f;  // a view change (deg) we didn't make: the pilot is looking around
+    private static final double EDGE_IN       = 0.1;   // aim at least this far inside the edge of the surface under the hitbox
     private static final Random RNG = new Random();
 
     /** Where the fall lands: a point on the surface, and in how many ticks (0: during this tick's move). */
@@ -98,6 +101,11 @@ public final class WaterClutch {
         return new Input(keys.forward(), keys.backward(), keys.left(), keys.right(), keys.jump(), true, keys.sprint());
     }
 
+    /** A tick its sneak key wasn't pressed (a screen is open): the server must have the sneak again before a use. */
+    public static void sneakNotSent() {
+        sneakTicks = 0;
+    }
+
     // End of tick: arm or disarm, bring the bucket to the hotbar, turn the view toward the landing, and ease it
     // back after a clutch.
     private static void tick(Minecraft mc) {
@@ -128,8 +136,13 @@ public final class WaterClutch {
 
     // A fall that will hurt: falling (not gliding, swimming or in lava), and either already past the safe fall
     // distance or about to land where the total fall would pass it, or with no ground in sight (a long drop).
-    // Judged ahead of time, so the view has the whole fall to turn.
+    // Judged ahead of time, so the view has the whole fall to turn. A player who may fly (creative) takes no fall
+    // damage (Player.causeFallDamage), and there the bucket stays full, so the water would be left behind.
     private static boolean dangerousFall(Minecraft mc, LocalPlayer p) {
+        // survival only (RW): creative and spectator take no fall damage, and in adventure a bucket places only
+        // on blocks its can_place_on lists (Player.mayUseItemAt)
+        if (mc.gameMode == null || mc.gameMode.getPlayerMode() != GameType.SURVIVAL) return false;
+        if (p.getAbilities().mayfly) return false;
         if (p.isFallFlying() || p.onGround() || p.isInWater() || p.isInLava() || p.getDeltaMovement().y() >= 0) return false;
         double hurt = p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + HURT_MARGIN;
         if (p.fallDistance >= hurt) return true;
@@ -158,6 +171,18 @@ public final class WaterClutch {
             return new float[]{ p.getYRot(), 90f };
         Vec3 d = target.subtract(eye);
         return new float[]{ (float) Math.toDegrees(Math.atan2(-d.x, d.z)), (float) Math.toDegrees(-Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z))) };
+    }
+
+    // The block a full bucket fills from the current rotation, as BucketItem.use picks it: its ray (Item.getPlayerPOVHitResult:
+    // block outlines, fluids ignored, out to the interaction range) hits a block, and the water goes into that block
+    // if it can hold water, else into the one in front of the face hit. Null if the ray hits nothing.
+    private static BlockPos fillTarget(LocalPlayer p) {
+        Vec3 eye = p.getEyePosition();
+        BlockHitResult h = p.level().clip(new ClipContext(eye, eye.add(p.getLookAngle().scale(p.blockInteractionRange())),
+            ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+        if (h.getType() != HitResult.Type.BLOCK) return null;
+        BlockPos pos = h.getBlockPos();
+        return p.level().getBlockState(pos).getBlock() instanceof LiquidBlockContainer ? pos : pos.relative(h.getDirection());
     }
 
     // Whether a ray from the eye meets the target: the given block, or else a top face at the target's height.
@@ -209,11 +234,15 @@ public final class WaterClutch {
 
         float[] look = lookFor(mc, p, imp.point(), null, ClipContext.Fluid.NONE);   // the bucket's own ray ignores fluids when full
         MouseTurn.toward(p, look[0], look[1]);   // the last small correction: the view has been turning this way all fall
+        BlockPos placed = fillTarget(p);   // read before the water is there
         MinecraftInvoker game = (MinecraftInvoker) mc;
         game.invokePick(1.0F);
         game.invokeStartUseItem();   // the bucket raycasts along this rotation (the packet carries it) -> source at the feet block
         if (p.getItemInHand(clutchHand).is(Items.BUCKET)) {
-            sourceSpot = new Vec3(imp.point().x(), imp.point().y() + 0.5, imp.point().z());   // the source sits in the block just above the surface
+            // the scoop goes for the block the bucket filled, not the block under the aim point: looking straight
+            // down from beside a block edge, the two differ
+            sourceSpot = placed != null ? Vec3.atCenterOf(placed)
+                       : new Vec3(imp.point().x(), imp.point().y() + 0.5, imp.point().z());   // the source sits in the block just above the surface
             active = true;
             ticks = 0;
         } else {
@@ -309,8 +338,8 @@ public final class WaterClutch {
                         if (top > botNow + 0.001 || top < botNext - 0.001) continue;   // outside this tick's descent window
                         if (top > bestTop) {
                             bestTop = top;
-                            aimX = Mth.clamp(cx, Math.max(fpMinX, sxMin), Math.min(fpMaxX, sxMax));  // aim where the footprint sits on this shape
-                            aimZ = Mth.clamp(cz, Math.max(fpMinZ, szMin), Math.min(fpMaxZ, szMax));
+                            aimX = aimInside(cx, Math.max(fpMinX, sxMin), Math.min(fpMaxX, sxMax));  // aim where the footprint sits on this shape
+                            aimZ = aimInside(cz, Math.max(fpMinZ, szMin), Math.min(fpMaxZ, szMax));
                         }
                     }
                 }
@@ -321,6 +350,15 @@ public final class WaterClutch {
             vx *= H_DRAG; vz *= H_DRAG; vy = (vy - GRAVITY) * V_DRAG;
         }
         return null;
+    }
+
+    /** Where to aim on one axis: the point of [lo, hi] (the part of the surface under the hitbox) nearest c, kept
+     *  EDGE_IN inside its ends (or at its middle if it is narrower). Aimed at the very edge, the turn's rounding to
+     *  whole counts puts the bucket's ray just past it about half the time, onto the side face, and the water goes
+     *  in beside and below the landing. */
+    static double aimInside(double c, double lo, double hi) {
+        double in = Math.min(EDGE_IN, (hi - lo) / 2);
+        return Mth.clamp(c, lo + in, hi - in);
     }
 
     /** At the end of the tick the inventory "opened" in: swap the main-inventory water bucket into the hotbar,
@@ -335,6 +373,7 @@ public final class WaterClutch {
             if (menu.slots.get(i).getItem().is(Items.WATER_BUCKET)) { src = i; break; }
         }
         if (src < 0) return;                                     // no bucket in the main inventory
+        if (!InventoryClicks.claimBatch()) return;               // another feature clicked in this opening
 
         // hotbar slot: empty first, else the largest stack (the hotbar is inventory menu slots 36 to 44)
         int target = Hotbar.slotToDisplace(hb -> menu.slots.get(36 + hb).getItem());

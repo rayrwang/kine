@@ -81,4 +81,20 @@ class TurnPlannerTest {
         }
         assertTrue(handedBack);
     }
+
+    @Test
+    void headingsThatCantSeeFarEnoughDontClimbTheFloorLadder() {
+        // a tall wall 30 blocks ahead on a narrow loaded strip, nothing loaded either side (the render edge): every
+        // turn leaves the strip and can't see far enough at any floor, so each heading is tried at one floor only
+        int[] samples = { 0 };
+        Terrain2D strip = (x, z) -> {
+            samples[0]++;
+            if (Math.abs(x) > 4) return Double.NaN;
+            return (z >= 30 && z <= 60) ? 900 : 64;
+        };
+        var p = TurnPlanner.plan(seed(250), 0.0, 0, 3000, strip);
+        assertEquals(TurnPlanner.EMERGENCY, p.action, "nothing clears and the wall is inside the turn radius");
+        // about 19,000 samples (one rollout per heading); climbing every heading's ladder took about 273,000
+        assertTrue(samples[0] < 40_000, "terrain sampled " + samples[0] + " times");
+    }
 }

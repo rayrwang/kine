@@ -44,6 +44,15 @@ public final class TakeoffModel {
         v[2] += lz * 0.1 + (lz * 1.5 - v[2]) * 0.5;
     }
 
+    /**
+     * Is the look up far enough to jump: within 0.5 degrees of straight up, or within one mouse count
+     * (`countDeg` degrees) of it. Turning by whole counts can stop up to a count short of -90, which at a
+     * sensitivity above about 183% is more than 0.5 degrees.
+     */
+    public static boolean lookedUp(double pitch, double countDeg) {
+        return pitch <= -90.0 + Math.max(0.5, countDeg + 1.0e-3);
+    }
+
     /** Move a pitch toward a target by at most `rate`. */
     public static double toward(double pitch, double target, double rate) {
         return pitch + Math.max(-rate, Math.min(rate, target - pitch));
@@ -85,9 +94,20 @@ public final class TakeoffModel {
         return false;
     }
 
-    /** A rolled-out takeoff: positions per tick from the start, the rockets it fired, and whether it reached the
-     *  cruise (else it ran out of rockets or of time). */
-    public record Plan(double[] xs, double[] ys, double[] zs, int count, int rockets, boolean reachesCruise) {}
+    /** A rolled-out takeoff: positions per tick from the start, the rockets it fired, whether it reached the
+     *  cruise (else it ran out of rockets or of time), and the ticks from the start to the hand-over (or to where
+     *  it gave up). */
+    public record Plan(double[] xs, double[] ys, double[] zs, int count, int rockets, boolean reachesCruise, int ticks) {}
+
+    /**
+     * Can an elytra with `flightSeconds` of gliding left fly a takeoff of `climbTicks` and still have
+     * `reserveSeconds` at the hand-over (the durability failsafe's reserve for gliding down from the cruise)?
+     * Below that the failsafe would disconnect the pilot soon after the hand-over, or the elytra would give out
+     * in the climb.
+     */
+    public static boolean elytraLasts(double flightSeconds, int climbTicks, double reserveSeconds) {
+        return flightSeconds >= climbTicks / 20.0 + reserveSeconds;
+    }
 
     /** The state of a takeoff in flight: position, velocity (blocks per tick), pitch, whether the lean has begun,
      *  the ground it left, ticks left in the rocket burning now (0 for none) and ticks until a rocket already
@@ -117,7 +137,7 @@ public final class TakeoffModel {
         x += v[0]; y += v[1]; z += v[2];
         if (n < maxPoints) { xs[n] = x; ys[n] = y; zs[n] = z; n++; }
         Flight f = new Flight(x, y, z, v[0], v[1], v[2], -90.0, false, ground, 0, -1);
-        return fly(f, true, yaw, target, burn, terrain, top, xs, ys, zs, n);
+        return fly(f, true, yaw, target, burn, terrain, top, xs, ys, zs, n, 3);
     }
 
     /**
@@ -131,16 +151,17 @@ public final class TakeoffModel {
                            double top, int maxPoints) {
         double[] xs = new double[maxPoints], ys = new double[maxPoints], zs = new double[maxPoints];
         xs[0] = f.x(); ys[0] = f.y(); zs[0] = f.z();
-        return fly(f, fireNow, yaw, target, burn, terrain, top, xs, ys, zs, 1);
+        return fly(f, fireNow, yaw, target, burn, terrain, top, xs, ys, zs, 1, 0);
     }
 
+    // `ticksBefore`: ticks already flown before `f` (the jump and the opening, from the ground)
     private static Plan fly(Flight f, boolean fire, double yaw, double target, int burn, Terrain2D terrain,
-                            double top, double[] xs, double[] ys, double[] zs, int n) {
+                            double top, double[] xs, double[] ys, double[] zs, int n, int ticksBefore) {
         int maxPoints = xs.length;
         double x = f.x(), y = f.y(), z = f.z(), pitch = f.pitch();
         double[] v = { f.vx(), f.vy(), f.vz() };
         boolean lean = f.lean();
-        int burnLeft = f.burnLeft(), wait = f.untilPush(), rockets = 0, ticks = 0;
+        int burnLeft = f.burnLeft(), wait = f.untilPush(), rockets = 0, ticks = 0, flown = 0;
         boolean cruise = false;
         while (rockets <= MAX_ROCKETS && ticks++ < 4000) {
             if (fire) { rockets++; fire = false; wait = LATENCY - 1; }
@@ -148,6 +169,7 @@ public final class TakeoffModel {
             if (lean) pitch = toward(pitch, CLIMB_PITCH, PITCH_RATE);
             FlightModel3D.physicsStep(yaw, pitch, v);
             x += v[0]; y += v[1]; z += v[2];
+            flown++;
             if (wait > 0) wait--;
             else if (wait == 0) { wait = -1; burnLeft = burn; }
             boolean burntOut = false;
@@ -170,6 +192,6 @@ public final class TakeoffModel {
                 xs[n] = s.x; ys[n] = s.y; zs[n] = s.z; n++;
             }
         }
-        return new Plan(xs, ys, zs, n, rockets, cruise);
+        return new Plan(xs, ys, zs, n, rockets, cruise, ticksBefore + flown);
     }
 }

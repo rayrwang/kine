@@ -2,6 +2,8 @@ package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.phys.AABB;
@@ -12,7 +14,8 @@ import net.minecraft.world.phys.Vec3;
  * sneak edge stop (Player.maybeBackOffFromEdge) holds you and the server sees an ordinary sneak. It presses
  * sneak only in a tick whose step would leave you over such a drop, and lets go once you turn away. Jumping
  * gets past it, as before: it never sneaks while you jump or are off the ground. Any drop of more than 3
- * blocks counts, water and hay included.
+ * blocks counts, water and hay included, except a shaft you can climb down: a ladder, vine or other climbable
+ * block in the column you step into catches you (LivingEntity.onClimbable).
  */
 public final class FallPrevention {
     private FallPrevention() {}
@@ -26,7 +29,7 @@ public final class FallPrevention {
         if (!p.onGround() || p.getAbilities().flying || p.isFallFlying() || p.isPassenger() || p.isInWater()) return keys;
         Vec3 step = predictedStep(p, keys);
         if (step.horizontalDistanceSqr() < 1.0e-8) return keys;
-        boolean over = canFallAtLeast(p, step.x, step.z, DROP) || canFallAtLeast(p, step.x * MARGIN, step.z * MARGIN, DROP);
+        boolean over = drop(p, step.x, step.z) || drop(p, step.x * MARGIN, step.z * MARGIN);
         if (!over) return keys;
         return new Input(keys.forward(), keys.backward(), keys.left(), keys.right(), keys.jump(), true, keys.sprint());
     }
@@ -44,6 +47,22 @@ public final class FallPrevention {
         double x = left / len * speed, z = fwd / len * speed;
         float sin = Mth.sin(p.getYRot() * (float) (Math.PI / 180.0)), cos = Mth.cos(p.getYRot() * (float) (Math.PI / 180.0));
         return new Vec3(v.x + x * cos - z * sin, 0, v.z + z * cos + x * sin);
+    }
+
+    // A dangerous drop under the box moved by (dx, dz): nothing to stand on within DROP below, and no climbable
+    // block right under its centre to catch the fall.
+    private static boolean drop(LocalPlayer p, double dx, double dz) {
+        return canFallAtLeast(p, dx, dz, DROP) && !climbableAtFeet(p, p.getX() + dx, p.getZ() + dz);
+    }
+
+    // A ladder, vine or other climbable block in the column at (x, z), at the feet or the block below: the feet are
+    // in it within the first tick of falling, which holds the player there. Deeper, a step off an open ledge could
+    // drift out of its column first.
+    private static boolean climbableAtFeet(LocalPlayer p, double x, double z) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int bx = Mth.floor(x), by = Mth.floor(p.getY()), bz = Mth.floor(z);
+        return p.level().getBlockState(pos.set(bx, by, bz)).is(BlockTags.CLIMBABLE)
+            || p.level().getBlockState(pos.set(bx, by - 1, bz)).is(BlockTags.CLIMBABLE);
     }
 
     // Player.canFallAtLeast: nothing to stand on within minHeight below the box moved by (dx, dz)

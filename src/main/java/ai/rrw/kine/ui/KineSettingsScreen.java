@@ -91,7 +91,7 @@ public class KineSettingsScreen extends Screen {
         + "it. Water or hay below still counts as a drop.";
     private static final String DESC_CLUTCH =
         "When you fall far enough to get hurt, sneaks, places water where you will land and scoops it back "
-        + "up. Uses a bucket from your hotbar or offhand, or moves one up from your inventory.";
+        + "up. Uses a bucket from your hotbar or offhand, or moves one up from your inventory. Survival mode only.";
     private static final String DESC_AFK =
         "Logs you out if you take damage after fifteen seconds with no input. Autopilot camera motion "
         + "doesn't count as input; an open menu does while the game window is in front.";

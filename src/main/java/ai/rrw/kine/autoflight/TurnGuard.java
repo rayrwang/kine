@@ -6,7 +6,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
 
-import java.util.HashMap;
+import java.util.Arrays;
 
 /**
  * Game-side bridge for terrain avoidance. Once per tick while engaged and gliding with avoidance on,
@@ -34,6 +34,8 @@ public final class TurnGuard {
     /** Trough altitude the live law should fly to, raised by the planner to climb over rising terrain. */
     public static double  desiredFloor()   { return desiredFloor; }
     public static int     action()         { return action; }
+    /** The emergency bank's side, fixed when planned (TurnController.emergencySide). */
+    public static int     emergencySide()  { return ctl.emergencySide(); }
     /** This tick's destination: the nav target, or a far point along the selected heading or the course. */
     public static double  destX()          { return destX; }
     public static double  destZ()          { return destZ; }
@@ -108,17 +110,60 @@ public final class TurnGuard {
 
     // lazily sampled surface heightmap, cached per call; NaN where unloaded (the planner treats it as unseen)
     static Terrain2D terrainOf(Level level) {
-        final HashMap<Long, Double> cache = new HashMap<>();
-        return (x, z) -> {
+        return cached((x, z) -> {
+            int bx = (int) x, bz = (int) z;
+            return level.hasChunkAt(bx, bz)
+                 ? level.getHeight(Heightmap.Types.MOTION_BLOCKING, bx, bz)
+                 : Double.NaN;
+        });
+    }
+
+    /** `column`, asked once per block column (with the column's whole-block x and z) and remembered. */
+    static Terrain2D cached(Terrain2D column) { return new ColumnCache(column); }
+
+    // The cache is primitive arrays with open addressing: a boxed-in plan samples tens of thousands of columns,
+    // and a boxed map made an entry, a key and a value object for each.
+    private static final class ColumnCache implements Terrain2D {
+        private static final long EMPTY = Long.MIN_VALUE;   // a free slot: no world column has this key (x = -2^31)
+        private final Terrain2D column;
+        private long[] keys = emptyKeys(1024);
+        private double[] heights = new double[1024];
+        private int size = 0;
+
+        ColumnCache(Terrain2D column) { this.column = column; }
+
+        @Override public double heightAt(double x, double z) {
             int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
             long key = (((long) bx) << 32) ^ (bz & 0xffffffffL);
-            Double c = cache.get(key);
-            if (c != null) return c;
-            double h = level.hasChunkAt(bx, bz)
-                     ? level.getHeight(Heightmap.Types.MOTION_BLOCKING, bx, bz)
-                     : Double.NaN;
-            cache.put(key, h);
+            if (key == EMPTY) return column.heightAt(bx, bz);   // only at x = -2^31, never in a world
+            int mask = keys.length - 1;
+            int i = slot(key, mask);
+            while (keys[i] != EMPTY) {
+                if (keys[i] == key) return heights[i];
+                i = (i + 1) & mask;
+            }
+            double h = column.heightAt(bx, bz);
+            keys[i] = key; heights[i] = h;
+            if (++size * 2 > keys.length) grow();   // at most half full, so probes stay short
             return h;
-        };
+        }
+
+        private void grow() {
+            long[] oldKeys = keys; double[] oldHeights = heights;
+            keys = emptyKeys(oldKeys.length * 2); heights = new double[oldKeys.length * 2];
+            int mask = keys.length - 1;
+            for (int j = 0; j < oldKeys.length; j++) {
+                if (oldKeys[j] == EMPTY) continue;
+                int i = slot(oldKeys[j], mask);
+                while (keys[i] != EMPTY) i = (i + 1) & mask;
+                keys[i] = oldKeys[j]; heights[i] = oldHeights[j];
+            }
+        }
+
+        private static long[] emptyKeys(int n) { long[] k = new long[n]; Arrays.fill(k, EMPTY); return k; }
+        private static int slot(long key, int mask) {
+            long h = key * 0x9E3779B97F4A7C15L;   // spread neighbouring columns over the table
+            return (int) (h ^ (h >>> 32)) & mask;
+        }
     }
 }

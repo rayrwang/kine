@@ -32,6 +32,7 @@ import net.minecraft.world.item.Items;
 public class RangeEndurance {
 
     private static final double CONTINGENCY = 0.05;
+    private static final String UNLIMITED = "\u221E";   // the infinity sign, in the game's default font (nonlatin_european.png)
 
 
     // Ground speed (m/s) sampled each tick while gliding. The mean is taken over whole porpoise cycles so
@@ -43,7 +44,7 @@ public class RangeEndurance {
     private static int speedIdx = 0, speedCount = 0;
 
     private static double enduranceSec = 0;
-    private static boolean show = false;
+    private static boolean show = false;                // an estimate exists (an elytra is worn), whether or not it is displayed
     private static final double AGL_TC = 12.0;          // s; smooths the porpoise out of the reserve, so range and END don't pulse
     private static double smoothedAgl = Double.NaN;     // low-passed height-above-ground feeding the readout reserve
     private static final double RANGE_TC = 12.0;        // s; time constant of the displayed range's complementary filter
@@ -57,9 +58,12 @@ public class RangeEndurance {
             RangeEndurance::render);
     }
 
+    // Runs whether or not the readout is displayed: the nav range warning and the ETA use the estimate too.
     private static void tick(Minecraft mc) {
+        // A paused game (singleplayer, Kine's own screens included) ticks no entities: the speed would be one
+        // frozen sample over and over, and no flight is used up. Keep the estimate as it was.
+        if (mc.isPaused()) return;
         show = false;
-        if (!Settings.shows(Settings.displayRangeEndurance)) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
 
@@ -77,39 +81,57 @@ public class RangeEndurance {
             rangeShown = Double.NaN;
         }
 
-        double flightSeconds = ElytraLife.flightSeconds(chest);
-        for (ItemStack s : p.getInventory().getNonEquipmentItems()) flightSeconds += ElytraLife.flightSeconds(s);
-        flightSeconds += ElytraLife.flightSeconds(p.getItemBySlot(EquipmentSlot.OFFHAND));
+        double flightSeconds = ElytraLife.flightSeconds(chest);   // infinite for a worn wing that can't take damage
+        for (ItemStack s : p.getInventory().getNonEquipmentItems()) flightSeconds += spareSeconds(s);
+        flightSeconds += spareSeconds(p.getItemBySlot(EquipmentSlot.OFFHAND));
 
         // The reserve plans a glide down from your cruising height, and the porpoise isn't a change in that,
         // so it uses a smoothed height. (The durability failsafe uses the instantaneous height.)
-        int aglNow = Math.max(0, RadioAltimeter.agl());
+        double aglNow = reserveHeight(RadioAltimeter.agl(), p.getY(), mc.level.getMinY());
         smoothedAgl = Double.isNaN(smoothedAgl) ? aglNow : Smoothing.toward(smoothedAgl, aglNow, 0.05, AGL_TC);
         double reserve = ElytraGuard.landingReserveSeconds(smoothedAgl);
         enduranceSec = Math.max(0, flightSeconds * (1.0 - CONTINGENCY) - reserve);
         show = true;
 
-        // Complementary filter, like the ETA's: count the range down at the rate flying uses it up, then
-        // drift toward endurance x speed. The countdown carries the steady decline without lag, so unlike
-        // a plain low-pass it doesn't overstate the range; the drift irons out the durability steps.
-        double v = speedEstimate();
+        rangeShown = nextRange(rangeShown, enduranceSec, speedEstimate(), p.isFallFlying());
+    }
+
+    // Complementary filter, like the ETA's: count the range down at the rate flying uses it up, then
+    // drift toward endurance x speed. The countdown carries the steady decline without lag, so unlike
+    // a plain low-pass it doesn't overstate the range; the drift irons out the durability steps.
+    // Unlimited endurance (a worn wing that can't take damage) is unlimited range.
+    static double nextRange(double rangeShown, double enduranceSec, double v, boolean gliding) {
+        if (Double.isInfinite(enduranceSec)) return Double.POSITIVE_INFINITY;
         double rangeRaw = enduranceSec * v;
-        if (Double.isNaN(rangeShown) || Math.abs(rangeRaw - rangeShown) > Math.max(600.0, rangeShown * 0.4)) {
-            rangeShown = rangeRaw;                                              // first sample, or a big jump (an elytra swap)
-        } else {
-            if (p.isFallFlying()) rangeShown -= v * (1.0 - CONTINGENCY) * 0.05; // range used up this 0.05 s tick
-            rangeShown = Math.max(0, Smoothing.toward(rangeShown, rangeRaw, 0.05, RANGE_TC));
+        if (Double.isNaN(rangeShown) || Double.isInfinite(rangeShown)
+                || Math.abs(rangeRaw - rangeShown) > Math.max(600.0, rangeShown * 0.4)) {
+            return rangeRaw;                                                    // first sample, or a big jump (an elytra swap)
         }
+        if (gliding) rangeShown -= v * (1.0 - CONTINGENCY) * 0.05;             // range used up this 0.05 s tick
+        return Math.max(0, Smoothing.toward(rangeShown, rangeRaw, 0.05, RANGE_TC));
+    }
+
+    // A spare counts only if the failsafe's swap can take it, and ElytraGuard.tryAutoSwap skips wings that can't
+    // take damage: an Unbreakable spare adds nothing (as before), so the readout still reaches zero when the
+    // failsafe would fire.
+    private static double spareSeconds(ItemStack s) {
+        return s.isDamageableItem() ? ElytraLife.flightSeconds(s) : 0.0;
     }
 
 
 
+    /** The height the reserve plans a glide down from: the radio altimeter's, or over the void (where it reads
+     *  -1) the height above the world floor, as the durability failsafe takes it (ElytraGuard). */
+    static double reserveHeight(int agl, double y, int minY) {
+        return agl >= 0 ? agl : Math.max(0, y - minY);
+    }
+
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!show) return;
+        if (!show || !Settings.shows(Settings.displayRangeEndurance)) return;
         Minecraft mc = Minecraft.getInstance();
 
-        String end = "END " + KineTime.format(enduranceSec);
-        String rng = "RNG " + Readouts.range(rangeShown);
+        String end = "END " + (Double.isInfinite(enduranceSec) ? UNLIMITED : KineTime.format(enduranceSec));
+        String rng = "RNG " + (Double.isInfinite(rangeShown) ? UNLIMITED : Readouts.range(rangeShown));
 
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
@@ -147,6 +169,7 @@ public class RangeEndurance {
     /** Forget the speed samples, so the estimate falls back to the modelled speed until a new mean exists. */
     private static void resetSpeed() { speedCount = 0; speedIdx = 0; }
 
-    /** Estimated reachable distance (m) right now, or -1 if no elytra is worn. */
+    /** Estimated reachable distance (m) right now, infinite on a wing that can't take damage, or -1 if no
+     *  elytra is worn. */
     public static double rangeMeters() { return show ? rangeShown : -1.0; }
 }

@@ -53,6 +53,10 @@ public class Nav {
     private static int     spotX, spotZ;           // chosen safe landing column
     private static double  spotTop;                // its top surface (the y you stand at on it)
     private static boolean aimed = false;          // this landing was picked with the reticle
+    // the trip's mode and destination while an aimed landing borrows them, given back when it ends
+    private static Mode    tripMode = Mode.OFF;
+    private static int     tripX, tripZ;
+    private static boolean tripHasTarget = false;
     private static LandingModel.Law law = new LandingModel.Law();
 
     private static KeyMapping navKey;
@@ -75,21 +79,37 @@ public class Nav {
     public static int     targetX()       { return targetX; }
     public static int     targetZ()       { return targetZ; }
 
-    // set by the nav screen
-    public static void enterSelected() { mode = Mode.SELECTED; clearLanding(); }   // mode only; the heading stays unset
-    public static void enterManaged()  { mode = Mode.MANAGED;  clearLanding(); }   // mode only; the target stays unset
-    public static void setHeading(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; clearLanding(); }
-    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); clearLanding(); }
-    public static void off()                         { mode = Mode.OFF; clearLanding(); }
-    private static void clearLanding()               { landing = false; haveSpot = false; aimed = false; }
+    // set by the nav screen (the landing is cleared first, so an aimed landing's trip comes back before the change)
+    public static void enterSelected() { clearLanding(); mode = Mode.SELECTED; }   // mode only; the heading stays unset
+    public static void enterManaged()  { clearLanding(); mode = Mode.MANAGED; }    // mode only; the target stays unset
+    public static void setHeading(float headingDeg) { clearLanding(); mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; }
+    public static void setTarget(int x, int z)       { clearLanding(); mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); }
+    public static void off()                         { clearLanding(); mode = Mode.OFF; }
+    private static void clearLanding()               { landing = false; haveSpot = false; endAimed(); }
 
     /** Land now on the column (x, z) whose top surface is at `top`: picked with the reticle and already checked
      *  safe and reachable by {@link Landing}. */
     public static void landAt(int x, double top, int z, LocalPlayer p) {
+        landAt(x, top, z, p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y);
+    }
+
+    /** The same from the player's position and sink (blocks a tick). The spot borrows the destination, so the
+     *  HUD and the steering follow it; the trip's mode and destination come back when the landing ends. */
+    static void landAt(int x, double top, int z, double px, double py, double pz, double vy) {
+        if (!aimed) { tripMode = mode; tripX = targetX; tripZ = targetZ; tripHasTarget = hasTarget; }   // a second aim keeps the trip
         mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta();
         spotX = x; spotZ = z; spotTop = top; haveSpot = true;
         landing = true; aimed = true; law = new LandingModel.Law();
-        law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);   // steer from now
+        law.update(px, py, pz, vy, spotX + 0.5, spotTop, spotZ + 0.5);   // steer from now
+    }
+
+    // An aimed landing is over (touched down, abandoned, or ended from the nav screen or the settings): the trip's mode and
+    // destination come back, since an aimed spot is not a destination to come back to.
+    private static void endAimed() {
+        if (!aimed) return;
+        aimed = false;
+        mode = tripMode; targetX = tripX; targetZ = tripZ; hasTarget = tripHasTarget;
+        NavHud.resetEta();
     }
 
     /** Minecraft yaw (deg) the autopilot should fly to satisfy the current nav mode. */
@@ -112,6 +132,7 @@ public class Nav {
     }
 
     private static void tick(Minecraft mc) {
+        if (mc.isPaused()) return;   // singleplayer paused: the game's ticks still come, but the world stands still
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         while (navKey.consumeClick()) if (Settings.navigation) mc.setScreen(new KineNavScreen());
@@ -128,18 +149,17 @@ public class Nav {
                     law = new LandingModel.Law();
                 }
             } else if (!Autopilot.isEngaged() && dist > EXIT_RADIUS) {
-                landing = false; haveSpot = false;   // pilot took over and flew off: resume flying to the target
+                clearLanding();   // pilot took over and flew off: resume flying to the target (the trip's, if aimed)
             }
         }
         if (landing) {
-            if (p.onGround() && !p.isFallFlying()) {   // touched down: end the landing
-                landing = false;
-                if (aimed) { hasTarget = false; aimed = false; }   // an aimed spot is not a destination to come back to
-            } else {
-                law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);
-            }
+            if (p.onGround() && !p.isFallFlying()) touchedDown();
+            else law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);
         }
     }
+
+    /** Touched down: the landing ends, and an aimed one gives the trip back. */
+    static void touchedDown() { landing = false; endAimed(); }
 
     /** Nearest non-dangerous solid column to the target, searched ring by ring; falls back to the target. */
     private static void findSafeSpot(Minecraft mc, LocalPlayer p) {

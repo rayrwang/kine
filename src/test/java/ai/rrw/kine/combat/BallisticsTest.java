@@ -69,6 +69,19 @@ class BallisticsTest {
     }
 
     @Test
+    void theAimSolveReachesTargetsAlmostStraightUpOrDown() {
+        // within about 3 degrees of vertical (the audit's cases, 2026-10-11, aimed 15 to 40 degrees off before): the
+        // pitch needed can be past 89 degrees, and a first secant step 1 degree higher can pass straight up
+        Vec3 eye = new Vec3(0, 70, 0);
+        for (double[] t : new double[][] { {0, 50, 1}, {0, 30, 0.5}, {0, 15, 0.3}, {0, 50, 2}, {0, 8, 0.2}, {0.7, 40, -0.7},
+                                           {0, 5, 0.05}, {0, 20, 0.04}, {0, -50, 1}, {0, -20, 0.3} }) {
+            Vec3 target = eye.add(t[0], t[1], t[2]);
+            Vec3 aim = Ballistics.solveAim(eye, target, Vec3.ZERO, ARROW, Vec3.ZERO, true);
+            assertTrue(closestPass(eye, aim, ARROW, target) < 0.15, "misses " + target + " by " + closestPass(eye, aim, ARROW, target));
+        }
+    }
+
+    @Test
     void outOfRangeTheAimSolveGivesItsBestTry() {
         Vec3 eye = new Vec3(0, 70, 0), target = eye.add(0, 0, 200);
         Vec3 aim = Ballistics.solveAim(eye, target, Vec3.ZERO, ARROW, Vec3.ZERO, true);

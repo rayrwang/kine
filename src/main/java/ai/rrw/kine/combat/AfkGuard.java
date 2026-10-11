@@ -4,7 +4,9 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.util.Disconnect;
+import ai.rrw.kine.util.InventoryClicks;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.minecraft.client.player.LocalPlayer;
@@ -17,7 +19,8 @@ import net.minecraft.world.damagesource.DamageSource;
  * AFK damage protection: if you take damage after IDLE_TICKS with no input, you are logged out before
  * something kills you, and the disconnect screen names what hit you.
  *
- * Input is a movement or action key held, the mouse turning the view (not counted while the autopilot
+ * Input is a movement or action key held (a sneak, sprint, attack or use key set to Toggle in the controls counts
+ * when pressed, not while latched on), the mouse turning the view (not counted while the autopilot
  * steers), or an open screen while the game window has focus. Damage is a health drop or a fresh hurt this tick; the damage event
  * packet sets the source on the client on the same tick.
  */
@@ -31,6 +34,7 @@ public class AfkGuard {
     private static float   lastHealth = Float.NaN;
     private static int     lastHurtTime = 0;
     private static boolean primed = false;             // do we have a baseline to diff against yet
+    private static final boolean[] toggleWasDown = new boolean[4];   // sneak, sprint, attack and use last tick
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(AfkGuard::tick);
@@ -61,14 +65,34 @@ public class AfkGuard {
         lastHealth = hp;
         primed = true;
 
-        if (tookDamage && idleTicks >= IDLE_TICKS) kick(mc, p);
+        // not after a lethal hit: logging out saves nothing then, and the message would say you did not die
+        if (tookDamage && idleTicks >= IDLE_TICKS && !p.isDeadOrDying()) kick(mc, p);
     }
 
     private static boolean keyHeld(Options o) {
-        return o.keyUp.isDown() || o.keyDown.isDown() || o.keyLeft.isDown() || o.keyRight.isDown()
-            || o.keyJump.isDown() || o.keyShift.isDown() || o.keySprint.isDown()
-            || o.keyAttack.isDown() || o.keyUse.isDown() || o.keyPickItem.isDown()
-            || o.keyDrop.isDown() || o.keySwapOffhand.isDown();
+        boolean toggles = toggleInput(0, o.keyShift, o.toggleCrouch().get())
+            | toggleInput(1, o.keySprint, o.toggleSprint().get())
+            | toggleInput(2, o.keyAttack, o.toggleAttack().get())
+            | toggleInput(3, o.keyUse, o.toggleUse().get());
+        return toggles || o.keyUp.isDown() || o.keyDown.isDown() || o.keyLeft.isDown() || o.keyRight.isDown()
+            || o.keyJump.isDown() || o.keyPickItem.isDown() || o.keyDrop.isDown() || o.keySwapOffhand.isDown();
+    }
+
+    // Sneak, sprint, attack and use can be set to Toggle, and then isDown() is a state latched on by one press
+    // until the next, which would count as input forever. In the tick Kine plays an inventory opening
+    // (InventoryClicks), Kine let go of every key itself: that is neither input nor a state to compare with.
+    private static boolean toggleInput(int i, KeyMapping key, boolean toggled) {
+        if (InventoryClicks.isOpenTick()) return false;
+        boolean down = key.isDown();
+        boolean input = keyInput(toggled, down, toggleWasDown[i]);
+        toggleWasDown[i] = down;
+        return input;
+    }
+
+    /** Whether a key counts as input: held down, or for a key set to Toggle, pressed since last tick (each press
+     *  flips its latched state). */
+    static boolean keyInput(boolean toggled, boolean down, boolean wasDown) {
+        return toggled ? down != wasDown : down;
     }
 
     /** Snapshot current state without arming the trigger (used when disabled or re-entering a world). */

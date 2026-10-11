@@ -173,14 +173,21 @@ public class ProjectileTargeting {
         return Ballistics.launchVel(yaw, pitch, spec, shooterMotion(p, spec), p.onGround());
     }
 
-    // What the projectile can hit (Projectile.canHitEntity): live, pickable mobs and players, and dragon parts.
-    // Arrows and tridents pass through players the shooter's team can't harm (AbstractArrow.canHitEntity).
+    // What the projectile can hit (Projectile.canHitEntity): anything live and pickable, so end crystals, boats,
+    // minecarts, item frames and paintings as well as mobs, players and dragon parts. Arrows and tridents pass
+    // through players the shooter's team can't harm (AbstractArrow.canHitEntity). The shooter's own vehicle and
+    // those riding it are passed through until the flight has left them (collider).
     private static Predicate<Entity> hittable(LocalPlayer self, boolean arrow) {
         return e -> {
-            if (e instanceof EnderDragonPart) return true;   // dragon hitboxes aren't LivingEntity
-            if (!(e instanceof LivingEntity) || !e.canBeHitByProjectile()) return false;
+            if (!e.canBeHitByProjectile()) return false;
             return !(arrow && e instanceof Player other && !self.canHarmPlayer(other));
         };
+    }
+
+    // What auto aim and the reticle's shown target choose from: the hittable mobs, players and dragon parts
+    // (dragon hitboxes aren't LivingEntity), never the shooter's own mount or someone riding with it.
+    private static Predicate<Entity> targetable(LocalPlayer self, Predicate<Entity> hittable) {
+        return hittable.and(e -> (e instanceof LivingEntity || e instanceof EnderDragonPart) && !self.isPassengerOfSameVehicle(e));
     }
 
     // the damage an arrow or trident from this item does, for the shield rules
@@ -203,8 +210,20 @@ public class ProjectileTargeting {
     // Stops a simulated flight at the first block or entity (the reticle). Each entity is met where it will be when
     // the projectile gets there, moving on at its present speed from where it will be when the shot spawns (`lead`
     // ticks on), as the hit chance models it: a led shot at a moving mob meets it there, not where it stands now.
+    // As in the game, the shooter's own vehicle and those riding it can't be hit until the flight has left them.
     private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self, List<Mover> movers, double lead) {
+        List<Entity> ride = self.getRootVehicle().getSelfAndPassengers().filter(Entity::isPickable).toList();
+        boolean[] left = {false};   // the flight has left the ride; reset at each flight's first tick
         return (pos, next, tick) -> {
+            // Projectile.checkLeftOwner, at the start of each tick: left once the projectile's box (an arrow's or
+            // trident's 0.5; a thrown item's 0.25 is near enough), swept along the tick's move and widened by 1,
+            // touches none of the ride, the shooter included
+            if (tick == 1) left[0] = false;
+            if (!left[0]) {
+                AABB swept = new AABB(pos.x - 0.25, pos.y, pos.z - 0.25, pos.x + 0.25, pos.y + 0.5, pos.z + 0.25)
+                    .expandTowards(next.subtract(pos)).inflate(1.0);
+                left[0] = ride.stream().noneMatch(e -> swept.intersects(e.getBoundingBox()));
+            }
             BlockHitResult bhr = level.clip(new ClipContext(pos, next,
                 ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
             Vec3 segEnd = bhr.getType() != HitResult.Type.MISS ? bhr.getLocation() : next;
@@ -212,6 +231,7 @@ public class ProjectileTargeting {
             AABB seg = new AABB(pos, segEnd).inflate(0.5);   // the widest margin is 0.3
             Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
             for (Mover m : movers) {
+                if (!left[0] && ride.contains(m.e())) continue;
                 AABB bb = m.e().getBoundingBox().move(m.motion().scale(lead + tick));
                 if (!bb.intersects(seg)) continue;
                 Optional<Vec3> h = entityHit(level, self, bb, pos, segEnd, HitChance.margin(tick));
@@ -347,6 +367,13 @@ public class ProjectileTargeting {
 
     private static void dropLock() { aiming = false; lock = null; haveLastSol = false; }
 
+    // A vanilla client turns only by the mouse, which turns the view only with the window focused and no screen
+    // open (MouseHandler.handleAccumulatedMovement; a screen, the pause menu included, releases the mouse), so
+    // auto aim turns, and holds a target, only then too.
+    private static boolean canTurn(Minecraft mc) {
+        return mc.screen == null && mc.getOverlay() == null && mc.isWindowActive() && !mc.isPaused();
+    }
+
     // Whether the pilot moved the view since the last tick (any turn but ours, which is recorded after it is made):
     // that lets go of a held target, and a new one is picked up only once the view has rested SETTLE_TICKS, so
     // sweeping the crosshair across a mob doesn't grab the view.
@@ -379,15 +406,16 @@ public class ProjectileTargeting {
         // Weapons fire arrows or tridents. Some targets they hit take no damage (NoDamage); the reticle still
         // shows those, and auto aim leaves them alone.
         Predicate<Entity> hittable = hittable(p, spec.weapon());
+        Predicate<Entity> targets = targetable(p, hittable);
         Holder<DamageType> type = damageType(level, held.item());
         boolean piercing = Enchant.level(held.item(), Enchantments.PIERCING) > 0;
-        Predicate<Entity> hurtable = hittable.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
+        Predicate<Entity> hurtable = targets.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
         double lead = spec.weapon() ? leadTicks(mc, p, held.item()) : 0;
         Ballistics.Collider<Entity> collider = collider(level, p, movers(level, p, eye, hittable), lead);
 
         // aim assist, weapons only (bow, crossbow, trident), with target lead
         Entity locked = null, pending = null;   // pending: the target about to be picked up, shown while the view settles
-        if (!spec.weapon() || !Settings.autoAim) dropLock();
+        if (!spec.weapon() || !Settings.autoAim || !canTurn(mc)) dropLock();
         else {
             // The held target stays held from tick to tick; leading it moves the shot off where it stands now, so
             // what the reticle covers can't be what keeps it. Otherwise pick one up.
@@ -435,7 +463,7 @@ public class ProjectileTargeting {
         boolean onTarget = false;
         if (sf.impact() != null) {
             r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
-            if (tgtF == null) tgtF = sf.entity() != null ? sf.entity() : bestTarget(p, level, sf.impact(), r, hittable);
+            if (tgtF == null) tgtF = sf.entity() != null ? sf.entity() : bestTarget(p, level, sf.impact(), r, targets);
             onTarget = tgtF != null && (sf.entity() == tgtF || tgtF.getBoundingBox()
                 .move(motion(tgtF).scale(lead + sf.ticks())).inflate(r).contains(sf.impact()));
         }

@@ -47,8 +47,11 @@ public final class VanillaActions {
         KillAura.afterEntities(mc);
     }
 
-    /** The keys the player holds this tick, as the features want them pressed. */
+    /** The keys the player holds this tick, as the features want them pressed. None with a screen open: a vanilla
+     *  client sends no game keys behind one (opening it lets go of every key, and a key press reaches the game only
+     *  with no screen up). */
     public static Input adjustInput(LocalPlayer p, Input keys) {
+        if (Minecraft.getInstance().screen != null) { WaterClutch.sneakNotSent(); return keys; }
         keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);

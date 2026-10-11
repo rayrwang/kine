@@ -101,9 +101,12 @@ public final class TurnPlanner {
         Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
         if (straight.status != HITS) return new Plan(destBearing, STRAIGHT, cruiseFloor);
         // Straight hits: climb over it with the lowest raised trough floor that clears, keeping course.
-        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
-            if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
-                return new Plan(destBearing, STRAIGHT, f);          // climb over, stay on course
+        // A floor that can't see far enough ends the ladder: a higher one flies over the same unseen columns.
+        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP) {
+            int st = rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status;
+            if (st == CLEARS) return new Plan(destBearing, STRAIGHT, f);   // climb over, stay on course
+            if (st == INSUFFICIENT) break;
+        }
         // Stage 2: no straight floor up to the cap clears, so turn. For each heading, smallest offset first,
         // find the lowest floor that clears; prefer the smallest turn that makes progress, else the
         // smallest that clears at all (paralleling a wall).
@@ -113,6 +116,7 @@ public final class TurnPlanner {
                 double h = destBearing + sgn * off;
                 for (double f = cruiseFloor; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP) {
                     Roll r = rollout(base, h, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
+                    if (r.status == INSUFFICIENT) break;                       // unseen this way: higher floors too
                     if (r.status != CLEARS) continue;
                     if (r.progress >= PROG_MIN) return new Plan(h, TURN, f);   // smallest progressing turn wins
                     if (off < anyOff) { anyOff = off; anyHeading = h; anyFloor = f; }  // smallest evasive, remember
@@ -143,9 +147,11 @@ public final class TurnPlanner {
         double cruiseFloor = base.target;
         Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
         if (straight.status != HITS) return true;            // clear, or nothing seen in the way
-        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
-            if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
-                return true;                                 // could climb over it straight ahead
+        for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP) {
+            int st = rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status;
+            if (st == CLEARS) return true;                   // could climb over it straight ahead
+            if (st == INSUFFICIENT) break;                   // unseen ahead: higher floors too
+        }
         for (double off : OFFSETS)
             for (int sgn = +1; sgn >= -1; sgn -= 2)
                 if (rollout(base, destBearing + sgn * off, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)

@@ -21,7 +21,7 @@ import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 public final class InventoryClicks {
     private InventoryClicks() {}
 
-    private static long tick = 0, openTick = Long.MIN_VALUE;
+    private static long tick = 0, openTick = Long.MIN_VALUE, batchTick = Long.MIN_VALUE;
 
     /** Counts client ticks, for the open tick. */
     public static void register() {
@@ -46,9 +46,20 @@ public final class InventoryClicks {
         KeyMapping.releaseAll();   // handleKeybinds then lets go of an item in use and stops a block break, as it would
     }
 
-    /** The packet a vanilla client sends when it closes its inventory (LocalPlayer.closeContainer). */
+    /** Take this tick's one batch of clicks: false if a batch has been taken or closed this tick already. A vanilla
+     *  client opens its inventory at most once a tick, so it clicks and closes at most once between two ticks. The
+     *  features ask at the end of the tick in the order Kine registers them, so the clutch goes before auto weapon. */
+    public static boolean claimBatch() {
+        if (batchTick == tick) return false;
+        batchTick = tick;
+        return true;
+    }
+
+    /** The packet a vanilla client sends when it closes its inventory (LocalPlayer.closeContainer). It ends this
+     *  tick's batch. */
     public static void close(Minecraft mc, LocalPlayer p) {
         if (mc.getConnection() != null) mc.getConnection().send(new ServerboundContainerClosePacket(p.inventoryMenu.containerId));
+        batchTick = tick;
     }
 
     /** The close packet plus what closing a screen does on the client: the held keys read again (not on macOS),
