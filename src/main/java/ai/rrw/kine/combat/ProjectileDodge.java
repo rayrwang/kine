@@ -1,11 +1,11 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ThrowableProjectile;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
@@ -14,22 +14,25 @@ import net.minecraft.world.phys.Vec3;
 import java.util.List;
 
 /**
- * Sidesteps incoming projectiles. Each projectile not fired by you is flown forward as the game flies it
- * (gravity and drag in its own order, for arrows and thrown items; other projectiles in a straight line);
- * if its path passes within HIT_RADIUS of your body within REACT_TICKS, a sideways velocity at about
- * sprint speed carries you off its line. It can't beat a point-blank or very fast shot, and a shooter
- * who leads your dodge still hits.
+ * Steps aside from incoming projectiles by pressing movement keys. Each projectile not fired by you is flown
+ * forward as the game flies it (gravity and drag in its own order, for arrows and thrown items; other
+ * projectiles in a straight line); if its path passes within HIT_RADIUS of your body within REACT_TICKS,
+ * it holds the W/A/S/D combination that walks you most directly off its line, for as long as the threat
+ * lasts. The game moves you by its own physics, so this works on foot (not while gliding or riding), at
+ * walking or sprinting speed. It can't beat a point-blank or very fast shot, and a shooter who leads your
+ * dodge still hits.
  */
 public class ProjectileDodge {
 
     private static final int    REACT_TICKS  = 20;     // start dodging when impact is within 1 s
     private static final double HIT_RADIUS   = 1.1;    // body half-width + projectile + margin
-    private static final double DODGE_SPEED  = 0.32;   // lateral speed to top up to (about sprinting)
     private static final double MIN_SPEED_SQ = 0.01;   // ignore stuck or nearly stopped projectiles
 
-    public static void register() {
-        ClientTickEvents.END_CLIENT_TICK.register(ProjectileDodge::tick);
-    }
+    // the eight key combinations: forward, backward, left, right
+    private static final boolean[][] COMBOS = {
+        {true, false, false, false}, {true, false, true, false}, {false, false, true, false}, {false, true, true, false},
+        {false, true, false, false}, {false, true, false, true}, {false, false, false, true}, {true, false, false, true},
+    };
 
     /** Where a projectile passes closest to a point within REACT_TICKS: the time (ticks), the vector from
      *  that point to `center`, and the projectile's velocity there; null if it is moving away. */
@@ -62,17 +65,22 @@ public class ProjectileDodge {
         return new Pass(bestT, bestMiss, bestVel);
     }
 
-    private static void tick(Minecraft mc) {
-        if (!Settings.projectileDodge) return;
-        LocalPlayer p = mc.player;
-        ClientLevel level = mc.level;
-        if (p == null || level == null || p.isSpectator()) return;
+    /** The keys to hold this tick: the dodge's movement keys while a projectile is about to hit, else as given. */
+    public static Input adjustInput(LocalPlayer p, Input keys) {
+        if (!Settings.projectileDodge || p.isSpectator() || p.isFallFlying() || p.isPassenger() || p.getAbilities().flying) return keys;
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null) return keys;
+        Vec3 dodge = threat(p, level);
+        if (dodge == null) return keys;
+        boolean[] c = bestCombo(dodge, p.getYRot());
+        return new Input(c[0], c[1], c[2], c[3], keys.jump(), keys.shift(), keys.sprint());
+    }
 
+    // The escape direction from the soonest projectile on course to hit, or null if none is.
+    private static Vec3 threat(LocalPlayer p, ClientLevel level) {
         Vec3 center = new Vec3(p.getX(), p.getY() + p.getBbHeight() * 0.5, p.getZ());
-
         double bestT = Double.MAX_VALUE;
         Vec3 bestDodge = null;
-
         for (Entity e : level.entitiesForRendering()) {
             if (!(e instanceof Projectile proj)) continue;
             if (proj.getOwner() == p) continue;                 // never dodge our own shots
@@ -91,27 +99,36 @@ public class ProjectileDodge {
                 bestDodge = dodgeDir(pass.miss(), pass.velocity());
             }
         }
-
-        if (bestDodge == null) return;
-
-        // Top the lateral component up to DODGE_SPEED along the escape direction. Re-running each
-        // tick sustains the jink against ground friction without the velocity running away, and
-        // leaving the rest of the velocity alone preserves whatever the player was already doing.
-        Vec3 cur = p.getDeltaMovement();
-        double along = cur.x * bestDodge.x + cur.z * bestDodge.z;
-        if (along < DODGE_SPEED) {
-            double k = DODGE_SPEED - along;
-            p.setDeltaMovement(cur.add(bestDodge.x * k, 0, bestDodge.z * k));
-        }
+        return bestDodge;
     }
 
-    // Horizontal unit vector that moves us off the projectile's line: push further along the miss
-    // offset (straight away from the impact point); if we're dead-on, sidestep perpendicular to it.
-    private static Vec3 dodgeDir(Vec3 miss, Vec3 pv) {
-        Vec3 dir = new Vec3(miss.x, 0, miss.z);
-        if (dir.lengthSqr() < 1e-6) {
-            dir = new Vec3(-pv.z, 0, pv.x);                     // perpendicular to incoming, horizontal
+    /** The key combination (forward, backward, left, right) whose walk direction at this yaw lies closest to
+     *  the horizontal direction d. The game turns the keys' (left, forward) push by the yaw
+     *  (Entity.getInputVector): x = left cos - forward sin, z = forward cos + left sin. */
+    static boolean[] bestCombo(Vec3 d, float yaw) {
+        double sin = Math.sin(Math.toRadians(yaw)), cos = Math.cos(Math.toRadians(yaw));
+        boolean[] best = COMBOS[0];
+        double bestDot = -Double.MAX_VALUE;
+        for (boolean[] c : COMBOS) {
+            double fwd = (c[0] ? 1 : 0) - (c[1] ? 1 : 0), left = (c[2] ? 1 : 0) - (c[3] ? 1 : 0);
+            double n = Math.sqrt(fwd * fwd + left * left);
+            double x = (left * cos - fwd * sin) / n, z = (fwd * cos + left * sin) / n;
+            double dot = x * d.x + z * d.z;
+            if (dot > bestDot) { bestDot = dot; best = c; }
         }
-        return dir.normalize();
+        return best;
+    }
+
+    /** Horizontal unit vector that steps us off the projectile's line: sideways to its horizontal flight, toward
+     *  the side we already sit on (straight away from the line), either side if we're dead on it. A projectile
+     *  coming straight down has no line to step off sideways, so then it's straight away from where it lands. */
+    static Vec3 dodgeDir(Vec3 miss, Vec3 pv) {
+        Vec3 hv = new Vec3(pv.x, 0, pv.z);
+        if (hv.lengthSqr() < 1e-6) {
+            Vec3 away = new Vec3(miss.x, 0, miss.z);
+            return away.lengthSqr() < 1e-6 ? new Vec3(1, 0, 0) : away.normalize();
+        }
+        Vec3 side = new Vec3(-hv.z, 0, hv.x).normalize();
+        return miss.x * side.x + miss.z * side.z >= 0 ? side : side.scale(-1);
     }
 }

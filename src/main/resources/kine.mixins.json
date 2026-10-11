@@ -3,12 +3,13 @@
 	"package": "ai.rrw.kine.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"PlayerMixin",
 		"EntityMixin",
 		"EntityRendererMixin",
-		"LivingEntityMixin",
 		"MinecraftFrameMixin",
-		"ShulkerAccessor"
+		"ShulkerAccessor",
+		"MinecraftInvoker",
+		"MinecraftTickMixin",
+		"KeyboardInputMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

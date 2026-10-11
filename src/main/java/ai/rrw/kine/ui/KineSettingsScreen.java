@@ -80,15 +80,12 @@ public class KineSettingsScreen extends Screen {
         "The only reason you should ever disable this is if you keep getting kicked due to a bug which is "
         + "our fault. Warns when durability is too low to glide down safely and swaps in a fresher spare. "
         + "On autopilot it logs you out before the wing breaks.";
-    private static final String DESC_CRASH =
-        "While gliding, slows you before you hit the ground, a wall or a ceiling. It only removes speed "
-        + "heading into a surface and never turns you.";
     private static final String DESC_FALL =
-        "Stops you walking off a drop of more than three blocks, like sneaking does. Jump to get past it. "
-        + "Water or hay below still counts as a drop.";
+        "Sneaks for you at the edge of a drop of more than three blocks, so you stop there. Jump to get past "
+        + "it. Water or hay below still counts as a drop.";
     private static final String DESC_CLUTCH =
-        "When you fall far enough to get hurt, places water where you will land and scoops it back up. "
-        + "Uses a bucket from your hotbar or offhand, or moves one up from your inventory.";
+        "When you fall far enough to get hurt, sneaks, places water where you will land and scoops it back "
+        + "up. Uses a bucket from your hotbar or offhand, or moves one up from your inventory.";
     private static final String DESC_AFK =
         "Logs you out if you take damage after fifteen seconds with no input. Autopilot camera motion "
         + "doesn't count as input; an open menu does while the game window is in front.";
@@ -103,11 +100,12 @@ public class KineSettingsScreen extends Screen {
         "Turns your view so bow, crossbow and trident shots hit the target nearest your reticle, leading "
         + "moving targets. Move the mouse to break the lock. An aimbot: servers may ban it.";
     private static final String DESC_DODGE =
-        "Pushes you sideways at sprint speed when a projectile is about to hit you. Can't dodge point-blank "
-        + "or very fast shots. Lower ban risk than the aimbot.";
+        "Presses movement keys to step you off a projectile's line when it is about to hit you. On foot only; "
+        + "can't dodge point-blank or very fast shots. Lower ban risk than the aimbot.";
     private static final String DESC_AURA =
         "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
-        + "you wear no gold), without turning your view. Spams crowds, else waits for full charge. Servers may ban it.";
+        + "you wear no gold). Your view stays put; the server sees a quick turn to each target. Spams crowds, "
+        + "else waits for full charge. Servers may ban it.";
     private static final String DESC_WEAPON =
         "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
         + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";
@@ -129,7 +127,6 @@ public class KineSettingsScreen extends Screen {
         }),
         new Section("Safety", new Opt[]{
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, Settings.ELYTRA_DURA_FAILSAFE),
-            Opt.of("Elytra crash protection", DESC_CRASH, Settings.CRASH_PROTECTION),
             Opt.of("Fall prevention", DESC_FALL, Settings.FALL_PREVENTION),
             Opt.of("Water bucket clutch", DESC_CLUTCH, Settings.WATER_BUCKET_CLUTCH),
             Opt.of("AFK damage protection", DESC_AFK, Settings.AFK_DAMAGE_PROTECTION),

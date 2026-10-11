@@ -7,6 +7,7 @@ import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.hud.ScreenProjection;
 import ai.rrw.kine.util.Enchant;
+import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -293,8 +294,8 @@ public class ProjectileTargeting {
             Vec3 d = aimAt.subtract(spawn).normalize();
             float fyaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
             float fpitch = (float) Math.toDegrees(Math.asin(Mth.clamp(-d.y, -1.0, 1.0)));
-            p.setYRot(ease(p.getYRot(), fyaw, true));
-            p.setXRot(Mth.clamp(ease(p.getXRot(), fpitch, false), -90f, 90f));
+            // turned as a mouse would, by whole counts, so the rotation sent is one a vanilla client could send
+            MouseTurn.toward(p, ease(p.getYRot(), fyaw, true), Mth.clamp(ease(p.getXRot(), fpitch, false), -90f, 90f));
             lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
             locked = tgt;
         } else aiming = false;

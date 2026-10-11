@@ -2,10 +2,11 @@ package ai.rrw.kine.combat;
 
 import ai.rrw.kine.util.Enchant;
 import ai.rrw.kine.util.Hotbar;
+import ai.rrw.kine.util.InventoryClicks;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.NonNullList;
-import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -29,16 +30,37 @@ import net.minecraft.world.item.enchantment.Enchantments;
  * between near-equal weapons.
  *
  * <p>Moving a weapon from the main inventory uses a hotbar slot: an empty one first, else the largest
- * stack, as the water-bucket clutch does.
+ * stack, as the water-bucket clutch does. That number-key swap is an inventory click, so it waits for the
+ * end of the tick (between ticks, where a vanilla client clicks in its inventory screen) and is followed by
+ * the inventory close packet; the slot is selected the tick after. Selecting a hotbar slot is a number-key
+ * press: the game sends the change itself before the next attack.
  */
 public final class WeaponSelect {
     private WeaponSelect() {}
 
     private static final double SWITCH_MARGIN = 1.10;   // switch only if the best scores 10% over what is held
 
+    private static int pendingFrom = -1, pendingTo = -1;   // a swap from the main inventory to make at the tick's end
+
+    public static void register() {
+        ClientTickEvents.END_CLIENT_TICK.register(WeaponSelect::endTick);
+    }
+
+    // The swap chosen this tick, made between ticks, then the close packet; the slot is selected next tick.
+    private static void endTick(Minecraft mc) {
+        int from = pendingFrom, to = pendingTo;
+        pendingFrom = pendingTo = -1;
+        LocalPlayer p = mc.player;
+        if (from < 0 || p == null || mc.gameMode == null || !InventoryClicks.available(mc, p)) return;
+        AbstractContainerMenu menu = p.inventoryMenu;
+        mc.gameMode.handleContainerInput(menu.containerId, from, to, ContainerInput.SWAP, p);   // number-key swap
+        InventoryClicks.close(mc, p);
+        p.getInventory().setSelectedSlot(to);
+    }
+
     /**
-     * Picks and equips the best weapon. Returns true if the held slot changed this tick (the caller then
-     * waits a tick for the change to reach the server before attacking).
+     * Picks and equips the best weapon. Returns true if it changed or will change the held item (the caller
+     * then waits a tick before attacking).
      */
     static boolean choose(Minecraft mc, LocalPlayer p, LivingEntity target, int targetCount) {
         Inventory inv = p.getInventory();
@@ -62,19 +84,18 @@ public final class WeaponSelect {
             return true;
         }
 
-        // The best is in the main inventory: number-key swap it into the hotbar through the player menu.
+        // The best is in the main inventory: number-key swap it into the hotbar through the player menu, at the
+        // end of this tick.
         AbstractContainerMenu menu = p.inventoryMenu;
-        if (p.containerMenu != menu || !menu.getCarried().isEmpty()) return false;   // a container is open or the cursor is busy
+        if (!InventoryClicks.available(mc, p)) return false;                         // a screen or container is open, or the cursor is busy
         if (menu.getSlot(bestIdx).getItem() != items.get(bestIdx)) return false;     // menu slot doesn't match the inventory index
-        int h = Hotbar.slotToDisplace(items::get);                      // empty slot first, else the largest stack
-        mc.gameMode.handleContainerInput(menu.containerId, bestIdx, h, ContainerInput.SWAP, p);   // number-key swap
-        selectSlot(mc, p, h);
+        pendingFrom = bestIdx;
+        pendingTo = Hotbar.slotToDisplace(items::get);                  // empty slot first, else the largest stack
         return true;
     }
 
     private static void selectSlot(Minecraft mc, LocalPlayer p, int slot) {
         p.getInventory().setSelectedSlot(slot);
-        if (mc.getConnection() != null) mc.getConnection().send(new ServerboundSetCarriedItemPacket(slot));
     }
 
     /** Damage per second at full charge against this target; 0 for anything but a sword or axe. */

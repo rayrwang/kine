@@ -8,6 +8,7 @@ import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.util.Disconnect;
 import ai.rrw.kine.util.ElytraLife;
+import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -99,14 +100,14 @@ public class ElytraGuard {
      * that best wing clears {@code minTargetSeconds} of flight. The caller sets the bar: enough to clear
      * the land-immediately warning in normal use, or just longer-lived than the current wing when almost
      * broken. Swaps with three container clicks (pick up the spare, swap it into the chest slot, put the old
-     * wing in the spare's slot), only with no container open and an empty cursor, so no item is stranded.
+     * wing in the spare's slot), only with no screen or container open and an empty cursor, so no item is
+     * stranded. It runs at the end of a tick, between ticks, where a vanilla client clicks in its inventory
+     * screen, and ends with the inventory close packet a vanilla client sends on closing it.
      */
     private static boolean tryAutoSwap(Minecraft mc, LocalPlayer p, double minTargetSeconds) {
         MultiPlayerGameMode gm = mc.gameMode;
-        if (gm == null) return false;
-        AbstractContainerMenu menu = p.containerMenu;
-        if (menu != p.inventoryMenu) return false;        // a chest or other container is open
-        if (!menu.getCarried().isEmpty()) return false;   // something is on the cursor
+        if (gm == null || !InventoryClicks.available(mc, p)) return false;   // a screen or container is open, or the cursor is busy
+        AbstractContainerMenu menu = p.inventoryMenu;
 
         int bestSlot = -1;
         double bestSeconds = -1.0;
@@ -123,6 +124,7 @@ public class ElytraGuard {
         gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // cursor <- spare
         gm.handleContainerInput(cid, CHEST_SLOT, 0, ContainerInput.PICKUP, p);  // chest <-> cursor (the cursor holds the worn wing)
         gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // worn wing -> the emptied slot
+        InventoryClicks.close(mc, p);
         Kine.LOGGER.info("Kine: auto-swapped to a fresher elytra ({} s of flight)", (int) bestSeconds);
         return true;
     }

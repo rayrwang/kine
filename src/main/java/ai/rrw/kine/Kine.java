@@ -8,9 +8,9 @@ import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.PathPrediction;
 import ai.rrw.kine.combat.AfkGuard;
 import ai.rrw.kine.combat.KillAura;
-import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.combat.WeaponSelect;
 import ai.rrw.kine.hud.FlightDirectorHud;
 import ai.rrw.kine.hud.FlightPathVector;
 import ai.rrw.kine.hud.FlightProfile;
@@ -59,8 +59,8 @@ public class Kine implements ClientModInitializer {
         WaterClutch.register();
         AfkGuard.register();
         ProjectileTargeting.register();
-        ProjectileDodge.register();
         KillAura.register();
+        WeaponSelect.register();
         KineMenu.register();
     }
 }

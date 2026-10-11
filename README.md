@@ -38,7 +38,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.
-- Elytra low durability and collision protections, auto swap and endurance/range display.
+- Elytra low durability protection, auto swap and endurance/range display.
 - Display player speed and altitude.
 - Show health of mobs.
 - Projectiles red outline.
@@ -109,21 +109,17 @@ While you wear an elytra, endurance adds up the flight time of every elytra you 
 
 Below the reserve you get a land-now warning and a hot-swap to a spare that clears it; with 3 durability left, to any spare with more life. On autopilot it disconnects you after 5 s without input, or at once at 2 durability. Swaps are ordinary inventory clicks, made only with no container open.
 
-### Crash protection
-
-A hook on elytra movement removes only the velocity heading into the ground, a wall or a ceiling; it never steers. Near the ground it slows the descent below 0.5 blocks per tick, where the game caps fall distance. It reduces impacts but can't guarantee none.
-
 ### Combat
 
-The targeting reticle simulates the readied projectile tick by tick (gravity, drag, your own motion) and rings where it lands. The aimbot finds the launch pitch from a closed-form start and secant steps and the yaw allowing for your motion, leading moving targets. The kill aura attacks hostile mobs, and neutral mobs such as endermen after they hit you (piglins also while you wear no gold), and chooses between waiting for a full charge, spamming a crowd and sweeping a cluster; auto weapon holds the best sword or axe by damage per second. Projectile dodge sidesteps projectiles whose flight, with gravity and drag, passes close. Projectiles glow red through walls.
+The targeting reticle simulates the readied projectile tick by tick (gravity, drag, your own motion) and rings where it lands. The aimbot finds the launch pitch from a closed-form start and secant steps and the yaw allowing for your motion, leading moving targets. The kill aura attacks hostile mobs, and neutral mobs such as endermen after they hit you (piglins also while you wear no gold), and chooses between waiting for a full charge, spamming a crowd and sweeping a cluster; it turns the player toward the target for the one tick of the attack and back, so the server sees the turn and your view doesn't. Auto weapon holds the best sword or axe by damage per second. Projectile dodge presses movement keys to step off the line of projectiles whose flight, with gravity and drag, passes close. Projectiles glow red through walls.
 
 ### Other features
 
-Water-bucket clutch, AFK damage protection (logs you out if you take damage after 15 s with no input), fall prevention (stops you walking off drops of more than 3 blocks), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names.
+Water-bucket clutch, AFK damage protection (logs you out if you take damage after 15 s with no input), fall prevention (sneaks at the edge of drops of more than 3 blocks), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names.
 
 ### A note on anti-cheat
 
-HUD readouts are invisible to servers. The movement and inventory features send normal-looking inputs and packets and are lower risk, though a strict anti-cheat could still flag something like an elytra swap in mid-flight. The aimbot and the kill aura are the features most likely to get you banned. Use accordingly.
+HUD readouts are invisible to servers. Everything the server receives is something a precisely controlled vanilla client could send: turns in whole mouse steps, attacks and item uses aimed by the crosshair at the rotation the server is sent, movement from pressed keys, and inventory clicks between ticks followed by the close a real inventory sends. That makes the mod hard to tell from a fast, precise player, not from one: the aimbot and the kill aura are still the features most likely to get you banned. Use accordingly.
 
 ---
 

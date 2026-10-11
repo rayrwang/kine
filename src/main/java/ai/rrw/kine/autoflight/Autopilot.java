@@ -9,6 +9,7 @@ import ai.rrw.kine.util.Compass;
 import ai.rrw.kine.util.Disconnect;
 import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.util.Motion;
+import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -42,6 +43,7 @@ public class Autopilot {
     private static KeyMapping toggleKey;
     private static boolean engaged = false;
     private static float cmdPitch, cmdYaw;          // what we're commanding, advanced per frame
+    private static float setPitch, setYaw;          // the view after our last turn (whole mouse counts from the command)
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
 
@@ -97,15 +99,15 @@ public class Autopilot {
         if (p == null || (!FlightDirector.isActive() && !Nav.landing())) return;   // tick() performs the actual disengage
 
         long now = System.nanoTime();
-        if (lastFrameNanos == 0L) { lastFrameNanos = now; cmdPitch = p.getXRot(); cmdYaw = p.getYRot(); return; }
+        if (lastFrameNanos == 0L) { lastFrameNanos = now; holdView(p); return; }
         float dt = (float) ((now - lastFrameNanos) / 1.0e9);
         lastFrameNanos = now;
         if (dt <= 0f) return;
         if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
 
         float drift = MOUSE_EPS * 20f * dt;                    // per-tick sensitivity, scaled to this frame
-        if (Math.abs(p.getXRot() - cmdPitch) > drift
-            || Math.abs(Mth.wrapDegrees(p.getYRot() - cmdYaw)) > drift) { disengage(); return; }
+        if (Math.abs(p.getXRot() - setPitch) > drift
+            || Math.abs(Mth.wrapDegrees(p.getYRot() - setYaw)) > drift) { disengage(); return; }
 
         // pitch: during the landing program follow the gentle descent; otherwise follow the director
         float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
@@ -150,18 +152,25 @@ public class Autopilot {
         }
         // else nothing is commanded: hold the current heading
 
-        p.setXRot(cmdPitch);
-        p.setYRot(cmdYaw);
-        cmdPitch = p.getXRot();   // re-read post-clamp ([-90, 90])
-        cmdYaw   = p.getYRot();
+        // Turn the view as a mouse would: by whole counts toward the command, so every rotation sent is one a
+        // vanilla client could send (at most half a count, 0.075 deg at the default sensitivity, off the command)
+        cmdPitch = Mth.clamp(cmdPitch, -90f, 90f);
+        MouseTurn.toward(p, cmdYaw, cmdPitch);
+        setPitch = p.getXRot();
+        setYaw   = p.getYRot();
+    }
+
+    // Take the current view as both the command and what we last set.
+    private static void holdView(LocalPlayer p) {
+        cmdPitch = setPitch = p.getXRot();
+        cmdYaw   = setYaw   = p.getYRot();
     }
 
     private static void engage(LocalPlayer p) {
         engaged = true;
         warnActive = false;   // engaging clears any pending "off" warning
         tripTicks = 0;
-        cmdPitch = p.getXRot();
-        cmdYaw   = p.getYRot();
+        holdView(p);
         lastFrameNanos = System.nanoTime();
     }
 

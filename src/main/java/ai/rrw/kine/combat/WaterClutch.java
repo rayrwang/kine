@@ -1,15 +1,15 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.util.Hotbar;
+import ai.rrw.kine.util.InventoryClicks;
+import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
-import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.attribute.EnvironmentAttributes;
@@ -30,11 +30,15 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  *   <li><b>Trajectory aim.</b> It simulates the fall (gravity and drag) to find the real landing point,
  *       so diagonal falls work too.</li>
  *   <li><b>Sneak placement.</b> Water used on a waterloggable block (slab, stairs, fence) normally
- *       waterlogs it and leaves your feet dry. While sneaking, the game puts the source in the block
- *       above instead. Sneak is sent in the input packet, which both the client prediction
- *       ({@code isShiftKeyDown()}) and the server read, so the two agree.</li>
+ *       waterlogs it and leaves your feet dry, and using it on a chest or door opens it. While sneaking,
+ *       the game skips the block and puts the source in the block above. Sneak is held as a key from the
+ *       start of the dangerous fall to the end of the clutch, so the server has it before the use.</li>
+ *   <li><b>As a vanilla client does it.</b> The place and the scoop go through the game's own pick and
+ *       startUseItem just before its keybind step, after a turn by whole mouse counts, so the use packets
+ *       and that tick's move packet carry the same rotation; the view turns back a tick later.</li>
  *   <li><b>Bucket staging.</b> When a dangerous fall starts and the only water bucket is in the main
- *       inventory, it is swapped into the hotbar (an empty slot if there is one, else the largest stack).</li>
+ *       inventory, it is swapped into the hotbar (an empty slot if there is one, else the largest stack)
+ *       between ticks, followed by the inventory close packet.</li>
  * </ul>
  * It does nothing where water evaporates (the Nether).
  */
@@ -49,111 +53,129 @@ public final class WaterClutch {
     private static final double GRAVITY       = 0.08;  // per-tick gravity
     private static final double V_DRAG        = 0.98;  // per-tick vertical drag
 
+    private static boolean armed = false;              // a dangerous fall with a bucket to hand: sneak and watch
+    private static int     sneakTicks = 0;             // ticks the sneak key has been held for the clutch
     // state from placing the water to picking it up
     private static boolean active = false;
     private static InteractionHand clutchHand = InteractionHand.MAIN_HAND;
     private static Vec3    sourceSpot = null;          // where the water went, so the pickup can aim back at it
-    private static int     restoreSlot = -1;          // hotbar slot to switch back to (-1: no switch, or the offhand)
+    private static int     restoreSlot = -1;          // hotbar slot to switch back to (-1: no switch)
+    private static boolean turned = false;            // the view was turned for the clutch
     private static float   restorePitch = 0f;
     private static float   restoreYaw = 0f;
+    private static boolean restorePending = false;    // turn the view back at the end of this tick
     private static int     ticks = 0;
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(WaterClutch::tick);
     }
 
-    private static void tick(Minecraft mc) {
-        LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || mc.gameMode == null) { if (active) finish(mc, p); return; }
-        if (!Settings.waterBucketClutch) { if (active) finish(mc, p); return; }
-
-        if (active) { resolve(mc, p); return; }
-
-        // arm only in a dangerous free fall (gliding has its own safety features)
-        if (p.isFallFlying() || p.onGround() || p.isInWater() || p.isInLava()) return;
-        if (p.fallDistance < HURT_FALL) return;
-        if (p.getDeltaMovement().y() >= 0) return;            // must be descending
-
-        // move a water bucket into the hotbar early, while there is still time
-        stageBucketToHotbar(mc, p);
-
-        // predict the landing point by sweeping the footprint against the blocks' collision shapes
-        Vec3 land = predictImpact(mc, p);
-        if (land == null) return;                             // no landing in range yet
-        Vec3 eye = p.getEyePosition();
-        double dx = land.x() - eye.x(), dy = land.y() - eye.y(), dz = land.z() - eye.z();
-        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist > PLACE_REACH) return;                       // not close enough yet
-
-        // water evaporates in hot dimensions (the Nether)
-        BlockPos placeCell = new BlockPos(Mth.floor(land.x()), Mth.floor(land.y() + 0.1), Mth.floor(land.z()));
-        Boolean evaporates = (Boolean) mc.level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES, placeCell);
-        if (evaporates != null && evaporates) return;
-
-        // need a water bucket in a hand
-        if (!selectWaterBucket(mc, p)) return;
-
-        // aim at the landing point
-        double dh = Math.sqrt(dx * dx + dz * dz);
-        float yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
-        float pitch = (float) (-Math.atan2(dy, dh) * 180.0 / Math.PI);
-        restoreYaw = p.getYRot();
-        restorePitch = p.getXRot();
-        p.setYRot(yaw);
-        p.setXRot(pitch);
-
-        // place while sneaking, which puts the source above the surface instead of waterlogging it
-        ClientPacketListener conn = mc.getConnection();
-        Input cur = p.input.keyPresses;
-        Input sneaking = new Input(cur.forward(), cur.backward(), cur.left(), cur.right(), cur.jump(), true, cur.sprint());
-        p.input.keyPresses = sneaking;                                          // client predicts place-above (isShiftKeyDown reads this)
-        if (conn != null) conn.send(new ServerboundPlayerInputPacket(sneaking)); // server sneaks before it sees the use packet
-        mc.gameMode.useItem(p, clutchHand);   // bucket raycasts toward the impact (packet carries the rotation) -> source at the feet block
-        p.input.keyPresses = cur;                                               // restore real input
-        if (conn != null) conn.send(new ServerboundPlayerInputPacket(cur));     // and tell the server we stopped sneaking
-
-        sourceSpot = new Vec3(land.x(), land.y() + 0.5, land.z());   // the source sits in the block just above the surface
-        active = true;
-        ticks = 0;
+    /** Hold sneak while armed or mid-clutch. */
+    public static Input adjustInput(LocalPlayer p, Input keys) {
+        if (!Settings.waterBucketClutch || !(armed || active)) { sneakTicks = 0; return keys; }
+        sneakTicks++;
+        if (keys.shift()) return keys;
+        return new Input(keys.forward(), keys.backward(), keys.left(), keys.right(), keys.jump(), true, keys.sprint());
     }
 
-    /** Keep aiming at the placed water until you are in it, then scoop it back up and restore the view. */
-    private static void resolve(Minecraft mc, LocalPlayer p) {
-        if (p == null) { finish(mc, null); return; }
-        ticks++;
+    // End of tick: arm or disarm, stage the bucket, and turn the view back after a finished clutch.
+    private static void tick(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (restorePending && p != null) {
+            MouseTurn.toward(p, restoreYaw, restorePitch);
+            restorePending = false;
+        }
+        if (p == null || mc.level == null || mc.gameMode == null || !Settings.waterBucketClutch) {
+            if (active) finish(mc, p);
+            armed = false;
+            return;
+        }
+        if (active) {
+            // a dry landing, gliding, or timed out (standing in the water also counts as on the ground: the
+            // scoop happens before the next keybind step)
+            if (p.onGround() && !p.isInWater() || p.isFallFlying() || ++ticks > GIVE_UP_TICKS) finish(mc, p);
+            return;
+        }
+        armed = dangerousFall(p) && haveBucket(p) && !evaporates(mc, p);
+        if (armed) stageBucketToHotbar(mc, p);   // move a water bucket into the hotbar early, while there is still time
+    }
 
-        // keep looking at the water (it can be off-centre under an edge), so the pickup ray hits it
-        if (sourceSpot != null) {
-            Vec3 eye = p.getEyePosition();
-            double dx = sourceSpot.x() - eye.x(), dy = sourceSpot.y() - eye.y(), dz = sourceSpot.z() - eye.z();
-            double dh = Math.sqrt(dx * dx + dz * dz);
-            p.setYRot((float) (Math.atan2(-dx, dz) * 180.0 / Math.PI));
-            p.setXRot((float) (-Math.atan2(dy, dh) * 180.0 / Math.PI));
+    private static boolean dangerousFall(LocalPlayer p) {
+        return !p.isFallFlying() && !p.onGround() && !p.isInWater() && !p.isInLava()
+            && p.fallDistance >= HURT_FALL && p.getDeltaMovement().y() < 0;
+    }
+
+    /** Place or scoop, just before the game's keybind step (VanillaActions). True if it acted or holds the view. */
+    public static boolean beforeKeybinds(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (!Settings.waterBucketClutch || p == null) return false;
+        if (active) { resolve(mc, p); return true; }
+        if (!armed || sneakTicks < 1) return false;           // the server must already have the sneak
+
+        Vec3 land = predictImpact(mc, p);
+        if (land == null) return false;                       // no landing in range yet
+        Vec3 eye = p.getEyePosition();
+        if (land.distanceTo(eye) > PLACE_REACH) return false; // not close enough yet
+        if (!selectWaterBucket(p)) return false;
+
+        restoreYaw = p.getYRot();
+        restorePitch = p.getXRot();
+        turned = true;
+        aimAt(p, land);
+        MinecraftInvoker game = (MinecraftInvoker) mc;
+        game.invokePick(1.0F);
+        game.invokeStartUseItem();   // the bucket raycasts along this rotation (the packet carries it) -> source at the feet block
+        if (p.getItemInHand(clutchHand).is(Items.BUCKET)) {
+            sourceSpot = new Vec3(land.x(), land.y() + 0.5, land.z());   // the source sits in the block just above the surface
+            active = true;
+            ticks = 0;
         } else {
-            p.setXRot(90f);
-        }
-
-        if (p.isInWater()) {
-            mc.gameMode.useItem(p, clutchHand);   // the hand holds an empty bucket now, so this scoops the source back up
             finish(mc, p);
-        } else if (p.onGround() || p.isFallFlying() || ticks > GIVE_UP_TICKS) {
-            finish(mc, p);   // dry landing (missed), started gliding, or timed out: let go
         }
+        return true;
+    }
+
+    /** Keep aiming at the placed water until you are in it, then scoop it back up. */
+    private static void resolve(Minecraft mc, LocalPlayer p) {
+        // keep looking at the water (it can be off-centre under an edge), so the pickup ray hits it
+        if (sourceSpot != null) aimAt(p, sourceSpot);
+        else MouseTurn.toward(p, p.getYRot(), 90f);
+        if (p.isInWater()) {
+            MinecraftInvoker game = (MinecraftInvoker) mc;
+            game.invokePick(1.0F);
+            game.invokeStartUseItem();   // the hand holds an empty bucket now, so this scoops the source back up
+            finish(mc, p);
+        }
+    }
+
+    private static void aimAt(LocalPlayer p, Vec3 target) {
+        Vec3 d = target.subtract(p.getEyePosition());
+        double dh = Math.sqrt(d.x * d.x + d.z * d.z);
+        MouseTurn.toward(p, (float) Math.toDegrees(Math.atan2(-d.x, d.z)), (float) Math.toDegrees(-Math.atan2(d.y, dh)));
     }
 
     private static void finish(Minecraft mc, LocalPlayer p) {
         if (p != null) {
-            p.setXRot(restorePitch);
-            p.setYRot(restoreYaw);
-            if (restoreSlot >= 0 && mc.getConnection() != null) {
-                p.getInventory().setSelectedSlot(restoreSlot);
-                mc.getConnection().send(new ServerboundSetCarriedItemPacket(restoreSlot));
-            }
+            if (turned) restorePending = true;   // turn back at the end of this tick, after the use's rotation has gone out
+            if (restoreSlot >= 0) p.getInventory().setSelectedSlot(restoreSlot);   // the game sends the change, as for a number key
         }
         active = false;
+        armed = false;
+        turned = false;
         sourceSpot = null;
         restoreSlot = -1;
         ticks = 0;
+    }
+
+    private static boolean evaporates(Minecraft mc, LocalPlayer p) {
+        Boolean e = (Boolean) mc.level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES, p.blockPosition());
+        return e != null && e;
+    }
+
+    private static boolean haveBucket(LocalPlayer p) {
+        if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return true;
+        for (int i = 0; i < 36; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return true;
+        return false;
     }
 
     /**
@@ -217,8 +239,8 @@ public final class WaterClutch {
         for (int i = 0; i < 9; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return;  // already in hotbar
 
         MultiPlayerGameMode gm = mc.gameMode;
-        AbstractContainerMenu menu = p.containerMenu;
-        if (gm == null || menu != p.inventoryMenu || !menu.getCarried().isEmpty()) return;   // a container is open or the cursor is busy
+        AbstractContainerMenu menu = p.inventoryMenu;
+        if (gm == null || !InventoryClicks.available(mc, p)) return;   // a screen or container is open, or the cursor is busy
 
         int src = -1;                                            // inventory menu slot holding the bucket (9 to 35: main inventory)
         for (int i = 9; i <= 35; i++) {
@@ -229,26 +251,28 @@ public final class WaterClutch {
         // hotbar slot: empty first, else the largest stack (the hotbar is inventory menu slots 36 to 44)
         int target = Hotbar.slotToDisplace(hb -> menu.slots.get(36 + hb).getItem());
         gm.handleContainerInput(menu.containerId, src, target, ContainerInput.SWAP, p);   // number-key swap of the bucket and the hotbar slot
+        InventoryClicks.close(mc, p);
     }
 
-    /** Put a water bucket in a hand: the offhand if it holds one, else switch the hotbar to one. */
-    private static boolean selectWaterBucket(Minecraft mc, LocalPlayer p) {
+    /** Put a water bucket in a hand for startUseItem, which tries the main hand first: a hotbar bucket is
+     *  selected; an offhand bucket is used with an empty main hand, selecting an empty hotbar slot if need be.
+     *  Selecting a slot is a number-key press: the game sends the change before the use. */
+    private static boolean selectWaterBucket(LocalPlayer p) {
         restoreSlot = -1;
-        if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) {
-            clutchHand = InteractionHand.OFF_HAND;
-            return true;
-        }
+        var inv = p.getInventory();
         for (int slot = 0; slot < 9; slot++) {
-            if (p.getInventory().getNonEquipmentItems().get(slot).is(Items.WATER_BUCKET)) {
+            if (inv.getNonEquipmentItems().get(slot).is(Items.WATER_BUCKET)) {
                 clutchHand = InteractionHand.MAIN_HAND;
-                if (p.getInventory().getSelectedSlot() != slot) {
-                    restoreSlot = p.getInventory().getSelectedSlot();
-                    p.getInventory().setSelectedSlot(slot);
-                    if (mc.getConnection() != null) mc.getConnection().send(new ServerboundSetCarriedItemPacket(slot));
-                }
+                if (inv.getSelectedSlot() != slot) { restoreSlot = inv.getSelectedSlot(); inv.setSelectedSlot(slot); }
                 return true;
             }
         }
-        return false;   // no water bucket in the hotbar or offhand
+        if (!p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return false;
+        clutchHand = InteractionHand.OFF_HAND;
+        if (p.getMainHandItem().isEmpty()) return true;
+        for (int slot = 0; slot < 9; slot++) {
+            if (inv.getNonEquipmentItems().get(slot).isEmpty()) { restoreSlot = inv.getSelectedSlot(); inv.setSelectedSlot(slot); return true; }
+        }
+        return false;   // the main hand would be used first and there is no empty slot to switch to
     }
 }

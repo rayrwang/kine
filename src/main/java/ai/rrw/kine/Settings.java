@@ -24,7 +24,7 @@ public final class Settings {
     private Settings() {}
 
     public static boolean displaySpeed, displayGroundSpeed, displayFlightDirectors, elytraDuraFailsafe,
-        crashProtection, fallPrevention, displayMobHealths, displayMobNames, projectileReticle, projectileGlow,
+        fallPrevention, displayMobHealths, displayMobNames, projectileReticle, projectileGlow,
         autoAim, projectileDodge, displayRangeEndurance, afkDamageProtection, waterBucketClutch,
         displayFlightPathVector, terrainAvoidance, flightRibbon, displayFlightProfile, killAura, autoWeapon;
 
@@ -46,7 +46,6 @@ public final class Settings {
     public static final Toggle DISPLAY_GROUND_SPEED       = add("displayGroundSpeed", true, () -> displayGroundSpeed, v -> displayGroundSpeed = v);
     public static final Toggle DISPLAY_FLIGHT_DIRECTORS   = add("displayFlightDirectors", true, () -> displayFlightDirectors, v -> displayFlightDirectors = v);
     public static final Toggle ELYTRA_DURA_FAILSAFE       = add("elytraDuraFailsafe", true, () -> elytraDuraFailsafe, v -> elytraDuraFailsafe = v);
-    public static final Toggle CRASH_PROTECTION           = add("crashProtection", true, () -> crashProtection, v -> crashProtection = v);
     public static final Toggle FALL_PREVENTION            = add("fallPrevention", true, () -> fallPrevention, v -> fallPrevention = v);
     public static final Toggle DISPLAY_MOB_HEALTHS        = add("displayMobHealths", true, () -> displayMobHealths, v -> displayMobHealths = v);
     public static final Toggle DISPLAY_MOB_NAMES          = add("displayMobNames", false, () -> displayMobNames, v -> displayMobNames = v);

@@ -1,12 +1,14 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.util.Enchant;
+import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.tags.ItemTags;
-import net.minecraft.world.InteractionHand;
+import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -21,6 +23,7 @@ import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -31,7 +34,12 @@ import java.util.Map;
 
 /**
  * Melee kill aura against hostile mobs and neutral mobs that have hit you, toggled in the settings
- * screen. It attacks mobs in reach with line of sight, without turning the view.
+ * screen. It attacks mobs in reach with line of sight, as a vanilla client would: just before the game's
+ * keybind step it turns toward the target by whole mouse counts, has the game pick what that rotation's
+ * crosshair is on, and attacks through the game's own startAttack only if that is a target; the player's
+ * move packet then carries that rotation, and once it has gone out the turn is undone by the same counts,
+ * so your view never moves (the server sees a flick there and back). For that one tick your walking
+ * follows the turned rotation, as it would for a vanilla client.
  *
  * <p>From the 26.1.2 combat code: a hit's damage is scaled by {@code 0.2 + 0.8*charge^2}, the charge
  * resets on every swing, and a struck mob takes full damage again only after 10 ticks. So the aura
@@ -71,6 +79,8 @@ public final class KillAura {
     private static int lastHurtTime = 0;   // player's hurtTime last tick, to spot a fresh incoming hit
     private static int lastWeaponTick = -100;   // last tick auto weapon selection ran
 
+    private static MouseTurn.Turn flick = MouseTurn.Turn.NONE;   // this tick's turn toward a target, undone after it is sent
+
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);   // toggled from the settings menu (K)
     }
@@ -79,10 +89,13 @@ public final class KillAura {
         tick++;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { lastHit.clear(); angryUntil.clear(); return; }
-
         trackAnger(p);   // learn which neutral mobs are angry at us, even when the aura is off
+    }
 
-        if (!Settings.killAura || mc.gameMode == null || mc.screen != null || !p.isAlive() || p.isUsingItem()) return;
+    /** Fights, just before the game's keybind step (VanillaActions); no screen is open here. */
+    public static void beforeKeybinds(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (!Settings.killAura || p == null || mc.level == null || mc.gameMode == null || !p.isAlive() || p.isUsingItem()) return;
 
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         Vec3 eye = p.getEyePosition();
@@ -120,9 +133,11 @@ public final class KillAura {
         if (sweepSword && p.onGround() && charge >= FULL_CHARGE) {
             LivingEntity hub = bestSweepTarget(inReach);
             if (hub != null) {
-                attack(mc, p, hub);
-                AABB box = hub.getBoundingBox().inflate(SWEEP_X, SWEEP_Y, SWEEP_Z);   // the sweep caught these too
-                for (LivingEntity o : inReach) if (o != hub && box.intersects(o.getBoundingBox())) lastHit.put(o.getId(), tick);
+                LivingEntity hit = attack(mc, p, hub);
+                if (hit != null) {
+                    AABB box = hit.getBoundingBox().inflate(SWEEP_X, SWEEP_Y, SWEEP_Z);   // the sweep caught these too
+                    for (LivingEntity o : inReach) if (o != hit && box.intersects(o.getBoundingBox())) lastHit.put(o.getId(), tick);
+                }
                 return;
             }
         }
@@ -201,10 +216,48 @@ public final class KillAura {
         return t != null && tick - t < HIT_REFRACTORY;
     }
 
-    private static void attack(Minecraft mc, LocalPlayer p, LivingEntity target) {
-        mc.gameMode.attack(p, target);
-        p.swing(InteractionHand.MAIN_HAND);
-        lastHit.put(target.getId(), tick);
+    /** Turn toward the target by whole mouse counts and attack what that rotation's crosshair is on, through
+     *  the game's own pick and startAttack, if it is a target in reach; else turn straight back, before the
+     *  rotation is sent. Returns the entity hit, or null. */
+    private static LivingEntity attack(Minecraft mc, LocalPlayer p, LivingEntity target) {
+        Vec3 eye = p.getEyePosition();
+        Vec3 aim = aimPoint(eye, target.getBoundingBox());
+        Vec3 d = aim.subtract(eye);
+        float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
+        float pitch = (float) Math.toDegrees(Math.atan2(-d.y, Math.sqrt(d.x * d.x + d.z * d.z)));
+        MouseTurn.Turn turn = MouseTurn.toward(p, yaw, pitch);
+        MinecraftInvoker game = (MinecraftInvoker) mc;
+        game.invokePick(1.0F);
+        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
+        if (mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() instanceof LivingEntity hit
+            && isTarget(hit, p) && eyeToBox(eye, hit.getBoundingBox()) <= reach) {
+            // startAttack returns false after hitting an entity too; an attack resets the charge, so read that
+            float charge = p.getAttackStrengthScale(0.0f);
+            game.invokeStartAttack();
+            if (p.getAttackStrengthScale(0.0f) < charge) {
+                flick = turn;   // the attack went out with this turn: keep it for this tick's move packet
+                lastHit.put(hit.getId(), tick);
+                return hit;
+            }
+        }
+        MouseTurn.undo(p, turn);   // nothing to hit there: no turn goes out
+        game.invokePick(1.0F);
+        return null;
+    }
+
+    /** Undo this tick's turn once the player has sent it (VanillaActions, after the entities tick). */
+    public static void afterEntities(Minecraft mc) {
+        if (flick == MouseTurn.Turn.NONE || mc.player == null) { flick = MouseTurn.Turn.NONE; return; }
+        MouseTurn.undo(mc.player, flick);
+        flick = MouseTurn.Turn.NONE;
+        ((MinecraftInvoker) mc).invokePick(1.0F);
+    }
+
+    /** Where to aim: the point of the slightly shrunken box nearest the eye, so the crosshair ray enters the
+     *  box about as near as the box comes, and so within reach whenever the box is. */
+    private static Vec3 aimPoint(Vec3 eye, AABB bb) {
+        AABB in = bb.deflate(Math.min(0.1, Math.min(bb.getXsize(), Math.min(bb.getYsize(), bb.getZsize())) * 0.25));
+        return new Vec3(Mth.clamp(eye.x, in.minX, in.maxX), Mth.clamp(eye.y, in.minY, in.maxY), Mth.clamp(eye.z, in.minZ, in.maxZ));
     }
 
     /** The fresh target whose sweep box catches the most others (at least one, else null). */
