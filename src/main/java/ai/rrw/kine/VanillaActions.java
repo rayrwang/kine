@@ -1,5 +1,6 @@
 package ai.rrw.kine;
 
+import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
@@ -33,6 +34,7 @@ public final class VanillaActions {
     public static void beforeKeybinds(Minecraft mc) {
         if (mc.player == null || mc.level == null || mc.gameMode == null) return;
         if (Takeoff.beforeKeybinds(mc)) return;
+        if (Landing.beforeKeybinds(mc)) return;
         if (WaterClutch.beforeKeybinds(mc)) return;
         KillAura.beforeKeybinds(mc);
     }

@@ -88,7 +88,7 @@ public class FlightDirector {
         }
         // Lateral terrain avoidance: this tick's steering heading. An imminent wall becomes an emergency bank;
         // if banking can't escape, the controller hands control back rather than fly into the ground.
-        if (Settings.terrainAvoidance && Autopilot.isEngaged()) {
+        if (Settings.terrainAvoidance && Autopilot.isEngaged() && !Nav.landing()) {   // a landing steers itself down
             TurnGuard.evaluate(mc, p, LAW.targetAlt);
             if (TurnGuard.handOff()) Autopilot.disengage();
             // Adopt the planner's trough floor for next tick's law: the cruise floor, or higher to climb over

@@ -48,7 +48,7 @@ public final class Settings {
 
     // Effective values, read by the features.
     public static boolean displayMobHealths, displayMobNames, displayMiningProgress,
-        autopilot, takeoff, navigation, terrainAvoidance,
+        autopilot, takeoff, landing, navigation, terrainAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, afkDamageProtection,
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura;
     public static Show displaySpeed, displayGroundSpeed,
@@ -129,6 +129,7 @@ public final class Settings {
     public static final Option FLIGHT_PATH_RAILS          = mode("flightRibbon", FLIGHT, ELYTRA, v -> flightRibbon = v);
     public static final Option AUTOPILOT                  = toggle("autopilot", FLIGHT, true, v -> autopilot = v);
     public static final Option TAKEOFF                    = toggle("takeoff", FLIGHT, true, v -> takeoff = v);
+    public static final Option LANDING                    = toggle("landing", FLIGHT, true, v -> landing = v);
     public static final Option NAVIGATION                 = toggle("navigation", FLIGHT, true, v -> navigation = v);
     public static final Option TERRAIN_AVOIDANCE          = toggle("terrainAvoidance", FLIGHT, true, v -> terrainAvoidance = v);
 

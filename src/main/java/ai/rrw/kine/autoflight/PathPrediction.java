@@ -15,7 +15,7 @@ import net.minecraft.util.Mth;
  * destination, or along the committed heading in a turn, or in an emergency the look held up to
  * EMERGENCY_DELTA off the velocity until the course has come round; without it, the look turned
  * toward the nav heading at the autopilot's nav turn rate, or the current heading held. Pitch follows
- * the porpoise law; the landing program's descent is not modelled.
+ * the porpoise law. While landing, the landing law ({@link LandingModel}) is rolled out instead, down to the spot.
  */
 public final class PathPrediction {
     private PathPrediction() {}
@@ -42,6 +42,16 @@ public final class PathPrediction {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying() || !Autopilot.isEngaged()) return;
 
+        if (Nav.landing()) {
+            var v = p.getDeltaMovement();
+            LandingModel.Result r = LandingModel.simulate(Nav.landingLaw(), p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z,
+                p.getYRot(), p.getXRot(), Nav.spotX(), Nav.spotTop(), Nav.spotZ(), TICKS, TICKS + 1);
+            for (int k = 0; k < r.count(); k++) {
+                xs[k] = r.xs()[k] - p.getX(); ys[k] = r.ys()[k] - p.getY(); zs[k] = r.zs()[k] - p.getZ();
+            }
+            count = r.count();
+            return;
+        }
         FlightModel3D.State s = TurnGuard.seed(p, FlightDirector.floorAltitude());
         double px = s.x, py = s.y, pz = s.z;
         boolean avoidance = Settings.terrainAvoidance && TurnGuard.steering();

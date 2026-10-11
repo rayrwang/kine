@@ -3,6 +3,7 @@ package ai.rrw.kine.hud;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.autoflight.TurnGuard;
@@ -59,7 +60,7 @@ public final class FlightDirectorHud {
         if (Takeoff.usesWarningRow()) return;   // the takeoff has the row, and the law flies nothing until it hands over
 
         boolean landing = Nav.landing();
-        if (FlightDirector.isTooLow() && !landing) {
+        if (FlightDirector.isTooLow() && !landing && !Landing.valid()) {   // a landing spot on offer has the row instead
             // the too-low warning and the nav readout share a row; too-low wins
             String s = "TOO LOW TO ACTIVATE AUTOPILOT";
             int y = HudLayout.warningRow(H, mc.font.lineHeight);

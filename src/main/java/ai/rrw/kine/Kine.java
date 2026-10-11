@@ -4,6 +4,7 @@ import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.ElytraGuard;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.FlightPathRails;
+import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.PathPrediction;
 import ai.rrw.kine.autoflight.Takeoff;
@@ -51,6 +52,7 @@ public class Kine implements ClientModInitializer {
         FlightDirector.register();
         FlightDirectorHud.register();
         Takeoff.register();               // before the rails, which draw its path
+        Landing.register();
         PathPrediction.register();
         FlightPathRails.register();
         FlightPathVector.register();

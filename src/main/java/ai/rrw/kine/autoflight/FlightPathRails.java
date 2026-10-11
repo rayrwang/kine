@@ -62,21 +62,24 @@ public final class FlightPathRails {
             count = n;
             return;
         }
-        if (!Settings.shows(Settings.flightRibbon) || !Autopilot.isEngaged() || !FlightDirector.isActive()) return;
+        if (!Settings.shows(Settings.flightRibbon) || !Autopilot.isEngaged() || !FlightDirector.isActive() && !Nav.landing()) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || !p.isFallFlying() || PathPrediction.count() == 0) return;
 
         double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
         double len = Math.sqrt(dx * dx + dz * dz);
-        if (len < 1.0e-4) return;                       // no ground track (also guards the slope divide below)
-        double trackX = dx / len, trackZ = dz / len;
-        headX = trackX; headZ = trackZ;
-
         int n = 0;
-        // extend behind: straight extrapolation back along the current ground track and flight slope
-        double slope = (p.getY() - p.yOld) / len;       // vertical blocks per along-track block
-        for (double d = -BEHIND_BLOCKS; d <= 1.0e-9 && n < MAX_PTS; d += BEHIND_STEP) {
-            rx[n] = trackX * d; ry[n] = slope * d; rz[n] = trackZ * d; n++;
+        if (len >= 1.0e-4) {
+            double trackX = dx / len, trackZ = dz / len;
+            headX = trackX; headZ = trackZ;
+            // extend behind: straight extrapolation back along the current ground track and flight slope
+            double slope = (p.getY() - p.yOld) / len;   // vertical blocks per along-track block
+            for (double d = -BEHIND_BLOCKS; d <= 1.0e-9 && n < MAX_PTS; d += BEHIND_STEP) {
+                rx[n] = trackX * d; ry[n] = slope * d; rz[n] = trackZ * d; n++;
+            }
+        } else {                                        // straight down (a landing's plunge): no track to extend
+            double yr = Math.toRadians(p.getYRot());
+            headX = -Math.sin(yr); headZ = Math.cos(yr);
         }
         // forward: the predicted path
         for (int k = DECIMATE; k <= RAIL_TICKS && k < PathPrediction.count() && n < MAX_PTS; k += DECIMATE) {

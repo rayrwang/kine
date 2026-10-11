@@ -33,7 +33,8 @@ public class Autopilot {
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D is held (deg)
     static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
     private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
-    static final float LANDING_TURN_DPS = 80f;    // sharper turn authority while landing, for a tight circle
+    static final float LANDING_TURN_DPS = (float) (LandingModel.YAW_RATE * 20);   // the landing law's turn rate, 300 deg/s
+    private static final float LANDING_BUMP_DEG = 10f; // while landing, a look this far off the command is the pilot; less is a bump the autopilot takes back
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
     private static final int   KICK_TICKS  = 30; // 1.5 s after an unattended disengage before we disconnect
@@ -112,7 +113,9 @@ public class Autopilot {
         if (dt <= 0f) return;
         if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
 
-        float drift = MOUSE_EPS * 20f * dt;                    // per-tick sensitivity, scaled to this frame
+        // a pilot's mouse disengages. While landing only a deliberate move does: an accidental bump near the ground
+        // is turned back below, since letting go there could cost the landing.
+        float drift = Nav.landing() ? LANDING_BUMP_DEG : MOUSE_EPS * 20f * dt;   // per-tick sensitivity, scaled to this frame
         if (Math.abs(p.getXRot() - setPitch) > drift
             || Math.abs(Mth.wrapDegrees(p.getYRot() - setYaw)) > drift) { disengage(); return; }
 
@@ -132,9 +135,13 @@ public class Autopilot {
             Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
         }
 
-        // yaw: terrain avoidance steers (faithful look placement) toward the commanded course, dodging
-        // terrain > nav heading law. Both honor the selected heading / A/D bug set above.
-        if (Settings.terrainAvoidance && TurnGuard.steering()) {
+        // yaw: the landing law while landing; else terrain avoidance steers (faithful look placement) toward the
+        // commanded course, dodging terrain > nav heading law. Both honor the selected heading / A/D bug set above.
+        if (Nav.landing()) {
+            float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
+            float maxTurn = LANDING_TURN_DPS * dt;
+            cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
+        } else if (Settings.terrainAvoidance && TurnGuard.steering()) {
             if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
                 // imminent wall: hard bank toward the open side at elevated authority, the look slewed
                 // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
@@ -154,7 +161,7 @@ public class Autopilot {
             }
         } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
-            float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;
+            float maxTurn = NAV_TURN_DPS * dt;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         }
         // else nothing is commanded: hold the current heading
@@ -171,6 +178,11 @@ public class Autopilot {
     private static void holdView(LocalPlayer p) {
         cmdPitch = setPitch = p.getXRot();
         cmdYaw   = setYaw   = p.getYRot();
+    }
+
+    /** Engage for an aimed landing (Landing), even too low to arm: the landing law needs no flight director. */
+    public static void engageForLanding(LocalPlayer p) {
+        if (Settings.autopilot && p.isFallFlying()) engage(p);
     }
 
     /** Engage at the end of a rocket takeoff, as J would. */

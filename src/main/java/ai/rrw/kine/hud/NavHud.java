@@ -4,6 +4,7 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.util.Compass;
@@ -107,7 +108,7 @@ public final class NavHud {
 
         // If the elytra can't take us that far, flag it on the warning row.
         double range = RangeEndurance.rangeMeters();
-        if (!landing && range >= 0 && range < dist && !Takeoff.usesWarningRow()) {
+        if (!landing && range >= 0 && range < dist && !Takeoff.usesWarningRow() && !Landing.valid()) {
             String wd = "INSUFFICIENT DURABILITY";
             g.text(mc.font, wd, cx - mc.font.width(wd) / 2, durY, HudColors.RED, true);
         }

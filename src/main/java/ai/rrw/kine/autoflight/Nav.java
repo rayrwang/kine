@@ -3,7 +3,6 @@ package ai.rrw.kine.autoflight;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.NavHud;
-import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.ui.KineNavScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -23,9 +22,10 @@ import java.util.Set;
 
 /**
  * Lateral navigation for the autopilot. SELECTED holds a compass heading; MANAGED flies to an X/Z
- * coordinate and then runs a gentle descending-landing program once it arrives. The autopilot reads
- * desiredYaw()/landing()/landingPitch() to steer; this class only ever sets targets, never touches
- * the player directly.
+ * coordinate and lands there once it arrives, with the {@link LandingModel} law: a spiral plunge, a brake well
+ * above the ground and a slow nose-up finish onto the spot. An aimed landing ({@link Landing}) starts that law at
+ * once on the spot picked with the reticle. The autopilot reads desiredYaw()/landing()/landingPitch() to steer;
+ * this class only ever sets targets, never touches the player directly.
  */
 public class Nav {
 
@@ -33,17 +33,11 @@ public class Nav {
 
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
-    private static final float  DIVE_PITCH    = 80f;    // near-vertical dive when high, to shed altitude fast (deg, +down)
-    private static final float  FLARE_PITCH   = 10f;    // gentle glide for the final approach near the ground
-    private static final double FLARE_AGL     = 12.0;   // at or below this height above ground, hold the gentle flare
-    private static final double DIVE_AGL      = 500.0;  // at or above this height, hold the full dive
-    private static final double ORBIT_RADIUS   = 10.0;   // circle this tight around the landing spot
-    private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far below the column's top to keep looking, if the heightmap is stale
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
-    private static final Set<Block> DANGER = Set.of(
+    static final Set<Block> DANGER = Set.of(
         Blocks.LAVA, Blocks.FIRE, Blocks.SOUL_FIRE, Blocks.MAGMA_BLOCK, Blocks.CACTUS,
         Blocks.SWEET_BERRY_BUSH, Blocks.POWDER_SNOW, Blocks.CAMPFIRE, Blocks.SOUL_CAMPFIRE,
         Blocks.WITHER_ROSE);
@@ -57,6 +51,9 @@ public class Nav {
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
+    private static double  spotTop;                // its top surface (the y you stand at on it)
+    private static boolean aimed = false;          // this landing was picked with the reticle
+    private static LandingModel.Law law = new LandingModel.Law();
 
     private static KeyMapping navKey;
 
@@ -65,12 +62,13 @@ public class Nav {
     public static Mode    mode()          { return Settings.navigation ? mode : Mode.OFF; }
     public static boolean steering()      { return (mode() == Mode.SELECTED && hasHeading) || (mode() == Mode.MANAGED && hasTarget); }
     public static boolean landing()       { return Settings.navigation && landing; }
-    /** Descent angle for the landing program: steep up high to lose altitude fast, easing to a gentle flare near the ground. */
-    public static float landingPitch() {
-        double agl = Math.max(0, RadioAltimeter.agl());
-        double t = Mth.clamp((agl - FLARE_AGL) / (DIVE_AGL - FLARE_AGL), 0.0, 1.0);
-        return (float) Mth.lerp(t, FLARE_PITCH, DIVE_PITCH);
-    }
+    /** The landing law's pitch this tick (LandingModel). */
+    public static float landingPitch() { return (float) law.pitch; }
+    /** A copy of the landing law's state and the spot, for the path prediction. */
+    public static LandingModel.Law landingLaw() { return law.copy(); }
+    public static double spotX()   { return spotX + 0.5; }
+    public static double spotZ()   { return spotZ + 0.5; }
+    public static double spotTop() { return spotTop; }
     public static float   selectedHeading() { return selectedHeading; }
     public static boolean hasHeading()    { return hasHeading; }
     public static boolean hasTarget()     { return hasTarget; }
@@ -83,7 +81,16 @@ public class Nav {
     public static void setHeading(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; clearLanding(); }
     public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); clearLanding(); }
     public static void off()                         { mode = Mode.OFF; clearLanding(); }
-    private static void clearLanding()               { landing = false; haveSpot = false; }
+    private static void clearLanding()               { landing = false; haveSpot = false; aimed = false; }
+
+    /** Land now on the column (x, z) whose top surface is at `top`: picked with the reticle and already checked
+     *  safe and reachable by {@link Landing}. */
+    public static void landAt(int x, double top, int z, LocalPlayer p) {
+        mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta();
+        spotX = x; spotZ = z; spotTop = top; haveSpot = true;
+        landing = true; aimed = true; law = new LandingModel.Law();
+        law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);   // steer from now
+    }
 
     /** Minecraft yaw (deg) the autopilot should fly to satisfy the current nav mode. */
     public static float desiredYaw(LocalPlayer p) {
@@ -93,17 +100,9 @@ public class Nav {
     /** The same from a position (x, z), for predictions. */
     public static float desiredYaw(double x, double z) {
         if (mode == Mode.SELECTED) return wrap180(selectedHeading + 180f);   // compass -> MC yaw (N = yaw 180)
-        double tx = (landing && haveSpot ? spotX + 0.5 : targetX + 0.5);
-        double tz = (landing && haveSpot ? spotZ + 0.5 : targetZ + 0.5);
-        double dx = tx - x, dz = tz - z;
-        float bearing = (float) Math.toDegrees(Math.atan2(-dx, dz));          // bearing to target as MC yaw
-        if (!landing) return bearing;                                        // en route: fly straight at it
-        // Landing: orbit the spot at a tight radius instead of flying through it (which overshoots and
-        // swings wide on the U-turn). Tangent = bearing+90; the radial term steers inward when we're
-        // outside ORBIT_RADIUS and outward when inside, so the path settles into a circle around the spot.
-        double dist = Math.sqrt(dx * dx + dz * dz);
-        float correction = (float) Mth.clamp((dist - ORBIT_RADIUS) * RADIAL_GAIN, -90.0, 90.0);
-        return wrap180(bearing + 90f - correction);
+        if (landing) return wrap180((float) law.yaw);                         // the landing law steers
+        double dx = targetX + 0.5 - x, dz = targetZ + 0.5 - z;
+        return (float) Math.toDegrees(Math.atan2(-dx, dz));                  // en route: fly straight at it
     }
 
     public static void register() {
@@ -125,12 +124,21 @@ public class Nav {
                 if (dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.isEngaged()) {
                     landing = true;
                     findSafeSpot(mc, p);   // pick a safe touchdown column near the target, once
+                    spotTop = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING, spotX, spotZ);
+                    law = new LandingModel.Law();
                 }
             } else if (!Autopilot.isEngaged() && dist > EXIT_RADIUS) {
                 landing = false; haveSpot = false;   // pilot took over and flew off: resume flying to the target
             }
         }
-        if (landing && p.onGround() && !p.isFallFlying()) landing = false;   // touched down: end the landing
+        if (landing) {
+            if (p.onGround() && !p.isFallFlying()) {   // touched down: end the landing
+                landing = false;
+                if (aimed) { hasTarget = false; aimed = false; }   // an aimed spot is not a destination to come back to
+            } else {
+                law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);
+            }
+        }
     }
 
     /** Nearest non-dangerous solid column to the target, searched ring by ring; falls back to the target. */
@@ -154,7 +162,7 @@ public class Nav {
     /** Whether a column's top block is safe to land on: not a fluid and not a dangerous block. The scan
      *  starts at the surface (the WORLD_SURFACE heightmap, the highest non-air block), so it finds the
      *  ground from any height. */
-    private static boolean safeColumn(Level level, int x, int z) {
+    static boolean safeColumn(Level level, int x, int z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
         int bottom = Math.max(level.getMinY(), top - SCAN_DEPTH);
