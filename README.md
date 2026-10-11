@@ -48,7 +48,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 - Above ground altitude display change color
 - Expand configurability especially aimbot, kill aura
-- Improve projectile dodging (predict, avoid edges)
+- Improve projectile dodging (predict)
 - Kill aura only on player attack or being attacked, decouple client & server rotation
 - Elytra autopilot:
 	- Per block pathing instead of heightmap highest block
@@ -72,7 +72,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Activate elytra if fall (could be annoying)
 - Creeper explosion avoidance
 - Warning sounds
-- More settings for enabling/disabling & finer control
 - User guide / help: controls & displays list and explanations
 - Aimbot:
 	- Collision detection
