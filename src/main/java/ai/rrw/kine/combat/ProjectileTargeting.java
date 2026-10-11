@@ -28,10 +28,13 @@ import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityReference;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.ambient.Bat;
 import net.minecraft.world.entity.animal.FlyingAnimal;
 import net.minecraft.world.entity.animal.allay.Allay;
+import net.minecraft.world.entity.animal.equine.AbstractHorse;
 import net.minecraft.world.entity.animal.happyghast.HappyGhast;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
@@ -204,6 +207,17 @@ public class ProjectileTargeting {
     // (dragon hitboxes aren't LivingEntity), never the shooter's own mount or someone riding with it.
     private static Predicate<Entity> targetable(LocalPlayer self, Predicate<Entity> hittable) {
         return hittable.and(e -> (e instanceof LivingEntity || e instanceof EnderDragonPart) && !self.isPassengerOfSameVehicle(e));
+    }
+
+    // Your own pets, which auto aim never picks (RW 2026-10-11: "make it not shoot your own dog"): a tamed wolf, cat,
+    // parrot or nautilus whose owner is you (TamableAnimal syncs its owner to the client), and any tamed horse, donkey,
+    // mule, llama or camel, since its owner is never sent (AbstractHorse keeps it on the server), so it may be yours.
+    static boolean ownPet(LocalPlayer self, Entity e) {
+        if (e instanceof TamableAnimal t) {
+            EntityReference<LivingEntity> owner = t.getOwnerReference();
+            return owner != null && owner.getUUID().equals(self.getUUID());
+        }
+        return e instanceof AbstractHorse h && h.isTamed();
     }
 
     // the damage an arrow or trident from this item does, for the shield rules
@@ -472,12 +486,12 @@ public class ProjectileTargeting {
         Vec3 spawn = Ballistics.spawnPoint(eye, shooterMotion(p, spec), firedByRelease(held.item()));
 
         // Weapons fire arrows or tridents. Some targets they hit take no damage (NoDamage); the reticle still
-        // shows those, and auto aim leaves them alone.
+        // shows those, and auto aim leaves them alone, as it does your own pets (ownPet).
         Predicate<Entity> hittable = hittable(p, spec.weapon());
         Predicate<Entity> targets = targetable(p, hittable);
         Holder<DamageType> type = damageType(level, held.item());
         boolean piercing = Enchant.level(held.item(), Enchantments.PIERCING) > 0;
-        Predicate<Entity> hurtable = targets.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
+        Predicate<Entity> hurtable = targets.and(e -> NoDamage.reason(e, spawn, type, piercing) == null && !ownPet(p, e));
         double lead = spec.weapon() ? leadTicks(mc, p, held.item()) : 0;
         Ballistics.Collider<Entity> collider = collider(level, p, movers(level, p, eye, hittable), lead);
 
