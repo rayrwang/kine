@@ -19,14 +19,17 @@ import java.util.List;
  * projectiles in a straight line); if its path passes within HIT_RADIUS of your body within REACT_TICKS,
  * it holds the W/A/S/D combination that walks you most directly off its line, for as long as the threat
  * lasts. The game moves you by its own physics, so this works on foot (not while gliding or riding), at
- * walking or sprinting speed. It can't beat a point-blank or very fast shot, and a shooter who leads your
- * dodge still hits.
+ * walking or sprinting speed. It never steps toward a drop of more than three blocks: if the better side
+ * has one within a block, it steps the other way, and if both do, it doesn't dodge. It can't beat a
+ * point-blank or very fast shot, and a shooter who leads your dodge still hits.
  */
 public class ProjectileDodge {
 
     private static final int    REACT_TICKS  = 20;     // start dodging when impact is within 1 s
     private static final double HIT_RADIUS   = 1.1;    // body half-width + projectile + margin
     private static final double MIN_SPEED_SQ = 0.01;   // ignore stuck or nearly stopped projectiles
+    private static final double CLIFF        = 3.0;    // a drop deeper than this is a cliff (as for fall prevention)
+    private static final double CLIFF_LOOK   = 1.0;    // how far along a step to look for one (blocks, about five ticks)
 
     // the eight key combinations: forward, backward, left, right
     private static final boolean[][] COMBOS = {
@@ -70,17 +73,35 @@ public class ProjectileDodge {
         if (!Settings.projectileDodge || p.isSpectator() || p.isFallFlying() || p.isPassenger() || p.getAbilities().flying) return keys;
         ClientLevel level = Minecraft.getInstance().level;
         if (level == null) return keys;
-        Vec3 dodge = threat(p, level);
-        if (dodge == null) return keys;
-        boolean[] c = bestCombo(dodge, p.getYRot());
+        Escape esc = threat(p, level);
+        if (esc == null) return keys;
+        boolean[] c = bestCombo(esc.preferred(), p.getYRot());
+        if (walksOffCliff(p, c)) {
+            if (esc.fallback() == null) return keys;
+            c = bestCombo(esc.fallback(), p.getYRot());
+            if (walksOffCliff(p, c)) return keys;       // a cliff either way: stay put
+        }
         return new Input(c[0], c[1], c[2], c[3], keys.jump(), keys.shift(), keys.sprint());
     }
 
-    // The escape direction from the soonest projectile on course to hit, or null if none is.
-    private static Vec3 threat(LocalPlayer p, ClientLevel level) {
+    /** Which way to step: the better side, and the other side if there is one (none for a projectile
+     *  coming straight down, where the other way is toward it). */
+    record Escape(Vec3 preferred, Vec3 fallback) {}
+
+    /** Whether walking with these keys would take you over a drop of more than CLIFF blocks within
+     *  CLIFF_LOOK (FallPrevention.canFallAtLeast along the walk). */
+    static boolean walksOffCliff(LocalPlayer p, boolean[] c) {
+        Vec3 w = walkDir(c, p.getYRot());
+        for (double d = 0.25; d <= CLIFF_LOOK + 1e-9; d += 0.25)
+            if (FallPrevention.canFallAtLeast(p, w.x * d, w.z * d, CLIFF)) return true;
+        return false;
+    }
+
+    // The escape from the soonest projectile on course to hit, or null if none is.
+    private static Escape threat(LocalPlayer p, ClientLevel level) {
         Vec3 center = new Vec3(p.getX(), p.getY() + p.getBbHeight() * 0.5, p.getZ());
         double bestT = Double.MAX_VALUE;
-        Vec3 bestDodge = null;
+        Escape bestDodge = null;
         for (Entity e : level.entitiesForRendering()) {
             if (!(e instanceof Projectile proj)) continue;
             if (proj.getOwner() == p) continue;                 // never dodge our own shots
@@ -96,7 +117,9 @@ public class ProjectileDodge {
             if (pass == null || pass.miss().length() > HIT_RADIUS) continue;   // moving away, or it will miss
             if (pass.time() < bestT) {
                 bestT = pass.time();
-                bestDodge = dodgeDir(pass.miss(), pass.velocity());
+                Vec3 dir = dodgeDir(pass.miss(), pass.velocity());
+                boolean sideways = pass.velocity().x * pass.velocity().x + pass.velocity().z * pass.velocity().z >= 1e-6;
+                bestDodge = new Escape(dir, sideways ? dir.scale(-1) : null);
             }
         }
         return bestDodge;
@@ -106,17 +129,22 @@ public class ProjectileDodge {
      *  the horizontal direction d. The game turns the keys' (left, forward) push by the yaw
      *  (Entity.getInputVector): x = left cos - forward sin, z = forward cos + left sin. */
     static boolean[] bestCombo(Vec3 d, float yaw) {
-        double sin = Math.sin(Math.toRadians(yaw)), cos = Math.cos(Math.toRadians(yaw));
         boolean[] best = COMBOS[0];
         double bestDot = -Double.MAX_VALUE;
         for (boolean[] c : COMBOS) {
-            double fwd = (c[0] ? 1 : 0) - (c[1] ? 1 : 0), left = (c[2] ? 1 : 0) - (c[3] ? 1 : 0);
-            double n = Math.sqrt(fwd * fwd + left * left);
-            double x = (left * cos - fwd * sin) / n, z = (fwd * cos + left * sin) / n;
-            double dot = x * d.x + z * d.z;
+            Vec3 w = walkDir(c, yaw);
+            double dot = w.x * d.x + w.z * d.z;
             if (dot > bestDot) { bestDot = dot; best = c; }
         }
         return best;
+    }
+
+    /** The horizontal unit direction a key combination (forward, backward, left, right) walks at this yaw. */
+    static Vec3 walkDir(boolean[] c, float yaw) {
+        double sin = Math.sin(Math.toRadians(yaw)), cos = Math.cos(Math.toRadians(yaw));
+        double fwd = (c[0] ? 1 : 0) - (c[1] ? 1 : 0), left = (c[2] ? 1 : 0) - (c[3] ? 1 : 0);
+        double n = Math.sqrt(fwd * fwd + left * left);
+        return new Vec3((left * cos - fwd * sin) / n, 0, (fwd * cos + left * sin) / n);
     }
 
     /** Horizontal unit vector that steps us off the projectile's line: sideways to its horizontal flight, toward
