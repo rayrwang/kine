@@ -1,7 +1,14 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
+import ai.rrw.kine.Settings;
+import ai.rrw.kine.hud.HudColors;
+import ai.rrw.kine.hud.HudDraw;
+import ai.rrw.kine.hud.HudLayout;
+import ai.rrw.kine.util.Compass;
+import ai.rrw.kine.util.Disconnect;
 import ai.rrw.kine.util.KineTime;
+import ai.rrw.kine.util.Motion;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -11,27 +18,26 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import org.joml.Matrix3x2fStack;
 import org.lwjgl.glfw.GLFW;
 
 public class Autopilot {
 
-    // --- tuning (rates are per SECOND so motion is smooth at any framerate) ---
-    private static final float SMOOTH    = 0.15f; // pitch ease fraction per TICK toward the director
-    private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg) = old 7/tick
-    private static final float TURN_DPS  = 30f;   // heading change per second while A/D held (deg) = old 1.5/tick
-    private static final float NAV_TURN_DPS = 35f;// max heading change per second while a nav mode steers
+    // Rates are per second so the motion is the same at any frame rate.
+    private static final float SMOOTH    = 0.15f; // pitch ease fraction per tick toward the director
+    private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg), 7 deg per tick
+    private static final float TURN_DPS  = 30f;   // heading change per second while A/D is held (deg)
+    static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
     private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
-    private static final float LANDING_TURN_DPS = 80f;// sharper turn authority while landing, for a tight circle
+    static final float LANDING_TURN_DPS = 80f;    // sharper turn authority while landing, for a tight circle
     private static final float MOUSE_EPS = 0.15f; // per-tick rotation drift (deg) that counts as a manual override
     private static final int   TRIP_DELAY  = 5;   // ticks an engage survives while it can't hold (visible, then trips)
     private static final int   KICK_TICKS  = 30; // 1.5 s after an unattended disengage before we disconnect
     private static final float TAKEOVER_EPS = 3f; // look change (deg) that counts as the pilot taking control
+    private static final float MAX_FRAME_DT = 0.25f; // longest frame step (s), so a stall doesn't swing the view; low frame rates still steer at full rate
 
     private static KeyMapping toggleKey;
     private static boolean engaged = false;
@@ -39,7 +45,7 @@ public class Autopilot {
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
 
-    // "AUTOPILOT OFF" warning + dead-man kick after an in-flight disengage
+    // "AUTOPILOT OFF" warning and dead-man disconnect after a disengage in flight
     private static boolean warnActive = false;
     private static int     kickTicks = 0;
     private static float   warnBaseYaw, warnBasePitch;
@@ -53,17 +59,17 @@ public class Autopilot {
         HudElementRegistry.attachElementAfter(
             VanillaHudElements.MISC_OVERLAYS,
             Identifier.fromNamespaceAndPath(Kine.MOD_ID, "autopilot"),
-            Autopilot::render);   // render runs per-frame; we also drive smooth control from it
+            Autopilot::render);
     }
 
-    // Per-tick: only the toggle and the engage/disengage gating. All rotation is driven per-frame in
-    // control() so it tracks at the framerate instead of stepping 20 times a second.
+    // Per-tick: only the toggle and the engage/disengage gating. All rotation is driven per frame in
+    // control(), so it tracks at the frame rate instead of stepping 20 times a second.
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (p == null) { disengage(); resetWarn(); return; }   // left the world — never persist the lock
+        if (p == null) { disengage(); resetWarn(); return; }   // left the world: never keep the lock
         while (toggleKey.consumeClick()) {
             if (engaged) disengage();
-            else if (p.isFallFlying()) engage(p);   // engage even if too low — it trips off below, not silently
+            else if (p.isFallFlying()) engage(p);   // engage even if too low; it trips off below, visibly
         }
         // too low / not gliding: let the engage stand briefly (so it's visibly acknowledged) then trip it
         if (engaged && !FlightDirector.isActive() && !Nav.landing()) {
@@ -74,10 +80,16 @@ public class Autopilot {
         if (warnActive) updateWarn(mc, p);
     }
 
-    // Driven per-frame from the HUD render callback. Eases pitch toward the flight director and turns
-    // with A/D, both scaled by real elapsed time. A manual mouse input (rotation drifting away from
-    // what we commanded) hands control straight back; checked here, on the same cadence we write, so
-    // our own per-frame writes are never mistaken for the pilot.
+    /** Once per frame, after mouse input and before drawing (MinecraftFrameMixin). Nothing moves while the
+     *  game is paused; the frame clock restarts afterwards, so resuming doesn't jump. */
+    public static void onFrame(Minecraft mc) {
+        if (mc.isPaused()) { lastFrameNanos = 0L; return; }
+        control();
+    }
+
+    // Eases pitch toward the flight director and turns with A/D, both scaled by real elapsed time. A
+    // manual mouse input (rotation drifting away from what was commanded) hands control straight back;
+    // checked here, on the same cadence as the writes, so the autopilot's own writes never read as the pilot.
     private static void control() {
         if (!engaged) return;
         Minecraft mc = Minecraft.getInstance();
@@ -89,7 +101,7 @@ public class Autopilot {
         float dt = (float) ((now - lastFrameNanos) / 1.0e9);
         lastFrameNanos = now;
         if (dt <= 0f) return;
-        if (dt > 0.05f) dt = 0.05f;                            // clamp after a hitch/pause
+        if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
 
         float drift = MOUSE_EPS * 20f * dt;                    // per-tick sensitivity, scaled to this frame
         if (Math.abs(p.getXRot() - cmdPitch) > drift
@@ -102,25 +114,22 @@ public class Autopilot {
         float cap    = MAX_DPS * dt;
         cmdPitch += Math.max(-cap, Math.min(cap, step));
 
-        // A/D is the heading "bug": it nudges the commanded heading and enters SELECTED, so it steers the
-        // aircraft whether terrain avoidance or the nav law is doing the actual flying -- both fly toward this
-        // heading. (Previously A/D was only read in the no-avoidance branch, so it -- and a selected heading --
-        // did nothing whenever avoidance was steering.)
+        // A/D moves the heading bug: it nudges the selected heading and enters SELECTED, so it steers
+        // whether terrain avoidance or the nav law is flying, since both fly toward that heading.
         boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
         if ((apLeft ^ apRight) && Nav.mode() != Nav.Mode.MANAGED) {   // don't fight the coordinate nav while it's flying
             float base = Nav.hasHeading() ? Nav.selectedHeading()
-                                          : (float) (((cmdYaw + 180.0) % 360.0 + 360.0) % 360.0);  // current heading, as compass
+                                          : (float) Compass.heading(cmdYaw);   // current heading, as compass
             Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
         }
 
         // yaw: terrain avoidance steers (faithful look placement) toward the commanded course, dodging
         // terrain > nav heading law. Both honor the selected heading / A/D bug set above.
-        if (ai.rrw.kine.Settings.terrainAvoidance && TurnGuard.steering()) {
+        if (Settings.terrainAvoidance && TurnGuard.steering()) {
             if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
                 // imminent wall: hard bank toward the open side at elevated authority, the look slewed
                 // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
-                double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
-                float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
+                float velYaw = (float) Motion.trackYaw(p, cmdYaw);
                 float off  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
                 float ed   = (float) FlightModel3D.EMERGENCY_DELTA;
                 float bankTarget = velYaw + Math.max(-ed, Math.min(ed, off));
@@ -129,8 +138,7 @@ public class Autopilot {
             } else {
                 // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
                 // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
-                double dx = p.getX() - p.xOld, dz = p.getZ() - p.zOld;
-                float velYaw = (dx * dx + dz * dz > 1.0e-8) ? (float) FlightModel3D.velYaw(dx, dz) : cmdYaw;
+                float velYaw = (float) Motion.trackYaw(p, cmdYaw);
                 float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
                 float dmax = (float) FlightModel3D.DELTA_MAX;
                 cmdYaw = velYaw + Math.max(-dmax, Math.min(dmax, raw));
@@ -140,7 +148,7 @@ public class Autopilot {
             float maxTurn = (Nav.landing() ? LANDING_TURN_DPS : NAV_TURN_DPS) * dt;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         }
-        // else: nothing commanded -- hold the current heading
+        // else nothing is commanded: hold the current heading
 
         p.setXRot(cmdPitch);
         p.setYRot(cmdYaw);
@@ -157,13 +165,10 @@ public class Autopilot {
         lastFrameNanos = System.nanoTime();
     }
 
-    /** Engage from another system rather than the toggle key. */
-    public static void engageFor(LocalPlayer p) { if (!engaged && p != null) engage(p); }
-
     public static void disengage() {
         if (engaged) {
             LocalPlayer p = Minecraft.getInstance().player;
-            if (p != null && p.isFallFlying()) startWarn(p);   // dropped out mid-glide — warn + arm the kick
+            if (p != null && p.isFallFlying()) startWarn(p);   // dropped out mid-glide: warn and arm the kick
         }
         engaged = false; lastFrameNanos = 0L; tripTicks = 0;
     }
@@ -188,38 +193,25 @@ public class Autopilot {
     }
 
     private static void kick(Minecraft mc) {
-        Kine.LOGGER.warn("kine: autopilot disengaged with no pilot input — disconnecting");
-        ClientPacketListener cpl = mc.getConnection();
-        if (cpl != null) cpl.getConnection().disconnect(Component.literal("Kine: autopilot disengaged — no pilot input"));
+        Kine.LOGGER.warn("Kine: autopilot disengaged with no pilot input, disconnecting");
+        Disconnect.withMessage(mc, Component.literal("Kine: autopilot disengaged with no pilot input"));
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        control();   // HUD render is per-frame — drive smooth pitch + yaw here
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
-        // (autopilot engaged/disengaged status now annunciates as "AP" in the heading/nav strip, drawn by Nav)
 
         if (warnActive) {
             Font font = mc.font;
-            boolean flash = (System.currentTimeMillis() / 400) % 2 == 0;
-            int color = flash ? 0xFFFF2020 : 0xFFFFD000;
-            int wy = H / 3;
+            int color = HudColors.warningFlash();
+            int wy = HudLayout.bigWarningTop(H);
             int big = (int) (font.lineHeight * 2.0f);
-            drawCentered(g, font, "AUTOPILOT OFF", W / 2, wy, color, 2.0f);
+            HudDraw.scaledText(g, font, "AUTOPILOT OFF", W / 2, wy, color, 2.0f, true);
             int secs = Math.max(0, (KICK_TICKS - kickTicks + 19) / 20);
-            drawCentered(g, font, "disconnect in " + KineTime.format(secs) + " \u2014 take control",
-                W / 2, wy + big + 6, 0xFFFFFFFF, 1.0f);
+            HudDraw.scaledText(g, font, "disconnect in " + KineTime.format(secs) + ", take control",
+                W / 2, wy + big + 6, HudColors.WHITE, 1.0f, true);
         }
     }
 
-    private static void drawCentered(GuiGraphicsExtractor g, Font font, String text,
-                                     int cx, int cy, int color, float scale) {
-        Matrix3x2fStack pose = g.pose();
-        pose.pushMatrix();
-        pose.translate(cx, cy);
-        pose.scale(scale, scale);
-        g.text(font, text, -font.width(text) / 2, -font.lineHeight / 2, color, true);
-        pose.popMatrix();
-    }
 }

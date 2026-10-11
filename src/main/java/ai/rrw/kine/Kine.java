@@ -1,64 +1,66 @@
 package ai.rrw.kine;
 
+import ai.rrw.kine.autoflight.Autopilot;
+import ai.rrw.kine.autoflight.ElytraGuard;
+import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.FlightPathRails;
+import ai.rrw.kine.autoflight.Nav;
+import ai.rrw.kine.autoflight.PathPrediction;
+import ai.rrw.kine.combat.AfkGuard;
+import ai.rrw.kine.combat.KillAura;
+import ai.rrw.kine.combat.ProjectileDodge;
+import ai.rrw.kine.combat.ProjectileTargeting;
+import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.hud.FlightDirectorHud;
+import ai.rrw.kine.hud.FlightPathVector;
+import ai.rrw.kine.hud.FlightProfile;
+import ai.rrw.kine.hud.MiningHud;
+import ai.rrw.kine.hud.MobHealthHud;
+import ai.rrw.kine.hud.NavHud;
+import ai.rrw.kine.hud.RadioAltimeter;
+import ai.rrw.kine.hud.RangeEndurance;
+import ai.rrw.kine.hud.VelocityHud;
+import ai.rrw.kine.ui.KineMenu;
 import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import ai.rrw.kine.hud.VelocityHud;
-import ai.rrw.kine.hud.MobHealthHud;
-import ai.rrw.kine.hud.MiningHud;
-import ai.rrw.kine.hud.RadioAltimeter;
-import ai.rrw.kine.hud.RangeEndurance;
-import ai.rrw.kine.hud.FlightPathVector;
-import ai.rrw.kine.hud.FlightProfile;
-import ai.rrw.kine.autoflight.FlightDirector;
-import ai.rrw.kine.autoflight.FlightRibbon;
-import ai.rrw.kine.autoflight.Autopilot;
-import ai.rrw.kine.autoflight.Nav;
-import ai.rrw.kine.autoflight.ElytraGuard;
-import ai.rrw.kine.combat.ProjectileTargeting;
-import ai.rrw.kine.combat.ProjectileDodge;
-import ai.rrw.kine.combat.WaterClutch;
-import ai.rrw.kine.combat.KillAura;
-
 public class Kine implements ClientModInitializer {
-	public static final String MOD_ID = "kine";
+    public static final String MOD_ID = "kine";
 
-	// This logger is used to write text to the console and the log file.
-	// It is considered best practice to use your mod id as the logger's name.
-	// That way, it's clear which mod wrote info, warnings, and errors.
-	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-	// Custom keybind category so Kine's binds group under their own "Kine" section in the vanilla
-	// controls screen instead of scattering into Miscellaneous. Registered once at class load, before
-	// onInitializeClient's per-feature register() calls create the binds. The section header text comes
-	// from "key.category.kine.keybinds" in the lang file.
-	public static final KeyMapping.Category KEY_CATEGORY =
-		KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "keybinds"));
+    // Keybind category, so Kine's keys get their own section in the controls screen. Registered at
+    // class load, before the features create their keys; the title is "key.category.kine.keybinds" in
+    // the lang file.
+    public static final KeyMapping.Category KEY_CATEGORY =
+        KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "keybinds"));
 
-	@Override
-	public void onInitializeClient() {
-		Settings.load();
-		VelocityHud.register();
-		MobHealthHud.register();
-		MiningHud.register();
-		FlightDirector.register();
-		FlightRibbon.register();
-		FlightPathVector.register();
-		FlightProfile.register();
-		RadioAltimeter.register();
-		RangeEndurance.register();
-		Autopilot.register();
-		Nav.register();
-		ElytraGuard.register();
-		WaterClutch.register();
-		ai.rrw.kine.combat.AfkGuard.register();
-		ProjectileTargeting.register();
-		ProjectileDodge.register();
-		KillAura.register();
-		ai.rrw.kine.ui.KineMenu.register();
-	}
+    @Override
+    public void onInitializeClient() {
+        Settings.load();
+        VelocityHud.register();
+        MobHealthHud.register();
+        MiningHud.register();
+        FlightDirector.register();
+        FlightDirectorHud.register();
+        PathPrediction.register();
+        FlightPathRails.register();
+        FlightPathVector.register();
+        FlightProfile.register();
+        RadioAltimeter.register();
+        RangeEndurance.register();
+        Autopilot.register();
+        Nav.register();
+        NavHud.register();
+        ElytraGuard.register();
+        WaterClutch.register();
+        AfkGuard.register();
+        ProjectileTargeting.register();
+        ProjectileDodge.register();
+        KillAura.register();
+        KineMenu.register();
+    }
 }

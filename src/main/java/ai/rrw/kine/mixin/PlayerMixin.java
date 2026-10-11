@@ -13,8 +13,7 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(Player.class)
 public abstract class PlayerMixin {
 
-    // Re-declares Minecraft's own private method so our code can call it.
-    // No body — the real one stays in Player; this is just a handle.
+    // Declares Player's own method so the injected code can call it.
     @Shadow protected abstract boolean canFallAtLeast(double deltaX, double deltaZ, double minHeight);
 
     @ModifyExpressionValue(
@@ -29,7 +28,8 @@ public abstract class PlayerMixin {
     @Unique
     private boolean kine$dangerousFallAhead(Vec3 delta) {
         if (!Settings.fallPrevention) return false;
-        // DELIBERATELY NAIVE first pass: treat any 3+ block drop as dangerous.
+        // Any drop of more than 3 blocks counts as dangerous, whatever is below (water and hay too).
+        // canFallAtLeast tests a box reaching 1e-7 below the given depth, so a drop of exactly 3 is allowed.
         return this.canFallAtLeast(delta.x, delta.z, 3.0);
     }
 }

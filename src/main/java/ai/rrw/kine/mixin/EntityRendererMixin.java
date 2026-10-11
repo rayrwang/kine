@@ -12,13 +12,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(EntityRenderer.class)
 public class EntityRendererMixin {
 
-    // fully-opaque ARGB; pure red. The outline-blur override keeps it from darkening at the edges.
+    // opaque red; the outline blur shader override keeps it from darkening at the edges
     private static final int KINE_GLOW_COLOR = 0xFFFF0000;
 
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void kine$colorProjectileGlow(Entity entity, EntityRenderState state, float partialTick, CallbackInfo ci) {
         if (state.outlineColor != 0 && entity instanceof Projectile) {
-            state.outlineColor = KINE_GLOW_COLOR;   // only when already glowing (our EntityMixin set it)
+            state.outlineColor = KINE_GLOW_COLOR;   // only when already glowing (EntityMixin makes projectiles glow)
         }
     }
 }

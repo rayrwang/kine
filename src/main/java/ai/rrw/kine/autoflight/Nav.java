@@ -1,31 +1,21 @@
 package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
-import ai.rrw.kine.hud.RangeEndurance;
-import ai.rrw.kine.Settings;
+import ai.rrw.kine.hud.NavHud;
 import ai.rrw.kine.hud.RadioAltimeter;
-import ai.rrw.kine.util.KineTime;
+import ai.rrw.kine.ui.KineNavScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
-import net.minecraft.client.Camera;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix3x2fStack;
-import org.joml.Matrix4f;
-import org.joml.Vector4f;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Set;
@@ -40,30 +30,16 @@ public class Nav {
 
     public enum Mode { OFF, SELECTED, MANAGED }
 
-    private static final int    GREEN          = 0xFF44FF44;
-    private static final int    RED            = 0xFFFF3030; // matches the flight-director warning red
-    private static final int    AMBER          = 0xFFFFC400; // CLB / DESC (climbing or descending to target)
-    private static final int    YELLOW         = 0xFFFFEE00; // ALT* (altitude capture, nearing target)
-    private static final int    WHITE          = 0xFFFFFFFF; // heading arc ticks/labels/box
-    private static final double ARC_HALF_DEG   = 24.0;       // the arc spans this far each side of the apex (circle deg)
-    private static final double ARC_VIS_HDG    = 60.0;       // compass degrees shown each side of the current heading
-    private static final int    ARC_BOX_TOP    = 4;          // gap from the top of the screen to the heading box
-    private static final int    ALT_LEFT_GAP   = 100;        // fixed offset left of center for the CLB/ALT block
-    private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
-    private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
-    private static final double COLUMN_BASE_Y  = -64;        // beam spans the full world column at the target
-    private static final double COLUMN_TOP_Y   = 320;
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
     private static final float  DIVE_PITCH    = 80f;    // near-vertical dive when high, to shed altitude fast (deg, +down)
     private static final float  FLARE_PITCH   = 10f;    // gentle glide for the final approach near the ground
-    private static final double FLARE_AGL     = 12.0;   // at/below this height above ground, hold the gentle flare
-    private static final double DIVE_AGL      = 500.0;  // at/above this height, hold the full dive (so 1000m+ is essentially straight down)
+    private static final double FLARE_AGL     = 12.0;   // at or below this height above ground, hold the gentle flare
+    private static final double DIVE_AGL      = 500.0;  // at or above this height, hold the full dive
     private static final double ORBIT_RADIUS   = 10.0;   // circle this tight around the landing spot
     private static final double RADIAL_GAIN     = 6.0;   // how hard to correct back toward that radius (deg per block)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
-    private static final int    SCAN_DEPTH     = 48;     // how far down to look for ground in a column
-    private static final double ETA_TC         = 12.0;   // time constant (s) for ironing the porpoise wobble out of the displayed ETA
+    private static final int    SCAN_DEPTH     = 48;     // how far below the column's top to keep looking, if the heightmap is stale
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     private static final Set<Block> DANGER = Set.of(
@@ -71,7 +47,7 @@ public class Nav {
         Blocks.SWEET_BERRY_BUSH, Blocks.POWDER_SNOW, Blocks.CAMPFIRE, Blocks.SOUL_CAMPFIRE,
         Blocks.WITHER_ROSE);
 
-    // --- state ---
+    // state
     private static Mode    mode = Mode.OFF;
     private static float   selectedHeading = 0f;   // compass degrees (0=N, 90=E) for SELECTED
     private static boolean hasHeading = false;     // no heading chosen until the dial is set
@@ -80,12 +56,10 @@ public class Nav {
     private static boolean landing = false;
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
-    private static double  etaShown = Double.NaN;  // low-passed ETA value actually displayed (s)
-    private static long    etaNanos = 0L;          // wall-clock of the last ETA display update
 
     private static KeyMapping navKey;
 
-    // --- accessors used by the autopilot / flight director ---
+    // read by the autopilot and the flight director
     public static Mode    mode()          { return mode; }
     public static boolean steering()      { return (mode == Mode.SELECTED && hasHeading) || (mode == Mode.MANAGED && hasTarget); }
     public static boolean landing()       { return landing; }
@@ -101,20 +75,25 @@ public class Nav {
     public static int     targetX()       { return targetX; }
     public static int     targetZ()       { return targetZ; }
 
-    // --- set by the nav screen ---
-    public static void enterSelected() { mode = Mode.SELECTED; clearLanding(); }   // mode only — heading stays unset
-    public static void enterManaged()  { mode = Mode.MANAGED;  clearLanding(); }   // mode only — target stays unset
+    // set by the nav screen
+    public static void enterSelected() { mode = Mode.SELECTED; clearLanding(); }   // mode only; the heading stays unset
+    public static void enterManaged()  { mode = Mode.MANAGED;  clearLanding(); }   // mode only; the target stays unset
     public static void setHeading(float headingDeg) { mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; clearLanding(); }
-    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; resetEta(); clearLanding(); }
+    public static void setTarget(int x, int z)       { mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); clearLanding(); }
     public static void off()                         { mode = Mode.OFF; clearLanding(); }
     private static void clearLanding()               { landing = false; haveSpot = false; }
 
     /** Minecraft yaw (deg) the autopilot should fly to satisfy the current nav mode. */
     public static float desiredYaw(LocalPlayer p) {
+        return desiredYaw(p.getX(), p.getZ());
+    }
+
+    /** The same from a position (x, z), for predictions. */
+    public static float desiredYaw(double x, double z) {
         if (mode == Mode.SELECTED) return wrap180(selectedHeading + 180f);   // compass -> MC yaw (N = yaw 180)
         double tx = (landing && haveSpot ? spotX + 0.5 : targetX + 0.5);
         double tz = (landing && haveSpot ? spotZ + 0.5 : targetZ + 0.5);
-        double dx = tx - p.getX(), dz = tz - p.getZ();
+        double dx = tx - x, dz = tz - z;
         float bearing = (float) Math.toDegrees(Math.atan2(-dx, dz));          // bearing to target as MC yaw
         if (!landing) return bearing;                                        // en route: fly straight at it
         // Landing: orbit the spot at a tight radius instead of flying through it (which overshoots and
@@ -129,16 +108,12 @@ public class Nav {
         navKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
             "key.kine.nav", GLFW.GLFW_KEY_N, Kine.KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(Nav::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "nav"),
-            Nav::render);
     }
 
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
-        while (navKey.consumeClick()) mc.setScreen(new ai.rrw.kine.ui.KineNavScreen());
+        while (navKey.consumeClick()) mc.setScreen(new KineNavScreen());
         if (mode == Mode.OFF) { clearLanding(); return; }
 
         if (mode == Mode.MANAGED && hasTarget) {
@@ -150,22 +125,21 @@ public class Nav {
                     findSafeSpot(mc, p);   // pick a safe touchdown column near the target, once
                 }
             } else if (!Autopilot.isEngaged() && dist > EXIT_RADIUS) {
-                landing = false; haveSpot = false;   // pilot took over and flew off — resume coord navigation
+                landing = false; haveSpot = false;   // pilot took over and flew off: resume flying to the target
             }
         }
-        if (landing && p.onGround() && !p.isFallFlying()) landing = false;   // touched down — stop the descent
+        if (landing && p.onGround() && !p.isFallFlying()) landing = false;   // touched down: end the landing
     }
 
     /** Nearest non-dangerous solid column to the target, searched ring by ring; falls back to the target. */
     private static void findSafeSpot(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
-        int fromY = (int) Math.floor(p.getY());
         for (int r = 0; r <= SCAN_RADIUS; r += 2) {
             int best = Integer.MAX_VALUE, bx = targetX, bz = targetZ; boolean found = false;
             for (int dx = -r; dx <= r; dx += 2) for (int dz = -r; dz <= r; dz += 2) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;   // current ring only
                 int x = targetX + dx, z = targetZ + dz;
-                if (safeColumn(level, x, z, fromY)) {
+                if (safeColumn(level, x, z)) {
                     int d = dx * dx + dz * dz;
                     if (d < best) { best = d; bx = x; bz = z; found = true; }
                 }
@@ -175,269 +149,23 @@ public class Nav {
         spotX = targetX; spotZ = targetZ; haveSpot = false;   // nothing safe found; aim at the target anyway
     }
 
-    private static boolean safeColumn(Level level, int x, int z, int fromY) {
+    /** Whether a column's top block is safe to land on: not a fluid and not a dangerous block. The scan
+     *  starts at the surface (the WORLD_SURFACE heightmap, the highest non-air block), so it finds the
+     *  ground from any height. */
+    private static boolean safeColumn(Level level, int x, int z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        int bottom = Math.max(level.getMinY(), fromY - SCAN_DEPTH);
-        for (int y = fromY; y >= bottom; y--) {
+        int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        int bottom = Math.max(level.getMinY(), top - SCAN_DEPTH);
+        for (int y = top; y >= bottom; y--) {
             pos.set(x, y, z);
             BlockState s = level.getBlockState(pos);
             if (s.isAir()) continue;
-            if (!s.getFluidState().isEmpty()) return false;        // water/lava surface — not a landing spot
-            return !DANGER.contains(s.getBlock());                 // first solid block: safe iff not dangerous
+            if (!s.getFluidState().isEmpty()) return false;        // water or lava surface: not a landing spot
+            return !DANGER.contains(s.getBlock());                 // first solid block: safe unless dangerous
         }
-        return false;   // void / nothing within range
-    }
-
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (p == null) return;
-
-        int W = mc.getWindow().getGuiScaledWidth();
-        int H = mc.getWindow().getGuiScaledHeight();
-        int cx = W / 2, cy = H / 2;
-        int maxOff = (int) (H * 0.25f);
-        int lh = mc.font.lineHeight;
-
-        // heading compass arc across the very top — always shown, independent of autopilot state
-        drawHeadingArc(g, mc, cx, cy);
-
-        // annunciator block sits one line higher than the old layout; the freed bottom line carries the
-        // durability warning directly beneath it.
-        int durY  = cy - maxOff - lh - 6;   // durability warning line (below the annunciators; "too low" also uses it)
-        int etaY  = durY - lh - 2;          // bottom annunciator row
-        int lineY = etaY - lh - 2;          // top annunciator row
-
-        if (mode == Mode.MANAGED && hasTarget) drawTargetColumn(g, mc, W, H);
-
-        // Is the centered nav block shown? (Not when nav is off, and not when the too-low warning owns the slot.)
-        boolean navCenter = mode != Mode.OFF && !(FlightDirector.isTooLow() && !landing);
-
-        String top = null, line2 = null;
-        double dist = 0;
-        if (navCenter) {
-            top = (mode == Mode.SELECTED)
-                ? (hasHeading ? "HDG " + pad3(Math.round(selectedHeading)) : "HDG ---")
-                : (hasTarget  ? "COORD " + targetX + " " + targetZ          : "COORD --");
-            if (mode == Mode.MANAGED && hasTarget) {
-                double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
-                dist = Math.sqrt(hdx * hdx + hdz * hdz);
-                line2 = landing
-                    ? "LANDING"
-                    : "DIST " + fmtDist(dist) + "    ETA " + fmtEta(smoothEta(dist / RangeEndurance.speedEstimate()));
-            }
-        }
-        int halfCenter = (top == null) ? 0
-            : Math.max(mc.font.width(top), line2 == null ? 0 : mc.font.width(line2)) / 2;
-
-        // altitude-hold annunciator: two rows to the LEFT of the nav block, shown whenever the director flies
-        drawAltAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
-
-        // autopilot status on the RIGHT, mirroring the CLB/ALT block's distance from center -- replaces the old
-        // hotbar badge; always shown
-        int apX = Math.max(cx + ALT_LEFT_GAP, cx + halfCenter + 12);
-        g.text(mc.font, "AP", apX, lineY, Autopilot.isEngaged() ? GREEN : RED, true);
-
-        if (!navCenter) return;
-
-        g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, GREEN, true);
-        if (line2 == null) return;   // SELECTED, or no destination yet — no distance/ETA/range
-        g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, GREEN, true);
-
-        // If the elytra can't take us that far, flag it on one line directly below the annunciators.
-        double range = RangeEndurance.rangeMeters();
-        if (!landing && range >= 0 && range < dist) {
-            String wd = "INSUFFICIENT DURABILITY";
-            g.text(mc.font, wd, cx - mc.font.width(wd) / 2, durY, RED, true);
-        }
-    }
-
-    // Heading compass arc: a shallow arc of a big circle centred on the crosshair, drawn near the top of the
-    // screen. The compass card (ticks every 10 deg, labels every 30) rotates under a fixed apex; the current
-    // heading shows in a boxed readout just above the apex; a green bug marks the selected heading when one is
-    // active, clamped to the arc edges. Always drawn regardless of whether the autopilot is armed or engaged.
-    private static void drawHeadingArc(GuiGraphicsExtractor g, Minecraft mc, int cx, int cy) {
-        LocalPlayer p = mc.player;
-        if (p == null) return;
-        net.minecraft.client.gui.Font font = mc.font;
-        int lh = font.lineHeight;
-        double hdg = (((p.getYRot() + 180.0) % 360.0) + 360.0) % 360.0;   // compass heading (0=N, 90=E)
-
-        int boxH  = lh + 2;
-        int apexY = ARC_BOX_TOP + boxH + 4;
-        double R  = cy - apexY;                     // circle centred on the crosshair; apex just under the box
-        if (R < 20) return;
-        double scale = ARC_HALF_DEG / ARC_VIS_HDG;  // circle-deg per compass-deg
-
-        for (int h = 0; h < 360; h += 10) {
-            double d = Mth.wrapDegrees((float) (h - hdg));
-            if (Math.abs(d) > ARC_VIS_HDG) continue;
-            double a = Math.toRadians(d * scale), sin = Math.sin(a), cos = Math.cos(a);
-            boolean major = (h % 30 == 0);
-            int tlen = major ? 7 : 4;
-            int xo = cx + (int) Math.round(R * sin),          yo = cy - (int) Math.round(R * cos);
-            int xi = cx + (int) Math.round((R - tlen) * sin), yi = cy - (int) Math.round((R - tlen) * cos);
-            line(g, xi, yi, xo, yo, WHITE);
-            if (major) {
-                String lbl = headingLabel(h);
-                double lr = R - tlen - 2;                       // just inside the tick
-                int lx = cx + (int) Math.round(lr * sin) - font.width(lbl) / 2;
-                int ly = cy - (int) Math.round(lr * cos);       // hangs inboard (toward the centre), below the tick
-                g.text(font, lbl, lx, ly, WHITE, true);
-            }
-        }
-
-        // current-heading readout, boxed, just above the apex
-        String hs = pad3(((int) Math.round(hdg)) % 360);
-        int bw = font.width(hs) + 8, bx = cx - bw / 2;
-        g.fill(bx, ARC_BOX_TOP, bx + bw, ARC_BOX_TOP + boxH, 0x90000000);
-        g.outline(bx, ARC_BOX_TOP, bw, boxH, WHITE);   // outline takes width/height, not x2/y2
-        g.text(font, hs, cx - font.width(hs) / 2, ARC_BOX_TOP + (boxH - lh) / 2 + 1, WHITE, true);
-
-        // green selected-heading bug, a small triangle on the arc, clamped to the visible edges
-        if (mode == Mode.SELECTED && hasHeading) {
-            double d = Math.max(-ARC_VIS_HDG, Math.min(ARC_VIS_HDG, Mth.wrapDegrees((float) (selectedHeading - hdg))));
-            double a = Math.toRadians(d * scale), sin = Math.sin(a), cos = Math.cos(a);
-            int tx = cx + (int) Math.round(R * sin), ty = cy - (int) Math.round(R * cos);   // tip on the arc
-            double bcx = cx + (R + 7) * sin, bcy = cy - (R + 7) * cos;                       // base centre, just outside
-            double tgx = cos, tgy = sin;                                                     // tangent to the arc here
-            int b1x = (int) Math.round(bcx - 4 * tgx), b1y = (int) Math.round(bcy - 4 * tgy);
-            int b2x = (int) Math.round(bcx + 4 * tgx), b2y = (int) Math.round(bcy + 4 * tgy);
-            line(g, tx, ty, b1x, b1y, GREEN);
-            line(g, tx, ty, b2x, b2y, GREEN);
-            line(g, b1x, b1y, b2x, b2y, GREEN);
-        }
-    }
-
-    private static String headingLabel(int h) {
-        switch (h) {
-            case 0:   return "N";
-            case 90:  return "E";
-            case 180: return "S";
-            case 270: return "W";
-            default:  return Integer.toString(h / 10);
-        }
-    }
-
-    // 1px line via Bresenham (GuiGraphicsExtractor only offers axis-aligned primitives; the arc needs diagonals).
-    private static void line(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1, int col) {
-        int dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx - dy;
-        while (true) {
-            g.fill(x0, y0, x0 + 1, y0 + 1, col);
-            if (x0 == x1 && y0 == y1) break;
-            int e2 = 2 * err;
-            if (e2 > -dy) { err -= dy; x0 += sx; }
-            if (e2 <  dx) { err += dx; y0 += sy; }
-        }
-    }
-
-    /** Climb/altitude-hold annunciator (CLB or ALT over the target Y), two rows to the left of the nav block. */
-    private static void drawAltAnnunciator(GuiGraphicsExtractor g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
-        if (!Settings.displayFlightDirectors || !FlightDirector.isActive()) return;
-        int vm = FlightDirector.verticalMode();
-        String l1; int col;
-        if      (vm == FlightDirector.VM_CLB)      { l1 = "CLB";  col = AMBER;  }   // climbing to target
-        else if (vm == FlightDirector.VM_DESC)     { l1 = "DESC"; col = AMBER;  }   // descending to target
-        else if (vm == FlightDirector.VM_ALT_STAR) { l1 = "ALT*"; col = YELLOW; }   // capture, nearing target
-        else                                       { l1 = "ALT";  col = GREEN;  }   // holding target
-        String l2 = Integer.toString(FlightDirector.targetAltitude());
-        int blockW = Math.max(mc.font.width(l1), mc.font.width(l2));
-        // Fixed offset to the left of center so it doesn't slide as the nav block's width changes; only
-        // pushed further left (never right, into the block) if an unusually wide COORD/ETA line needs it.
-        int rightEdge = Math.min(cx - ALT_LEFT_GAP, cx - halfCenter - 12);
-        int x = rightEdge - blockW;
-        g.text(mc.font, l1, x + (blockW - mc.font.width(l1)) / 2, lineY, col, true);
-        g.text(mc.font, l2, x + (blockW - mc.font.width(l2)) / 2, etaY, col, true);
-    }
-
-    // --- helpers ---
-
-    /** Baritone-style beam: project the world column at the target X/Z to screen and draw it. There is
-     *  no per-frame world-render hook in 26.1, so this is screen-space (and therefore draws through
-     *  terrain, like Baritone's goal beam). */
-    private static void drawTargetColumn(GuiGraphicsExtractor g, Minecraft mc, int W, int H) {
-        Camera cam = mc.gameRenderer.getMainCamera();
-        Matrix4f vp = cam.getViewRotationProjectionMatrix(new Matrix4f());
-        Vec3 c = cam.position();
-        double wx = targetX + 0.5, wz = targetZ + 0.5;
-
-        float[] base = project(vp, c, wx, COLUMN_BASE_Y, wz, W, H);
-        float[] top  = project(vp, c, wx, COLUMN_TOP_Y,  wz, W, H);
-        if (base == null || top == null) return;   // (partly) behind the camera — skip this frame
-
-        float sdx = top[0] - base[0], sdy = top[1] - base[1];
-        float len = (float) Math.sqrt(sdx * sdx + sdy * sdy);
-        if (len < 1f) return;
-
-        double ddx = wx - c.x, ddz = wz - c.z;
-        double dist = Math.sqrt(ddx * ddx + ddz * ddz);
-        int width = (int) Math.max(2, Math.min(16, 600.0 / Math.max(1.0, dist)));
-
-        Matrix3x2fStack pose = g.pose();
-        pose.pushMatrix();
-        pose.translate((base[0] + top[0]) / 2f, (base[1] + top[1]) / 2f);
-        pose.rotate((float) Math.atan2(sdy, sdx));   // align the quad with the projected column
-        int hl = Math.round(len / 2f);
-        g.fill(-hl, -width / 2, hl, width / 2, COLUMN_BODY);
-        g.fill(-hl, -1, hl, 1, COLUMN_CORE);
-        pose.popMatrix();
-    }
-
-    private static float[] project(Matrix4f vp, Vec3 c, double wx, double wy, double wz, int W, int H) {
-        Vector4f v = new Vector4f((float) (wx - c.x), (float) (wy - c.y), (float) (wz - c.z), 1.0f);
-        vp.transform(v);
-        if (v.w <= 0.0f) return null;
-        return new float[]{ (v.x / v.w * 0.5f + 0.5f) * W, (1.0f - (v.y / v.w * 0.5f + 0.5f)) * H };
+        return false;   // void, or nothing within range
     }
 
     private static float wrap360(float d) { d %= 360f; return d < 0 ? d + 360f : d; }
     private static float wrap180(float d) { return Mth.wrapDegrees(d); }
-    private static String pad3(long n) { n = ((n % 360) + 360) % 360; return String.format("%03d", n); }
-    private static String fmtDist(double m) { return m >= 1000 ? String.format("%.1f km", m / 1000.0) : Math.round(m) + " m"; }
-
-    /**
-     * Format an ETA: round UP to 2 significant figures, then UP to the finest unit the readout will
-     * actually print — whole seconds under an hour, whole minutes at or above one (where KineTime drops
-     * the seconds field). Without that second step the h:m display floors the leftover seconds and quietly
-     * eats the conservative round-up (e.g. 3661 s rounded to 3700 prints "1h 01m" = 3660 s < true). This
-     * way the printed string is always ≥ the true ETA, and never finer than the precision actually kept.
-     */
-    private static String fmtEta(double seconds) {
-        if (!Double.isFinite(seconds) || seconds <= 0) return KineTime.format(seconds);
-        double r = roundUpSig2(seconds);
-        double unit = (r < 3600) ? 1.0 : 60.0;                 // finest unit KineTime will show at this magnitude
-        return KineTime.format(Math.ceil(r / unit - 1e-9) * unit);
-    }
-
-    /** Round a duration (s) UP to 2 significant figures, so the displayed ETA never reads shorter than it is. */
-    private static double roundUpSig2(double v) {
-        if (!(v > 0)) return 0;
-        double mag = Math.pow(10, Math.floor(Math.log10(v) + 1e-9) - 1);   // unit of the 2nd significant figure
-        return Math.ceil(v / mag - 1e-9) * mag;
-    }
-
-    /** Forget the smoothed ETA so a new destination starts fresh instead of easing off the old estimate. */
-    private static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }
-
-    /**
-     * Smooths the displayed ETA. The raw figure (distance / cruise speed) is right on average but ticks
-     * down unevenly because ground speed surges in the dive and stalls at the top of each porpoise.
-     * Complementary filter: count the real clock down at exactly one second per second (perfectly even),
-     * then drift gently toward the true value so it stays accurate and absorbs genuine speed/heading
-     * changes. The slow drift averages the porpoise surge/stall away. Snaps on a big jump (new target,
-     * teleport) or after a render gap (screen open, F1) so it never crawls in from a stale value.
-     */
-    private static double smoothEta(double raw) {
-        long now = System.nanoTime();
-        double dt = (etaNanos == 0L) ? 0.0 : (now - etaNanos) / 1.0e9;
-        etaNanos = now;
-        if (Double.isNaN(etaShown) || dt <= 0 || dt > 1.0 || Math.abs(raw - etaShown) > Math.max(30.0, raw * 0.5)) {
-            etaShown = raw;
-        } else {
-            etaShown = Math.max(0.0, etaShown - dt);                  // real-clock countdown: smooth by construction
-            etaShown += (raw - etaShown) * (1.0 - Math.exp(-dt / ETA_TC));
-        }
-        return etaShown;
-    }
 }

@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"id": "kine",
 	"version": "${version}",
-	"name": "kine",
+	"name": "Kine",
 	"description": "Utility mod.",
 	"authors": [
 		"Raymond Wang"

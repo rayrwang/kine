@@ -1,23 +1,23 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.util.Enchant;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.Holder;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.monster.piglin.Piglin;
+import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
-import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -30,40 +30,39 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Toggleable melee kill aura against hostile mobs and angry neutral mobs.
+ * Melee kill aura against hostile mobs and neutral mobs that have hit you, toggled in the settings
+ * screen. It attacks mobs in reach with line of sight, without turning the view.
  *
- * <p>The 26.1.2 combat numbers drive the whole design (all read from the decompiled jar):
- * an attack's base damage is scaled by {@code 0.2 + 0.8*charge^2} (a quadratic curve with a hard 20%
- * floor), the charge ticker resets on every swing, and a struck mob is invulnerable to our follow-ups
- * for the first 10 ticks (it only re-takes full damage once its i-frame window drops to <=10, i.e.
- * ~0.5 s later). Those three facts mean there is no single best behaviour, so the aura switches mode by
- * how many targets are in reach and what's in hand:
+ * <p>From the 26.1.2 combat code: a hit's damage is scaled by {@code 0.2 + 0.8*charge^2}, the charge
+ * resets on every swing, and a struck mob takes full damage again only after 10 ticks. So the aura
+ * picks a mode from the number of targets and the weapon:
  * <ul>
- *   <li><b>Sweep</b> &mdash; a Sweeping-Edge sword on the ground against a cluster: wait for a full
- *       charge and strike the mob with the most neighbours in its sweep box, so one swing AoEs the group.</li>
- *   <li><b>Spam</b> &mdash; a real crowd of fresh targets: swing every tick at the nearest non-i-framed
- *       mob. Each hit is only the 20% floor, but resetting the cooldown to land many hits on many fresh
- *       mobs out-aggregates waiting once there are enough of them.</li>
- *   <li><b>Wait</b> &mdash; one or a few targets: hold until a full charge, then strike, timed to the
- *       0.5 s i-frame window so every hit is a real hit.</li>
+ *   <li><b>Sweep</b>: a Sweeping Edge sword on the ground against a cluster. Wait for a full charge and
+ *       hit the mob with the most neighbours in its sweep box.</li>
+ *   <li><b>Spam</b>: a crowd of fresh targets. Swing every tick at the nearest mob not hit in the last
+ *       10 ticks. Each hit does only the 20% floor, but many hits on many mobs beat waiting.</li>
+ *   <li><b>Wait</b>: one or a few targets. Strike on a full charge, so every hit lands full damage.</li>
  * </ul>
- * Per-mob i-frame tracking skips mobs we hit less than 10 ticks ago so swings are never wasted.
  *
  * <p>Targets are mobs only (never players, armour stands or animals): hostiles ({@link Enemy}) always,
- * and neutral mobs only while angry at us &mdash; detected client-side from {@code getLastDamageSource},
- * since a mob's AI anger isn't synced. Toggled from the mod's settings menu (K). It attacks entities directly in reach without turning the view,
- * with a line-of-sight check so it won't swing through walls. This is a combat cheat: expect a ban
- * anywhere that doesn't allow client mods.
+ * neutral mobs (endermen and zombified piglins included, though the game counts them as hostile) only
+ * for a while after they damage you, read client-side from {@code getLastDamageSource} because mob
+ * anger isn't synced to the client. Adult piglins attack a player without gold armour, so they are
+ * targets then; while you wear gold they are neutral.
  */
 public final class KillAura {
     private KillAura() {}
 
-    // --- tuning ---------------------------------------------------------------------------------
-    private static final int   HIT_REFRACTORY = 10;   // a struck mob sets invulnerableTime=20 and is re-hittable for full damage only at <=10 -- i.e. exactly 10 ticks later
-    private static final float FULL_CHARGE    = 1.0f;  // wait/sweep gate. Vanilla enables sweep/crit at scale>0.9, but a sword/axe's charge time (>=12.5t) outlasts the 10t i-frame, so you're charge-limited: hitting at 0.9 instead of full just resets the ticker ~1.5t early for ~5% less per hit. A full charge is the DPS-optimal point (and also maximises sweep base damage).
-    private static final int   ANGRY_TICKS    = 600;   // a neutral mob that hits you stays a target this long (~30 s)
-    private static final int   WEAPON_PERIOD  = 10;    // re-evaluate the best weapon at most this often (~0.5 s) while engaging
-    private static final double REACH_PAD     = 0.0;   // attack at exactly the vanilla entity-interaction range
+    // A struck mob sets invulnerableTime to 20 and takes full damage again once it is at or below 10,
+    // that is 10 ticks later.
+    private static final int   HIT_REFRACTORY = 10;
+    // Charge needed to swing in the wait and sweep modes. Vanilla allows sweeps and crits above 0.9, but a
+    // sword or axe takes at least 12.5 ticks to charge, longer than the 10-tick window, so swinging at 0.9
+    // only restarts the charge 1.5 ticks early for 5% less damage. A full charge gives the most damage per
+    // second and the largest sweep.
+    private static final float FULL_CHARGE    = 1.0f;
+    private static final int   ANGRY_TICKS    = 600;   // a neutral mob that hits you stays a target this long (30 s)
+    private static final int   WEAPON_PERIOD  = 10;    // re-pick the best weapon at most this often while fighting
     private static final double SWEEP_X = 1.0, SWEEP_Y = 0.25, SWEEP_Z = 1.0;   // vanilla sweep-box inflation
 
     private static final Map<Integer, Integer> lastHit    = new HashMap<>();   // entityId -> tick we last hit it
@@ -85,14 +84,14 @@ public final class KillAura {
 
         if (!Settings.killAura || mc.gameMode == null || mc.screen != null || !p.isAlive() || p.isUsingItem()) return;
 
-        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE) + REACH_PAD;
+        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         Vec3 eye = p.getEyePosition();
         AABB area = p.getBoundingBox().inflate(reach + 1.0);
 
         List<LivingEntity> inReach = new ArrayList<>();
         LivingEntity nearestTarget = null;
         double nearestDist = Double.MAX_VALUE;
-        for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x))) {
+        for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x, p))) {
             LivingEntity t = (LivingEntity) e;
             if (eyeToBox(eye, t.getBoundingBox()) > reach) continue;
             if (!lineOfSight(p, eye, t)) continue;
@@ -102,22 +101,22 @@ public final class KillAura {
         }
         if (inReach.isEmpty()) return;
 
-        // Auto weapon selection: equip the best sword/axe for this target before swinging. Re-evaluated
-        // periodically (the target type can change) and immediately when not already holding a weapon.
+        // Auto weapon: equip the best sword or axe for this target before swinging. Re-picked every
+        // WEAPON_PERIOD ticks (the target can change), and at once when not holding a weapon.
         if (Settings.autoWeapon) {
             ItemStack cur = p.getMainHandItem();
             boolean holdingWeapon = cur.is(h -> h.is(ItemTags.SWORDS)) || cur.is(h -> h.is(ItemTags.AXES));
             if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
                 lastWeaponTick = tick;
-                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched; swing next tick once it syncs
+                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched: swing next tick, once the server has it
             }
         }
 
         ItemStack held = p.getMainHandItem();
-        boolean sweepSword = held.is(h -> h.is(ItemTags.SWORDS)) && enchantLevel(held, Enchantments.SWEEPING_EDGE) > 0;
+        boolean sweepSword = held.is(h -> h.is(ItemTags.SWORDS)) && Enchant.level(held, Enchantments.SWEEPING_EDGE) > 0;
         float charge = p.getAttackStrengthScale(0.5f);
 
-        // Sweep: a Sweeping-Edge sword, on the ground, fully charged, against a cluster -> one swing hits the group.
+        // Sweep: a Sweeping Edge sword, on the ground, fully charged, against a cluster.
         if (sweepSword && p.onGround() && charge >= FULL_CHARGE) {
             LivingEntity hub = bestSweepTarget(inReach);
             if (hub != null) {
@@ -128,7 +127,7 @@ public final class KillAura {
             }
         }
 
-        // Otherwise pick the nearest mob we can actually re-hit (not still in our i-frame window).
+        // Otherwise the nearest mob that takes full damage again (not hit in the last 10 ticks).
         int fresh = 0;
         LivingEntity nearest = null;
         double best = Double.MAX_VALUE;
@@ -138,41 +137,60 @@ public final class KillAura {
             double d = eye.distanceToSqr(t.getBoundingBox().getCenter());
             if (d < best) { best = d; nearest = t; }
         }
-        if (nearest == null) return;   // everything we can see is still i-framed -- nothing to gain by swinging
+        if (nearest == null) return;   // every target was hit too recently: a swing would do nothing
 
-        // Spam-vs-wait breakeven, from the real combat maths: every swing resets the charge ticker, so a
-        // spammed hit is the 20% floor (~0.2*base); you can land one per fresh mob and a mob is fresh every
-        // 10 ticks, giving spam aggregate ~= 0.02*N*base per tick. Waiting lands one full hit (base) per
-        // attack delay D (a sword/axe is charge-limited since D >= 12.5 > 10), i.e. base/D per tick. Spam
-        // wins past N = 50/D fresh mobs -- ~5 for a sword, ~3 for a netherite axe. (Enchantments barely
-        // touch the floor-damage spam hit but fully count toward the full hit, so they nudge this up a little.)
-        int spamMin = (int) Math.floor(50.0 / p.getCurrentItemAttackStrengthDelay()) + 1;
+        // Spam or wait: a spammed hit does the 20% floor, one per fresh mob, and a mob is fresh every 10
+        // ticks, so spam deals about 0.02 * N * base per tick. Waiting deals one full hit per attack delay D
+        // (D >= 12.5 for a sword or axe), base / D per tick. Spam wins past N = 50 / D fresh mobs: 5 for a
+        // sword, 3 for a netherite axe. Enchantments add little to the floor hit, so they raise this a bit.
+        int spamMin = spamThreshold(p.getCurrentItemAttackStrengthDelay());
 
         if (fresh >= spamMin) {
-            attack(mc, p, nearest);                          // crowd: swing every tick at a fresh mob
+            attack(mc, p, nearest);                          // crowd: swing every tick
         } else if (charge >= FULL_CHARGE) {
-            attack(mc, p, nearest);                          // few: only on a full charge, timed to the i-frame window
+            attack(mc, p, nearest);                          // few: only on a full charge
         }
     }
 
-    /** Mobs only; hostiles always, neutral mobs only while angry at us. Used as the gather predicate. */
-    private static boolean isTarget(Entity e) {
+    /** Fresh targets in reach from which spamming beats waiting, for a weapon with this attack delay
+     *  (ticks to a full charge): more than 50 / delay. */
+    static int spamThreshold(float attackDelay) {
+        return (int) Math.floor(50.0 / attackDelay) + 1;
+    }
+
+    /** Mobs only: hostiles always, neutral mobs only for a while after they hit you. */
+    private static boolean isTarget(Entity e, LivingEntity player) {
         if (!(e instanceof Mob mob) || !mob.isAlive() || mob.isSpectator()) return false;
-        if (mob instanceof Enemy) return true;
+        if (mob instanceof Enemy && !neutral(mob)) return true;
+        if (piglinHostile(mob, player)) return true;
         Integer until = angryUntil.get(mob.getId());
         return until != null && until > tick;
+    }
+
+    /** Mobs that leave the player alone until provoked, though some count as hostile (Enemy) in the game:
+     *  the NeutralMob ones (endermen, zombified piglins, wolves, bees, iron golems, polar bears) and
+     *  piglins, which ignore players wearing gold (see piglinHostile). Piglin brutes attack anyone and
+     *  stay hostile. */
+    private static boolean neutral(Mob mob) {
+        return mob instanceof NeutralMob || mob instanceof Piglin;
+    }
+
+    /** An adult piglin attacks a player who wears no gold armour (the game's own test), so it is a
+     *  target then, before it hits. Baby piglins never attack. */
+    private static boolean piglinHostile(Mob mob, LivingEntity player) {
+        return mob instanceof Piglin piglin && !piglin.isBaby() && !PiglinAi.isWearingSafeArmor(player);
     }
 
     /** A neutral mob that freshly damaged the player is treated as a target for a while. */
     private static void trackAnger(LocalPlayer p) {
         if (p.hurtTime > lastHurtTime) {
             DamageSource src = p.getLastDamageSource();
-            if (src != null && src.getEntity() instanceof Mob mob && !(mob instanceof Enemy)) {
+            if (src != null && src.getEntity() instanceof Mob mob && (neutral(mob) || !(mob instanceof Enemy))) {
                 angryUntil.put(mob.getId(), tick + ANGRY_TICKS);
             }
         }
         lastHurtTime = p.hurtTime;
-        if ((tick & 63) == 0) {   // occasional prune so the maps don't grow without bound
+        if ((tick & 63) == 0) {   // prune now and then so the maps don't grow without bound
             angryUntil.values().removeIf(v -> v <= tick);
             lastHit.values().removeIf(v -> v + HIT_REFRACTORY <= tick);
         }
@@ -189,7 +207,7 @@ public final class KillAura {
         lastHit.put(target.getId(), tick);
     }
 
-    /** The reachable, fresh target whose sweep box catches the most others (>=1, else not worth a sweep). */
+    /** The fresh target whose sweep box catches the most others (at least one, else null). */
     private static LivingEntity bestSweepTarget(List<LivingEntity> targets) {
         LivingEntity best = null;
         int bestN = 0;
@@ -218,9 +236,4 @@ public final class KillAura {
             || hit.getLocation().distanceToSqr(eye) >= aim.distanceToSqr(eye) - 1.0e-3;
     }
 
-    private static int enchantLevel(ItemStack s, ResourceKey<Enchantment> key) {
-        ItemEnchantments ench = s.getEnchantments();
-        for (Holder<Enchantment> h : ench.keySet()) if (h.is(key)) return ench.getLevel(h);
-        return 0;
-    }
 }

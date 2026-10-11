@@ -15,7 +15,6 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix3x2fStack;
 import org.joml.Matrix4f;
-import org.joml.Vector4f;
 
 public class MobHealthHud {
 
@@ -70,12 +69,9 @@ public class MobHealthHud {
     private static void drawLabel(GuiGraphicsExtractor graphics, Matrix3x2fStack pose, Font font,
         Matrix4f viewProj, Vec3 camPos, int screenW, int screenH,
         double wx, double wy, double wz, String text, float scale) {
-        Vector4f p = new Vector4f((float) (wx - camPos.x), (float) (wy - camPos.y), (float) (wz - camPos.z), 1.0f);
-        viewProj.transform(p);
-        if (p.w <= 0.0f) return; // behind the camera
-
-        float sx = (p.x / p.w * 0.5f + 0.5f) * screenW;
-        float sy = (1.0f - (p.y / p.w * 0.5f + 0.5f)) * screenH;
+        float[] s = ScreenProjection.project(viewProj, camPos, wx, wy, wz, screenW, screenH, 0.0f);
+        if (s == null) return; // behind the camera
+        float sx = s[0], sy = s[1];
 
         int w = font.width(text);
         pose.pushMatrix();

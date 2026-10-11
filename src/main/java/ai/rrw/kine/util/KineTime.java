@@ -1,7 +1,6 @@
 package ai.rrw.kine.util;
 
-/** One place for formatting durations, so every readout rolls seconds up into minutes and hours
- *  the same way (e.g. ETA, endurance, mining time-left, failsafe countdowns). */
+/** Duration formatting shared by every readout (ETA, endurance, mining time, failsafe countdowns). */
 public final class KineTime {
 
     private KineTime() {}

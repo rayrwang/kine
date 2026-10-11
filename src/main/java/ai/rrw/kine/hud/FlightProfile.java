@@ -3,9 +3,7 @@ package ai.rrw.kine.hud;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
-import ai.rrw.kine.autoflight.FlightDirector;
-import ai.rrw.kine.autoflight.FlightModel;
-import ai.rrw.kine.autoflight.TerrainGuard;
+import ai.rrw.kine.autoflight.PathPrediction;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -20,40 +18,35 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
 
+import java.util.Arrays;
+
 /**
- * Side-on flight profile -- a small Terraria-style cutaway pinned to the top-right corner: the real blocks
- * along the ground track ahead of you (block map colours, sky-blue for open air, a darker fill for air
- * enclosed below the surface so caves read as caves), with a smooth dark-blue trace of the autopilot's
- * predicted path over them.
+ * Side-on flight profile, a small cutaway in the top-right corner: the blocks ahead (map colours, sky
+ * blue for open air, a darker fill for air below the surface so caves read as caves), and while the
+ * autopilot is engaged a dark navy trace of its predicted path ({@link PathPrediction}, as the rails
+ * show it). While engaged the cutaway follows that path, turns included, unrolled flat; otherwise it
+ * looks straight along the ground track. The terrain shows whenever you are gliding. Instrument only.
  *
- * <p>The trace is the autopilot's committed trajectory -- the same {@link FlightModel} rollout seeded by
- * {@link TerrainGuard#seedFromPlayer} that draws the blue rails -- so it's drawn only while the autopilot is
- * engaged. The terrain panel shows whenever you're gliding. Pure instrument: reads and draws, steers nothing.
- *
- * <p>The horizontal axis spans the whole loaded render distance (so the map reaches exactly as far as you can
- * see), and the vertical axis uses the SAME blocks-per-pixel scale, so the picture is undistorted. The
- * vertical window slides to keep you ~62% up from the bottom. No panel or border -- just the raster, the
- * trace, and small numeric ticks (distance ahead along the bottom, altitude up the left).
+ * <p>The horizontal axis spans the render distance and the vertical axis uses the same scale, so the
+ * picture is undistorted; the window slides to keep you 62% of the way up. Distance ticks run along
+ * the bottom, altitude ticks up the left.
  */
 public final class FlightProfile {
     private FlightProfile() {}
 
-    // ---- geometry (gui-scaled px; 1 px per cell) ----
+    // geometry (GUI-scaled pixels, one pixel per cell)
     private static final int    COLS    = 120;
     private static final int    ROWS    = 120;
-    private static final int    CELL    = 1;
-    private static final int    PLOT_W  = COLS * CELL;
-    private static final int    PLOT_H  = ROWS * CELL;
-    private static final double TOP_FRAC = 0.382;                // you sit 38.2% down from the top (~62% up)
+    private static final int    PLOT_W  = COLS;
+    private static final int    PLOT_H  = ROWS;
+    private static final double TOP_FRAC = 0.382;                // you sit 38.2% down from the top
     private static final int    PLAYER_ROW = (int) Math.round(TOP_FRAC * ROWS);
 
     private static final int PAD_L = 22, PAD_T = 2, PAD_B = 11, MARGIN_PX = 6;
 
-    // ---- projection ----
-    private static final int MAX_STEPS = 900;                    // rollout cap (ticks) -- covers a 32-chunk render
     private static final int RECOMPUTE = 6;
 
-    // ---- colours (ARGB unless noted) ----
+    // colours (ARGB unless noted)
     private static final int AIR      = 0xFF8FB8E0;
     private static final int CAVE     = 0xFF1B2330;
     private static final int UNKNOWN  = 0xFF454B52;
@@ -63,11 +56,11 @@ public final class FlightProfile {
     private static final int LABEL    = 0xFFC8D0D8;
 
     private static boolean  have = false;
-    private static int[]    cells;                               // COLS*ROWS, idx = c*ROWS + r, r=0 is window top
+    private static int[]    cells;                               // COLS*ROWS, index c*ROWS + r, r = 0 at the window top
     private static double[] pathY;                               // per column: plot-space row of the trace (float)
     private static boolean[] hasPath;
     private static double   winTop, winBottom;
-    private static double   rangeX = 240.0;                      // current x-span (blocks) = render distance
+    private static double   rangeX = 240.0;                      // horizontal span (blocks), the render distance
     private static int      ticks = 0;
 
     public static void register() {
@@ -92,42 +85,50 @@ public final class FlightProfile {
         ClientLevel level = mc.level;
         double pX = p.getX(), pY = p.getY(), pZ = p.getZ();
 
-        // X spans the entire loaded render distance; Y uses the same blocks-per-pixel scale (square cells).
+        // X spans the render distance; Y uses the same blocks per pixel (square cells).
         rangeX = Math.max(32, mc.options.getEffectiveRenderDistance() * 16);
         double bpp = rangeX / PLOT_W;
         double span = PLOT_H * bpp;
-        winTop = pY + TOP_FRAC * span;          // slide the window to keep you at TOP_FRAC; scale is fixed by render
+        winTop = pY + TOP_FRAC * span;          // slide the window to keep you at TOP_FRAC
         winBottom = winTop - span;
 
-        // ground-track unit vector (the direction the strip looks along)
+        // ground-track unit vector, the direction the cutaway looks along when there is no prediction
         double dx = pX - p.xOld, dz = pZ - p.zOld, len = Math.hypot(dx, dz);
         double trackX, trackZ;
         if (len > 1.0e-4) { trackX = dx / len; trackZ = dz / len; }
         else { double yr = Math.toRadians(p.getYRot()); trackX = -Math.sin(yr); trackZ = Math.cos(yr); }
 
-        // The trace: only when engaged, pulled from the predicted trajectory (same source as the blue rails).
-        boolean engaged = Autopilot.isEngaged();
-        java.util.Arrays.fill(hasPath, false);
-        if (engaged) {
-            FlightModel.State s = TerrainGuard.seedFromPlayer(p, FlightDirector.floorAltitude());
-            double colStep = rangeX / COLS, nextD = colStep * 0.5;
-            int col = 0;
-            for (int k = 1; k <= MAX_STEPS && col < COLS; k++) {
-                FlightModel.step(s);                              // s.x = along-track distance, s.y = altitude
-                while (col < COLS && s.x >= nextD) {
-                    pathY[col] = (winTop - s.y) / span * ROWS;    // plot-space row (float; may sit off-plot)
-                    hasPath[col] = true;
-                    col++; nextD += colStep;
-                }
+        // Column c shows the world at horizontal distance (c + 0.5) * colStep along the path: along the
+        // predicted path while there is one (it is drawn too), straight along the ground track otherwise,
+        // and straight on from the prediction's end if it ends before the plot does.
+        double colStep = rangeX / COLS;
+        double[] colX = new double[COLS], colZ = new double[COLS];
+        Arrays.fill(hasPath, false);
+        int col = 0;
+        int n = Autopilot.isEngaged() ? PathPrediction.count() : 0;
+        double walked = 0.0, nextD = colStep * 0.5, lastX = 0.0, lastZ = 0.0;
+        for (int k = 1; k < n && col < COLS; k++) {
+            double x = PathPrediction.x(k), z = PathPrediction.z(k);
+            double seg = Math.hypot(x - lastX, z - lastZ);
+            if (seg > 1.0e-9) { trackX = (x - lastX) / seg; trackZ = (z - lastZ) / seg; }
+            while (col < COLS && walked + seg >= nextD) {
+                double f = seg > 1.0e-9 ? (nextD - walked) / seg : 0.0;
+                colX[col] = lastX + (x - lastX) * f; colZ[col] = lastZ + (z - lastZ) * f;
+                double y = PathPrediction.y(k - 1) + (PathPrediction.y(k) - PathPrediction.y(k - 1)) * f;
+                pathY[col] = (winTop - (pY + y)) / span * ROWS;   // plot row (fractional; may be off the plot)
+                hasPath[col] = true;
+                col++; nextD += colStep;
             }
+            walked += seg; lastX = x; lastZ = z;
+        }
+        for (; col < COLS; col++, nextD += colStep) {               // beyond the prediction: straight on
+            colX[col] = lastX + trackX * (nextD - walked); colZ[col] = lastZ + trackZ * (nextD - walked);
         }
 
-        // rasterize each column top-down along the straight ground track, sampling the real world block
+        // rasterise each column top-down from the world's blocks
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        double colStep = rangeX / COLS;
         for (int c = 0; c < COLS; c++) {
-            double d = (c + 0.5) * colStep;
-            int wx = (int) Math.floor(pX + trackX * d), wz = (int) Math.floor(pZ + trackZ * d);
+            int wx = (int) Math.floor(pX + colX[c]), wz = (int) Math.floor(pZ + colZ[c]);
             boolean seenSolid = false;
             for (int r = 0; r < ROWS; r++) {
                 int idx = c * ROWS + r;
@@ -154,37 +155,36 @@ public final class FlightProfile {
         int ox = g.guiWidth() - panelW - MARGIN_PX, oy = MARGIN_PX;
         int plotX = ox + PAD_L, plotY = oy + PAD_T;
 
-        // terrain cells -- merge vertical runs of equal colour into one fill. No panel, no border: the raster
-        // is the map.
+        // terrain cells, merging vertical runs of one colour into one fill
         for (int c = 0; c < COLS; c++) {
-            int sx = plotX + c * CELL, base = c * ROWS;
+            int sx = plotX + c, base = c * ROWS;
             int runStart = 0, runColor = cells[base];
             for (int r = 1; r < ROWS; r++) {
                 int col = cells[base + r];
                 if (col != runColor) {
-                    g.fill(sx, plotY + runStart * CELL, sx + CELL, plotY + r * CELL, runColor);
+                    g.fill(sx, plotY + runStart, sx + 1, plotY + r, runColor);
                     runStart = r; runColor = col;
                 }
             }
-            g.fill(sx, plotY + runStart * CELL, sx + CELL, plotY + ROWS * CELL, runColor);
+            g.fill(sx, plotY + runStart, sx + 1, plotY + ROWS, runColor);
         }
 
-        // predicted trace -- a smooth (anti-aliased) polyline, only when engaged
+        // predicted trace, an anti-aliased polyline, only while engaged
         for (int c = 0; c < COLS - 1; c++) {
             if (!hasPath[c] || !hasPath[c + 1]) continue;
             aaLine(g, plotX, plotY, c + 0.5, pathY[c], c + 1.5, pathY[c + 1]);
         }
 
         // you-are-here marker at the left edge, pinned at TOP_FRAC
-        int psy = plotY + PLAYER_ROW * CELL;
+        int psy = plotY + PLAYER_ROW;
         g.fill(plotX, psy - 2, plotX + 3, psy + 3, PLAYER);
 
-        // small numeric ticks (shadowed, since there's no panel behind them): distance along the bottom...
+        // small numeric ticks, shadowed since there is no panel behind them: distance along the bottom,
         int ayTick = plotY + PLOT_H, ayText = plotY + PLOT_H + 4;
         xTick(g, font, plotX, ayTick, ayText, 0.0,          "0",                                 0);
         xTick(g, font, plotX, ayTick, ayText, rangeX / 2,   String.valueOf((int) (rangeX / 2)),  1);
         xTick(g, font, plotX, ayTick, ayText, rangeX,       String.valueOf((int) rangeX),        2);
-        // ...altitude up the left, at round heights spaced to the current scale
+        // altitude up the left at round heights for the current scale
         double span = winTop - winBottom;
         int step = niceStep(span / 4.0);
         long first = (long) Math.ceil(winBottom / step) * step;
@@ -219,7 +219,7 @@ public final class FlightProfile {
         return best;
     }
 
-    // ---- smooth line (Wu): two coverage-weighted pixels per step, clipped to the plot ----
+    // anti-aliased line (Wu's algorithm): two coverage-weighted pixels per step, clipped to the plot
     private static void aaLine(GuiGraphicsExtractor g, int plotX, int plotY,
                                double x0, double y0, double x1, double y1) {
         boolean steep = Math.abs(y1 - y0) > Math.abs(x1 - x0);

@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(LivingEntity.class)
 public class LivingEntityMixin {
 
-    // updateFallFlyingMovement returns this tick's velocity; we clamp it before it's stored and moved,
-    // so the reduced speed also carries into next tick's lastSpeed (the value the wall-damage formula uses).
+    // updateFallFlyingMovement returns this tick's velocity; it is clamped before it is stored and moved,
+    // so the reduced speed is also next tick's starting speed, which the wall damage formula compares against.
     @ModifyExpressionValue(
         method = "travelFallFlying(Lnet/minecraft/world/phys/Vec3;)V",
         at = @At(value = "INVOKE",

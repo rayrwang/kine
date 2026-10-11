@@ -1,60 +1,49 @@
 package ai.rrw.kine.autoflight;
 
 /**
- * Prioritized model-predictive planner for the TURN-capable autopilot (2-D).
- *
- * One decision per call, given the live-seeded {@link FlightModel3D.State} and the bearing to the
- * destination. Stages, in order:
- *   1. CLB     -- steer straight at the destination, climbing; if that rollout clears, keep course.
- *   2. TURN    -- otherwise the smallest heading offset whose rollout clears AND makes real forward
- *                 progress (displacement projected onto the destination bearing >= PROG_MIN). This
- *                 threads a gap or rounds the end of a finite obstacle; it is a descending maneuver.
- *   3. RETREAT -- nothing makes progress: reverse course. The closed loop ({@link TurnController})
- *                 turns this into a committed back-off-and-climb leg.
- *
- * "Progress" is directional, not straight-line distance: sliding sideways past an impassable wall
- * scores ~0 and is rejected, while rounding a finite end scores positive. Why directional and why
- * committed legs are both lessons the sim taught (raw distance gets gamed; chasing a moving offset
- * never stops turning and sinks). Mirrors terrain_turn_poc.py tick-for-tick.
+ * Model-predictive terrain-avoidance planner. Each call rolls the flight model forward from the live
+ * state over the heightmap and returns one decision, in order of preference:
+ *   1. STRAIGHT at the destination at the cruise floor, if that path clears.
+ *   2. Straight, with the trough floor raised in steps (climb over the obstacle).
+ *   3. TURN: the smallest heading offset whose path clears (with the same floor ladder) and makes
+ *      forward progress along the destination bearing; else the smallest offset that clears at all.
+ *   4. EMERGENCY: a wall inside the turn radius: reverse toward the more open side.
+ *   5. Otherwise straight at the cruise floor, in case the path opens up as it nears.
+ * Progress is measured along the destination bearing, not as straight-line distance, so sliding
+ * sideways along an endless wall scores zero.
  */
 public final class TurnPlanner {
     private TurnPlanner() {}
 
-    public static final int CLB = 0, TURN = 1, EMERGENCY = 2, DISENGAGE = 3;
+    public static final int STRAIGHT = 0, TURN = 1, EMERGENCY = 2, DISENGAGE = 3;
     static final int CLEARS = 1, HITS = 0, INSUFFICIENT = -1;
     static final int CAUSE_NONE = 0, CAUSE_CORRIDOR = 1, CAUSE_GROUND = 2;
 
-    // tuning (mirror terrain_turn_poc.py)
     static final double[] OFFSETS = {4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,72,80,90,102,116,130,144,158,172};
     static final double PROG_MIN = 40.0;    // a turn must close at least this far along the bearing
     public static final int HORIZON = 900;
-    public static final double MIN_LOOKAHEAD = 80.0;  // must verify-clear this far (loaded) to call a path clear;
-                                                      // sized to fit an 8-chunk (128-block) server render with margin
-    public static final double SCAN_DIST = 480.0;     // the most we ever scan ahead (~ the ribbon's predicted length)
+    public static final double MIN_LOOKAHEAD = 80.0;  // loaded terrain must be seen clear this far to call a path clear;
+                                                      // fits an 8-chunk (128-block) server render distance
+    public static final double SCAN_DIST = 480.0;     // the most the planner ever scans ahead (blocks)
     private static double scanRange = SCAN_DIST;      // effective scan, clamped to loaded terrain each tick (setRenderRange)
-    // Climb-corridor collision test. An obstacle is terrain that rises into the altitude we will be
-    // climbing through -- NOT the low ground the porpoise momentarily dives toward. Modelling the
-    // corridor as a steady climb (decoupled from the dive) makes obstacle detection phase-independent,
-    // so a mountain is seen every tick instead of only when the porpoise happens to be near its trough.
+    // Climb-corridor collision test. An obstacle is terrain that rises into the altitude the aircraft will
+    // climb through, not the low ground the porpoise dives toward. Testing against a steady climb instead
+    // of the porpoise path makes the verdict independent of the porpoise phase, so a mountain is seen on
+    // every tick rather than only near the trough.
     static final double CLIMB_GRAD = 0.05;     // assumed climb per block of path (below the real ~6.6%)
     static final double CORRIDOR_CLEAR = 8.0;  // terrain must stay this far below the climbing corridor
     static final double GROUND_MIN = 5.0;      // actual path must stay this far above ground (real-crash guard)
-    // Trough-floor raising: before turning, try lifting the porpoise's hold trough so the aircraft climbs
-    // OVER terrain rising ahead, staying on course (no lateral deviation). Each stage scans a ladder of
-    // trough floors low->high and takes the lowest that clears; only if NONE up to the cap clears does it
-    // fall to a turn -- and the turn search scans the same ladder, so a banked dodge can be lifted too.
-    // The floor is the FlightModel3D.State.target the live law flies its trough to. Climbing over is
-    // preferred to turning whenever it works, because it holds course; turning is the fallback.
+    // Trough-floor raising: before turning, try lifting the porpoise's trough so the aircraft climbs over
+    // rising terrain and keeps its course. Each stage scans a ladder of floors from low to high and takes
+    // the lowest that clears; the turn search uses the same ladder. The floor is the State.target the live
+    // law flies its trough to.
     static final double FLOOR_STEP      = 4.0;   // trough-floor ladder increment (blocks)
     static final double FLOOR_RAISE_MAX = 60.0;  // most we lift the trough above the cruise floor before turning
-    static final double IMMINENT = 50.0;       // tall obstacle closer than this can't be turned out of (~turn radius)
+    static final double IMMINENT = 50.0;       // an obstacle closer than this can't be turned out of (about the turn radius)
 
-    /** Clamp scanning to how far terrain is actually loaded (blocks). Servers cap render distance -- often
-     *  8-12 chunks (128-192 blocks) -- so scanning the full {@link #SCAN_DIST} both wastes work over unloaded
-     *  chunks (which sample as unknown and are skipped anyway) and implies sight we don't have. Held at
-     *  >= MIN_LOOKAHEAD + a small margin (a "clear" verdict must still span the verify distance) and
-     *  <= SCAN_DIST. Set once per tick from the live render distance before planning; defaults to SCAN_DIST,
-     *  so anything not calling this (e.g. the test suite) keeps the original full-sight behaviour. */
+    /** Clamp scanning to how far terrain is loaded (blocks), set once per tick from the render distance.
+     *  Servers often cap it at 8 to 12 chunks; scanning further only samples unloaded columns. Held between
+     *  MIN_LOOKAHEAD + 16 (a clear verdict must still span the lookahead) and SCAN_DIST, the default. */
     public static void setRenderRange(double loadedBlocks) {
         scanRange = Math.max(MIN_LOOKAHEAD + 16.0, Math.min(SCAN_DIST, loadedBlocks));
     }
@@ -88,40 +77,36 @@ public final class TurnPlanner {
             double g = terrain.heightAt(s.x, s.z);
             if (Double.isNaN(g)) continue;                  // unloaded sample: skip it, keep scanning ahead
             maxLoaded = pathLen;
-            // obstacle = terrain rising into the climbing corridor (a wall/mountain ahead). Separately,
-            // the actual porpoise path must not skim into the floor -- a small buffer so only a real
-            // impending ground hit flags, not a normal mid-altitude dive (which would falsely block).
-            // Trough envelope: climb from the current altitude up to `floor`, then hold flat at it. Raising
-            // `floor` lifts the flat part so the porpoise clears more terrain; capping at `floor` keeps the
-            // test from assuming a climb past the altitude it will actually hold. Smooth -> phase-independent.
+            // Obstacle: terrain rising into the climb corridor, which climbs from the current altitude at
+            // CLIMB_GRAD up to `floor` and then stays flat (it never assumes a climb past the floor).
+            // Separately, the porpoise path itself must stay GROUND_MIN above the ground; that small
+            // margin flags a real ground hit without blocking a normal dive.
             double corridorY = Math.min(floor, y0 + CLIMB_GRAD * pathLen);
             if (g + CORRIDOR_CLEAR > corridorY) { r.status = HITS; r.cause = CAUSE_CORRIDOR; r.hitDist = pathLen; hit = true; break; }
             if (s.y - g < GROUND_MIN)            { r.status = HITS; r.cause = CAUSE_GROUND;   r.hitDist = pathLen; hit = true; break; }
         }
-        // Only declare a path CLEAR if we actually saw loaded terrain far enough out; otherwise we simply
-        // can't see (render edge close, or all-NaN ahead) -- report INSUFFICIENT rather than a false clear.
+        // A path only clears if loaded terrain was seen far enough out; otherwise it is INSUFFICIENT
+        // (render edge close, or nothing loaded ahead), not a false clear.
         if (!hit) r.status = (maxLoaded >= minLookahead) ? CLEARS : INSUFFICIENT;
         r.progress = (s.x - sx) * ux + (s.z - sz) * uz;
         return r;
     }
 
-    /** Prioritized decision for the situation ahead: climb-over-first, then turn. Both stages raise the
-     *  trough floor as needed; turning is the fallback only when no reachable floor clears straight. */
+    /** The decision for the situation ahead: climb over first, then turn. Both raise the trough floor
+     *  as needed; turning is the fallback only when no floor up to the cap clears straight ahead. */
     public static Plan plan(FlightModel3D.State base, double destBearing,
                             double destX, double destZ, Terrain2D terrain) {
         double cruiseFloor = base.target;
-        // Stage 1: straight at the destination. Clear (or simply can't see far enough) at the cruise floor
-        // -> just go; this is the normal no-avoidance path.
+        // Stage 1: straight at the destination at the cruise floor. Clear, or can't see far enough: go.
         Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
-        if (straight.status != HITS) return new Plan(destBearing, CLB, cruiseFloor);
-        // Straight HITS: try to CLIMB OVER it by lifting the trough floor -- the lowest floor that clears,
-        // no lateral deviation. This is preferred to any turn.
+        if (straight.status != HITS) return new Plan(destBearing, STRAIGHT, cruiseFloor);
+        // Straight hits: climb over it with the lowest raised trough floor that clears, keeping course.
         for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
             if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
-                return new Plan(destBearing, CLB, f);          // climb over, stay on course
-        // Stage 2: no straight floor up to the cap clears -> turn. For each heading (smallest offset first)
-        // find the lowest floor that clears; prefer the smallest progressing turn, else the smallest evasive
-        // one. The turn search raises the trough too -- a banked dodge may itself need to be higher to clear.
+                return new Plan(destBearing, STRAIGHT, f);          // climb over, stay on course
+        // Stage 2: no straight floor up to the cap clears, so turn. For each heading, smallest offset first,
+        // find the lowest floor that clears; prefer the smallest turn that makes progress, else the
+        // smallest that clears at all (paralleling a wall).
         double anyHeading = Double.NaN, anyFloor = Double.NaN, anyOff = Double.POSITIVE_INFINITY;
         for (double off : OFFSETS) {
             for (int sgn = +1; sgn >= -1; sgn -= 2) {
@@ -135,10 +120,10 @@ public final class TurnPlanner {
                 }
             }
         }
-        if (!Double.isNaN(anyHeading)) return new Plan(anyHeading, TURN, anyFloor);   // evasive turn (parallel a wall)
-        // Stage 3: nothing clears at any heading or floor. If a tall obstacle is inside the turn radius, a
-        // normal turn can't escape -- hard turn-around toward the more-open side. Otherwise keep climbing
-        // straight at the cruise floor (we may yet top it or find a gap as it nears).
+        if (!Double.isNaN(anyHeading)) return new Plan(anyHeading, TURN, anyFloor);   // evasive turn
+        // Stage 3: nothing clears. A wall inside the turn radius can't be turned out of normally, so
+        // reverse hard toward the more open side. Otherwise keep straight at the cruise floor: the path
+        // may open up as it nears.
         if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
             double course = FlightModel3D.velYaw(base.vx, base.vz);
             boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
@@ -146,20 +131,18 @@ public final class TurnPlanner {
             double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
             return new Plan(course + side * 179.0, EMERGENCY, cruiseFloor);
         }
-        return new Plan(destBearing, CLB, cruiseFloor);
+        return new Plan(destBearing, STRAIGHT, cruiseFloor);
     }
 
-    /** Is there a flyable path from here? True if flying straight at the destination doesn't hit (it
-     *  clears, or we simply can't see far enough), or failing that some heading clears. Used to gate
-     *  ENGAGEMENT instead of a fixed altitude: the climb law's own dive scrapes the ground in every
-     *  direction when too low, so every rollout HITS -> infeasible -> don't arm. It also refuses to arm
-     *  when boxed by terrain with no clear heading, and allows arming facing a wall there's room to turn
-     *  around. This adapts the arming floor to the actual situation rather than a guessed AGL. */
+    /** Is there a flyable path from here? True if straight at the destination doesn't hit (it clears or
+     *  can't see far enough), or a raised floor clears straight, or some heading clears at the cruise floor.
+     *  This gates arming instead of a fixed altitude: when too low, the climb law's own dive hits the ground
+     *  in every direction, so nothing clears. It also refuses when boxed in. */
     public static boolean feasible(FlightModel3D.State base, double destBearing,
                                    double destX, double destZ, Terrain2D terrain) {
         double cruiseFloor = base.target;
         Roll straight = rollout(base, destBearing, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
-        if (straight.status != HITS) return true;            // clear ahead, or can't see a problem
+        if (straight.status != HITS) return true;            // clear, or nothing seen in the way
         for (double f = cruiseFloor + FLOOR_STEP; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP)
             if (rollout(base, destBearing, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
                 return true;                                 // could climb over it straight ahead
@@ -170,8 +153,7 @@ public final class TurnPlanner {
         return false;                                        // no way out from here -> don't arm
     }
 
-    /** True if flying `heading` runs into a tall obstacle within the emergency (turn-radius) distance.
-     *  The emergency maneuver holds until the current course is no longer imminently blocked. */
+    /** True if flying `heading` runs into the climb corridor within IMMINENT (about the turn radius). */
     public static boolean imminentAhead(FlightModel3D.State base, double heading, Terrain2D terrain) {
         Roll r = rollout(base, heading, base.target, terrain, HORIZON, MIN_LOOKAHEAD, base.x, base.z);
         return r.status == HITS && r.cause == CAUSE_CORRIDOR && r.hitDist < IMMINENT;

@@ -8,8 +8,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.util.List;
-import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 
 public class KineSettingsScreen extends Screen {
 
@@ -29,122 +27,120 @@ public class KineSettingsScreen extends Screen {
     private int[] baseRowY;       // content-space y of each toggle row
     private Opt[] rowOpt;
     private Button[] rowButton;
-    private int descTextTop;   // where the right-hand description text starts (below the reset button)
+    private int descTextTop;   // top of the description text on the right, below the reset button
 
     public KineSettingsScreen(Screen parent) {
         super(Component.literal("Kine settings"));
         this.parent = parent;
     }
 
-    // ---- option model ----
-    private record Opt(String name, String desc, BooleanSupplier get, Consumer<Boolean> set,
-                       String onText, String offText) {
-        static Opt of(String n, String d, BooleanSupplier g, Consumer<Boolean> s) {
-            return new Opt(n, d, g, s, "ON", "OFF");
-        }
+    // option model
+    private record Opt(String name, String desc, Settings.Toggle toggle) {
+        static Opt of(String n, String d, Settings.Toggle t) { return new Opt(n, d, t); }
+        boolean get() { return toggle.get().getAsBoolean(); }
+        void set(boolean v) { toggle.set().accept(v); }
     }
 
     private record Section(String title, Opt[] opts) {}
 
-    // ---- descriptions (kept short and uniform; most important first) ----
+    // Descriptions: concise, most important first, similar lengths.
     private static final String DESC_SPEED =
-        "Total movement speed in m/s, including vertical motion, measured from your real per-tick position "
-        + "change rather than the game's under-reported velocity. Drawn above the hotbar.";
+        "Shows your total speed in m/s above the hotbar, vertical motion included, measured from your actual "
+        + "movement each tick.";
     private static final String DESC_GROUND =
-        "Horizontal speed only in m/s, ignoring vertical motion. This is the number that governs elytra "
-        + "travel distance and your walking or sprinting pace.";
+        "Shows your horizontal speed in m/s above the hotbar, ignoring vertical motion. Range and ETA "
+        + "estimates use this speed.";
     private static final String DESC_HEALTH =
-        "Floats each creature's current and maximum health above it, scaled by distance and visible through "
-        + "walls. Useful for tracking damage during a fight.";
+        "Shows the current and maximum health above every mob, player and armour stand within 30 blocks, "
+        + "scaled by distance and visible through walls.";
     private static final String DESC_NAMES =
-        "Floats each creature's name above it, beside the health readout. Off by default because it adds "
-        + "clutter, especially on busy servers.";
+        "Shows the name of every mob, player and armour stand within 30 blocks at the middle of its body, "
+        + "in smaller text, visible through walls.";
 
     private static final String DESC_FLIGHT =
-        "While elytra flying, magenta bars show the pitch to hold for the energy-pumping technique: dive to "
-        + "build speed, snap the nose up, then ease it down. It is guidance only and never moves you.";
+        "While gliding high enough to arm the autopilot, magenta bars show the pitch and heading it would "
+        + "fly, with your altitude and climb mode beside them. Guidance only.";
     private static final String DESC_FPV =
-        "Marks where your velocity is actually taking you, not where you are looking. Place it on the spot "
-        + "you want to reach to steer there. Shows while flying or falling. Instrument only.";
+        "Marks where your motion is taking you, not where you are looking; put it on the spot you want to "
+        + "reach. Shows while gliding or after falling a few blocks.";
     private static final String DESC_PROFILE =
-        "Side-on cutaway in the top-right corner: a blue trace of where your held attitude would carry you "
-        + "over the next 240 blocks, against the terrain below. Where they meet is where you land.";
+        "While gliding, a side-on cutaway in the top-right corner shows the terrain ahead out to your "
+        + "render distance. With the autopilot engaged it follows and traces the path it predicts, turns included.";
     private static final String DESC_RANGE =
-        "While wearing an elytra, estimates remaining flight time and distance from every elytra you can "
-        + "reach and your recent average speed. Holds back a reserve to glide down safely.";
+        "While wearing an elytra, shows how long and how far you can still glide on every elytra you carry, "
+        + "keeping a reserve for gliding down. Range uses your recent average speed.";
     private static final String DESC_RIBBON =
-        "Draws the autopilot's predicted path as two blue rails at ground level, so you can see where it "
-        + "will carry you and how it clears terrain. Shown only while the autopilot is engaged.";
+        "While the autopilot is engaged, draws the path it predicts as two rails in the world: blue seen "
+        + "from above, orange from below.";
     private static final String DESC_TERRAIN =
-        "Lets the elytra autopilot climb to clear rising terrain instead of holding a fixed "
-        + "altitude, resuming once it drops away. Disengages if a climb can't clear what's ahead.";
+        "The autopilot reads the terrain ahead: it climbs over hills, turns around obstacles, banks away "
+        + "from close walls, and hands back control if boxed in. It only arms when it finds a safe path.";
 
     private static final String DESC_ELYTRA =
-        "While elytra flying, warns when durability is too low to glide down safely and hot-swaps to a fresh "
-        + "spare if you have one. As a last resort it logs you out before the wing breaks. Best left on.";
+        "The only reason you should ever disable this is if you keep getting kicked due to a bug which is "
+        + "our fault. Warns when durability is too low to glide down safely and swaps in a fresher spare. "
+        + "On autopilot it logs you out before the wing breaks.";
     private static final String DESC_CRASH =
-        "While elytra flying, sheds speed before you hit a wall, ceiling, or ground so you land safely "
-        + "instead of dying. It only removes velocity heading into a surface, never turning you.";
+        "While gliding, slows you before you hit the ground, a wall or a ceiling. It only removes speed "
+        + "heading into a surface and never turns you.";
     private static final String DESC_FALL =
-        "Stops you walking off ledges with a dangerous drop, like sneaking but automatic. Safe drops, "
-        + "deliberate jumps, and water or hay landings are unaffected.";
+        "Stops you walking off a drop of more than three blocks, like sneaking does. Jump to get past it. "
+        + "Water or hay below still counts as a drop.";
     private static final String DESC_CLUTCH =
-        "While falling hard with a water bucket in your hotbar or offhand, drops water where you will land "
-        + "and scoops it back once you are safe. Won't run while gliding or where water evaporates.";
+        "When you fall far enough to get hurt, places water where you will land and scoops it back up. "
+        + "Uses a bucket from your hotbar or offhand, or moves one up from your inventory.";
     private static final String DESC_AFK =
-        "If you take damage after fifteen seconds with no input, logs you out before something kills you "
-        + "unattended. Autopilot camera motion doesn't count, and an open menu counts as present.";
+        "Logs you out if you take damage after fifteen seconds with no input. Autopilot camera motion "
+        + "doesn't count as input; an open menu does while the game window is in front.";
 
     private static final String DESC_RETICLE =
-        "Draws a ring where your readied projectile will land (bow, trident, snowball, pearl, and so on), "
-        + "accounting for gravity, drag, and your own motion. Turns green when it covers a valid target.";
+        "Draws a ring where your bow, crossbow, trident or thrown item will land, allowing for gravity, drag "
+        + "and your own motion. Turns green and boxes the target when it covers one.";
     private static final String DESC_GLOW =
-        "Outlines every projectile with a glow visible through walls, in flight and after it lands, so "
-        + "arrows and thrown items are easy to follow. Includes projectiles thrown by others.";
+        "Outlines every projectile in red, visible through walls, in flight and after it lands, including "
+        + "other players' projectiles.";
     private static final String DESC_AUTOAIM =
-        "Steers your view so bow, crossbow, and trident shots land on the target nearest your reticle, "
-        + "leading moving targets. Nudge the mouse to break lock. An aimbot, bannable where mods aren't allowed.";
+        "Turns your view so bow, crossbow and trident shots hit the target nearest your reticle, leading "
+        + "moving targets. Move the mouse to break the lock. An aimbot: servers may ban it.";
     private static final String DESC_DODGE =
-        "Watches for incoming projectiles and sidesteps you off their line at sprint speed when one is about "
-        + "to hit. Can't beat point-blank or very fast shots. A movement mod, lower risk than the aimbot.";
+        "Pushes you sideways at sprint speed when a projectile is about to hit you. Can't dodge point-blank "
+        + "or very fast shots. Lower ban risk than the aimbot.";
     private static final String DESC_AURA =
-        "Automatically melees nearby hostile and angry-neutral mobs with whatever is in hand, without "
-        + "turning your view and without hitting through walls. Spams crowds, charges up on single targets, "
-        + "and sweeps clusters. A combat cheat, bannable where mods aren't allowed.";
+        "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
+        + "you wear no gold), without turning your view. Spams crowds, else waits for full charge. Servers may ban it.";
     private static final String DESC_WEAPON =
-        "While the kill aura fights, equips the best sword or axe for the target by damage, speed, and "
-        + "enchantments (Sharpness, Smite, Bane, Sweeping Edge), pulling one from your inventory if needed. "
-        + "Rearranges your hotbar.";
+        "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
+        + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";
 
     private static final Section[] SECTIONS = {
         new Section("Heads-up display", new Opt[]{
-            Opt.of("Display speed", DESC_SPEED, () -> Settings.displaySpeed, v -> Settings.displaySpeed = v),
-            Opt.of("Display ground speed", DESC_GROUND, () -> Settings.displayGroundSpeed, v -> Settings.displayGroundSpeed = v),
-            Opt.of("Display mob healths", DESC_HEALTH, () -> Settings.displayMobHealths, v -> Settings.displayMobHealths = v),
-            Opt.of("Display mob names", DESC_NAMES, () -> Settings.displayMobNames, v -> Settings.displayMobNames = v),
+            Opt.of("Display speed", DESC_SPEED, Settings.DISPLAY_SPEED),
+            Opt.of("Display ground speed", DESC_GROUND, Settings.DISPLAY_GROUND_SPEED),
+            Opt.of("Display mob healths", DESC_HEALTH, Settings.DISPLAY_MOB_HEALTHS),
+            Opt.of("Display mob names", DESC_NAMES, Settings.DISPLAY_MOB_NAMES),
         }),
         new Section("Elytra flight", new Opt[]{
-            Opt.of("Flight directors", DESC_FLIGHT, () -> Settings.displayFlightDirectors, v -> Settings.displayFlightDirectors = v),
-            Opt.of("Flight path vector", DESC_FPV, () -> Settings.displayFlightPathVector, v -> Settings.displayFlightPathVector = v),
-            Opt.of("Flight profile map", DESC_PROFILE, () -> Settings.displayFlightProfile, v -> Settings.displayFlightProfile = v),
-            Opt.of("Range & endurance", DESC_RANGE, () -> Settings.displayRangeEndurance, v -> Settings.displayRangeEndurance = v),
-            Opt.of("Flight path rails", DESC_RIBBON, () -> Settings.flightRibbon, v -> Settings.flightRibbon = v),
-            Opt.of("Terrain avoidance", DESC_TERRAIN, () -> Settings.terrainAvoidance, v -> Settings.terrainAvoidance = v),
+            Opt.of("Flight directors", DESC_FLIGHT, Settings.DISPLAY_FLIGHT_DIRECTORS),
+            Opt.of("Flight path vector", DESC_FPV, Settings.DISPLAY_FLIGHT_PATH_VECTOR),
+            Opt.of("Flight profile map", DESC_PROFILE, Settings.DISPLAY_FLIGHT_PROFILE),
+            Opt.of("Range & endurance", DESC_RANGE, Settings.DISPLAY_RANGE_ENDURANCE),
+            Opt.of("Flight path rails", DESC_RIBBON, Settings.FLIGHT_PATH_RAILS),
+            Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
         }),
         new Section("Safety", new Opt[]{
-            Opt.of("Elytra durability failsafe", DESC_ELYTRA, () -> Settings.elytraDuraFailsafe, v -> Settings.elytraDuraFailsafe = v),
-            Opt.of("Elytra crash protection", DESC_CRASH, () -> Settings.crashProtection, v -> Settings.crashProtection = v),
-            Opt.of("Fall prevention", DESC_FALL, () -> Settings.fallPrevention, v -> Settings.fallPrevention = v),
-            Opt.of("Water bucket clutch", DESC_CLUTCH, () -> Settings.waterBucketClutch, v -> Settings.waterBucketClutch = v),
-            Opt.of("AFK damage protection", DESC_AFK, () -> Settings.afkDamageProtection, v -> Settings.afkDamageProtection = v),
+            Opt.of("Elytra durability failsafe", DESC_ELYTRA, Settings.ELYTRA_DURA_FAILSAFE),
+            Opt.of("Elytra crash protection", DESC_CRASH, Settings.CRASH_PROTECTION),
+            Opt.of("Fall prevention", DESC_FALL, Settings.FALL_PREVENTION),
+            Opt.of("Water bucket clutch", DESC_CLUTCH, Settings.WATER_BUCKET_CLUTCH),
+            Opt.of("AFK damage protection", DESC_AFK, Settings.AFK_DAMAGE_PROTECTION),
         }),
         new Section("Combat", new Opt[]{
-            Opt.of("Projectile targeting reticle", DESC_RETICLE, () -> Settings.projectileReticle, v -> Settings.projectileReticle = v),
-            Opt.of("Projectile glow", DESC_GLOW, () -> Settings.projectileGlow, v -> Settings.projectileGlow = v),
-            Opt.of("Auto aim", DESC_AUTOAIM, () -> Settings.autoAim, v -> Settings.autoAim = v),
-            Opt.of("Projectile dodge", DESC_DODGE, () -> Settings.projectileDodge, v -> Settings.projectileDodge = v),
-            Opt.of("Kill aura", DESC_AURA, () -> Settings.killAura, v -> Settings.killAura = v),
-            Opt.of("Auto weapon", DESC_WEAPON, () -> Settings.autoWeapon, v -> Settings.autoWeapon = v),
+            Opt.of("Projectile targeting reticle", DESC_RETICLE, Settings.PROJECTILE_RETICLE),
+            Opt.of("Projectile glow", DESC_GLOW, Settings.PROJECTILE_GLOW),
+            Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
+            Opt.of("Projectile dodge", DESC_DODGE, Settings.PROJECTILE_DODGE),
+            Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
+            Opt.of("Auto weapon", DESC_WEAPON, Settings.AUTO_WEAPON),
         }),
     };
 
@@ -183,7 +179,7 @@ public class KineSettingsScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
             .bounds(rowX, this.height - doneH - 6, colW, doneH).build());
 
-        // reset-to-defaults, pinned to the top-right of the scrolling area (doesn't scroll)
+        // reset to defaults, pinned to the top right of the scrolling area (it doesn't scroll)
         int resetH = 18, resetW = 150;
         int minResetX = rowX + colW + 8;
         int resetX = this.width - MARGIN - resetW;
@@ -197,7 +193,7 @@ public class KineSettingsScreen extends Screen {
     private void resetAll() {
         Settings.resetDefaults();
         for (int i = 0; i < rowButton.length; i++) {
-            rowButton[i].setMessage(label(rowOpt[i], rowOpt[i].get().getAsBoolean()));
+            rowButton[i].setMessage(label(rowOpt[i], rowOpt[i].get()));
         }
     }
 
@@ -211,9 +207,9 @@ public class KineSettingsScreen extends Screen {
     }
 
     private Button addToggle(int x, int y, int w, int h, Opt opt) {
-        Button b = Button.builder(label(opt, opt.get().getAsBoolean()), btn -> {
-            boolean nv = !opt.get().getAsBoolean();
-            opt.set().accept(nv);
+        Button b = Button.builder(label(opt, opt.get()), btn -> {
+            boolean nv = !opt.get();
+            opt.set(nv);
             btn.setMessage(label(opt, nv));
             Settings.save();
         }).bounds(x, y, w, h).build();
@@ -222,7 +218,7 @@ public class KineSettingsScreen extends Screen {
     }
 
     private static Component label(Opt opt, boolean on) {
-        return Component.literal(opt.name() + ": " + (on ? opt.onText() : opt.offText()));
+        return Component.literal(opt.name() + ": " + (on ? "ON" : "OFF"));
     }
 
     @Override
@@ -260,7 +256,7 @@ public class KineSettingsScreen extends Screen {
             graphics.fill(barX, thumbY, barX + 2, thumbY + thumbH, 0xFF8A8A8A);
         }
 
-        // right-side description panel for the hovered row
+        // description of the hovered option, on the right
         int descX = rowX + colW + MARGIN;
         int descW = this.width - descX - MARGIN;
         if (descW < 80) return;

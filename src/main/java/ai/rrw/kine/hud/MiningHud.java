@@ -45,7 +45,7 @@ public class MiningHud {
         BlockState state = mc.level.getBlockState(pos);
         double d = state.getDestroyProgress(mc.player, mc.level, pos);
 
-        if (!pos.equals(target)) {   // a new block — start over
+        if (!pos.equals(target)) {   // a new block: start over
             target = pos;
             progress = 0.0;
         }
@@ -65,7 +65,7 @@ public class MiningHud {
 
         int w = mc.font.width(text);
         int x = mc.getWindow().getGuiScaledWidth() / 2 - w / 2;
-        int y = mc.getWindow().getGuiScaledHeight() / 2 + 12;   // just below the crosshair
+        int y = HudLayout.miningRow(mc.getWindow().getGuiScaledHeight());
         graphics.text(mc.font, text, x, y, 0xFFFFFFFF, true);
     }
 }

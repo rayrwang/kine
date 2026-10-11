@@ -32,7 +32,7 @@ public class RadioAltimeter {
 
         int x = p.getBlockX(), z = p.getBlockZ();
         int start = (int) Math.floor(p.getY()) - 1;          // first block below feet
-        int bottom = mc.level.getMinY();                     // nothing can exist below the world floor — that's the natural bound
+        int bottom = mc.level.getMinY();                     // scan down to the world floor
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         int groundY = Integer.MIN_VALUE;                     // sentinel: nothing found yet
@@ -40,7 +40,7 @@ public class RadioAltimeter {
             pos.set(x, y, z);
             if (!mc.level.getBlockState(pos).isAir()) { groundY = y; break; }
         }
-        if (groundY == Integer.MIN_VALUE) { agl = -1; return; }   // no surface in the whole column (void) — unknown, so hide it
+        if (groundY == Integer.MIN_VALUE) { agl = -1; return; }   // no ground in the whole column (void): unknown, hidden
         agl = Math.max(0, (int) Math.round(p.getY() - (groundY + 1)));   // surface is groundY+1
     }
 
@@ -53,7 +53,7 @@ public class RadioAltimeter {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
         int x = W / 2 - w / 2;
-        int y = H - 50; // right above the vanilla health/hunger row
-        g.text(mc.font, text, x, y, 0xFFFFC400, true); // amber, ARGB
+        int y = HudLayout.radioAltimeterRow(H);
+        g.text(mc.font, text, x, y, HudColors.AMBER, true);
     }
 }

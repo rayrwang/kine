@@ -1,10 +1,11 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.util.Enchant;
+import ai.rrw.kine.util.Hotbar;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.Holder;
 import net.minecraft.core.NonNullList;
-import net.minecraft.resources.ResourceKey;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -12,42 +13,36 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
-import net.minecraft.world.item.enchantment.ItemEnchantments;
 
 /**
- * Auto weapon selection for the kill aura. Scores every sword and axe in the hotbar and main inventory by
- * its expected damage against the current target and equips the best one, pulling it out of the main
- * inventory into the hotbar if that's where it lives.
+ * Auto weapon for the kill aura: scores every sword and axe in the hotbar and main inventory against the
+ * current target and equips the best, moving it into the hotbar if it is in the main inventory.
  *
- * <p>The score is full-charge DPS: per-hit damage times attack speed, which is exactly the aura's
- * charge-limited rate. Per-hit damage is the weapon's own attack-damage modifier (plus the player's base 1)
- * with the enchantment bonuses added from the vanilla formulas -- Sharpness ({@code 0.5*lvl + 0.5}) always,
- * and Smite / Bane of Arthropods ({@code 2.5*lvl}) only when the target's type tag says it's susceptible, so
- * a Smite sword is preferred against skeletons but not against spiders. Attack speed comes from the weapon's
- * own modifier, so a fast sword is correctly rated above a slow axe of equal per-hit damage. Against a crowd
- * a sword also earns a sweep term (bigger with Sweeping Edge). A switch only happens when the best option
- * beats what's held by a margin, so it won't flip-flop between near-equal weapons.
+ * <p>The score is damage per second at full charge, the aura's rate when it waits for a full charge:
+ * per-hit damage (the weapon's attack damage plus the player's base 1, plus Sharpness
+ * {@code 0.5*lvl + 0.5}, plus Smite or Bane of Arthropods {@code 2.5*lvl} when the target's type is
+ * susceptible) times attack speed. Against a crowd a sword also scores its sweep (more with Sweeping
+ * Edge). It switches only when the best beats the held weapon by SWITCH_MARGIN, so it doesn't flip
+ * between near-equal weapons.
  *
- * <p>The cost: pulling from the main inventory swaps the weapon into a hotbar slot via a container click,
- * which reorganises the hotbar (an empty slot first, else the largest stack as the least-valuable item -- the same heuristic the water-bucket clutch uses).
+ * <p>Moving a weapon from the main inventory uses a hotbar slot: an empty one first, else the largest
+ * stack, as the water-bucket clutch does.
  */
 public final class WeaponSelect {
     private WeaponSelect() {}
 
-    private static final double SWITCH_MARGIN = 1.10;   // switch only if the best scores >=10% over what's held
+    private static final double SWITCH_MARGIN = 1.10;   // switch only if the best scores 10% over what is held
 
     /**
-     * Picks and equips the best weapon. Returns true if the held slot changed this tick (the caller should
-     * let the change reach the server and resume attacking next tick).
+     * Picks and equips the best weapon. Returns true if the held slot changed this tick (the caller then
+     * waits a tick for the change to reach the server before attacking).
      */
     static boolean choose(Minecraft mc, LocalPlayer p, LivingEntity target, int targetCount) {
         Inventory inv = p.getInventory();
-        NonNullList<ItemStack> items = inv.getNonEquipmentItems();   // 0-8 hotbar, 9-35 main inventory
+        NonNullList<ItemStack> items = inv.getNonEquipmentItems();   // 0 to 8 hotbar, 9 to 35 main inventory
         int sel = inv.getSelectedSlot();
 
         double heldScore = score(inv.getSelectedItem(), target, targetCount);
@@ -58,7 +53,7 @@ public final class WeaponSelect {
             double s = score(items.get(i), target, targetCount);
             if (s > bestScore) { bestScore = s; bestIdx = i; }
         }
-        if (bestIdx < 0) return false;                                  // nothing strictly better than what's held
+        if (bestIdx < 0) return false;                                  // nothing better than what is held
         if (heldScore > 0.0 && bestScore < heldScore * SWITCH_MARGIN) return false;   // improvement too small to bother
 
         if (bestIdx < Inventory.SELECTION_SIZE) {                       // best is already in the hotbar
@@ -67,12 +62,12 @@ public final class WeaponSelect {
             return true;
         }
 
-        // Best lives in the main inventory -> number-key swap it onto the hotbar via the player menu.
+        // The best is in the main inventory: number-key swap it into the hotbar through the player menu.
         AbstractContainerMenu menu = p.inventoryMenu;
-        if (p.containerMenu != menu || !menu.getCarried().isEmpty()) return false;   // a screen is open or the cursor is busy
-        if (menu.getSlot(bestIdx).getItem() != items.get(bestIdx)) return false;     // menu-layout sanity; abort rather than corrupt
-        int h = displaceHotbarSlot(items);                              // empty slot first, else the largest stack
-        mc.gameMode.handleContainerInput(menu.containerId, bestIdx, h, ContainerInput.SWAP, p);   // bucket-clutch's number-key swap
+        if (p.containerMenu != menu || !menu.getCarried().isEmpty()) return false;   // a container is open or the cursor is busy
+        if (menu.getSlot(bestIdx).getItem() != items.get(bestIdx)) return false;     // menu slot doesn't match the inventory index
+        int h = Hotbar.slotToDisplace(items::get);                      // empty slot first, else the largest stack
+        mc.gameMode.handleContainerInput(menu.containerId, bestIdx, h, ContainerInput.SWAP, p);   // number-key swap
         selectSlot(mc, p, h);
         return true;
     }
@@ -82,26 +77,14 @@ public final class WeaponSelect {
         if (mc.getConnection() != null) mc.getConnection().send(new ServerboundSetCarriedItemPacket(slot));
     }
 
-    /** Hotbar slot to swap a weapon into: an empty slot if there is one, otherwise the largest stack as the
-     *  least-valuable thing to displace -- the same heuristic the water-bucket clutch uses when staging. */
-    private static int displaceHotbarSlot(NonNullList<ItemStack> items) {
-        int target = 0, biggest = -1;
-        for (int hb = 0; hb < Inventory.SELECTION_SIZE; hb++) {
-            ItemStack st = items.get(hb);
-            if (st.isEmpty()) return hb;
-            if (st.getCount() > biggest) { biggest = st.getCount(); target = hb; }
-        }
-        return target;
-    }
-
-    /** Expected full-charge DPS of a melee weapon against this target; 0 for anything that isn't a sword or axe. */
+    /** Damage per second at full charge against this target; 0 for anything but a sword or axe. */
     private static double score(ItemStack stack, LivingEntity target, int targetCount) {
         if (stack.isEmpty()) return 0.0;
         boolean sword = stack.is(h -> h.is(ItemTags.SWORDS));
         boolean axe   = stack.is(h -> h.is(ItemTags.AXES));
         if (!sword && !axe) return 0.0;
 
-        double[] ds = {1.0, 4.0};   // player base attack damage / attack speed; the item adds its own modifiers
+        double[] ds = {1.0, 4.0};   // the player's base attack damage and attack speed; the item adds its modifiers
         stack.forEachModifier(EquipmentSlot.MAINHAND, (attr, mod) -> {
             if (attr.value() == Attributes.ATTACK_DAMAGE.value()) ds[0] += mod.amount();
             else if (attr.value() == Attributes.ATTACK_SPEED.value()) ds[1] += mod.amount();
@@ -109,29 +92,38 @@ public final class WeaponSelect {
         double base = ds[0];
         double attackSpeed = Math.max(0.1, ds[1]);
 
-        double ench = 0.0;
-        int sharp = level(stack, Enchantments.SHARPNESS);
-        if (sharp > 0) ench += 0.5 * sharp + 0.5;
+        int sharp = Enchant.level(stack, Enchantments.SHARPNESS);
+        int smite = 0, bane = 0;
         if (target != null) {
-            int smite = level(stack, Enchantments.SMITE);
-            if (smite > 0 && target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_SMITE)) ench += 2.5 * smite;
-            int bane = level(stack, Enchantments.BANE_OF_ARTHROPODS);
-            if (bane > 0 && target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)) ench += 2.5 * bane;
+            if (target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_SMITE))
+                smite = Enchant.level(stack, Enchantments.SMITE);
+            if (target.getType().builtInRegistryHolder().is(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS))
+                bane = Enchant.level(stack, Enchantments.BANE_OF_ARTHROPODS);
         }
+        int sweeping = Enchant.level(stack, Enchantments.SWEEPING_EDGE);
+        return damagePerSecond(sword, base, attackSpeed, sharp, smite, bane, sweeping, targetCount);
+    }
+
+    /**
+     * Damage per second at full charge: (base + enchantment bonus) times attack speed, plus a sword's
+     * sweep against a cluster. Smite and bane are the levels that apply to this target (0 if it isn't
+     * susceptible). The bonuses are the vanilla formulas: Sharpness 0.5 * level + 0.5, Smite and Bane
+     * of Arthropods 2.5 * level; the sweep hits up to 4 neighbours for 1 + base * level / (level + 1).
+     */
+    static double damagePerSecond(boolean sword, double base, double attackSpeed, int sharpness, int smite,
+                                  int bane, int sweeping, int targetCount) {
+        double ench = 0.0;
+        if (sharpness > 0) ench += 0.5 * sharpness + 0.5;
+        if (smite > 0) ench += 2.5 * smite;
+        if (bane > 0) ench += 2.5 * bane;
 
         double dps = (base + ench) * attackSpeed;
 
-        if (sword && targetCount > 1) {     // sweep AoE value against a cluster
-            int se = level(stack, Enchantments.SWEEPING_EDGE);
-            double sweepPerNeighbor = 1.0 + base * se / (se + 1.0);
+        if (sword && targetCount > 1) {     // sweep value against a cluster
+            double sweepPerNeighbor = 1.0 + base * sweeping / (sweeping + 1.0);
             dps += sweepPerNeighbor * Math.min(targetCount - 1, 4) * attackSpeed;
         }
         return dps;
     }
 
-    private static int level(ItemStack s, ResourceKey<Enchantment> key) {
-        ItemEnchantments e = s.getEnchantments();
-        for (Holder<Enchantment> h : e.keySet()) if (h.is(key)) return e.getLevel(h);
-        return 0;
-    }
 }

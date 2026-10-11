@@ -6,7 +6,8 @@
 		"PlayerMixin",
 		"EntityMixin",
 		"EntityRendererMixin",
-		"LivingEntityMixin"
+		"LivingEntityMixin",
+		"MinecraftFrameMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

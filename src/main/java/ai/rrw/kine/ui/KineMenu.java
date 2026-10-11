@@ -1,5 +1,6 @@
 package ai.rrw.kine.ui;
 
+import ai.rrw.kine.Kine;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
@@ -8,7 +9,7 @@ import org.lwjgl.glfw.GLFW;
 public class KineMenu {
     public static void register() {
         KeyMapping open = KeyMappingHelper.registerKeyMapping(
-            new KeyMapping("key.kine.settings", GLFW.GLFW_KEY_K, ai.rrw.kine.Kine.KEY_CATEGORY));
+            new KeyMapping("key.kine.settings", GLFW.GLFW_KEY_K, Kine.KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             while (open.consumeClick()) {
                 mc.setScreen(new KineSettingsScreen(mc.screen));

@@ -1,0 +1,19 @@
+package ai.rrw.kine.hud;
+
+/** HUD colours (ARGB), one definition each. */
+public final class HudColors {
+    private HudColors() {}
+
+    public static final int GREEN   = 0xFF44FF44;   // nav readouts, altitude, ALT, AP engaged
+    public static final int RED     = 0xFFFF3030;   // warnings, AP disengaged
+    public static final int AMBER   = 0xFFFFC400;   // radio altimeter, range and endurance, CLB and DESC
+    public static final int YELLOW  = 0xFFFFEE00;   // ALT* (capturing the target altitude)
+    public static final int WHITE   = 0xFFFFFFFF;
+    public static final int MAGENTA = 0xFFFF00FF;   // flight director bars
+
+    /** The big flashing warnings alternate between red and amber every 400 ms. */
+    public static int warningFlash() {
+        boolean flash = (System.currentTimeMillis() / 400) % 2 == 0;
+        return flash ? 0xFFFF2020 : 0xFFFFD000;
+    }
+}

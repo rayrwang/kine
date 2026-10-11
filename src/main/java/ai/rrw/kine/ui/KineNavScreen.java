@@ -1,24 +1,30 @@
 package ai.rrw.kine.ui;
 
-import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.Nav;
+import ai.rrw.kine.hud.HudColors;
+import ai.rrw.kine.hud.HudDraw;
+import ai.rrw.kine.util.Compass;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 public class KineNavScreen extends Screen {
 
-    private static final int GREEN = 0xFF44FF44, RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
-    private static final int CURR = 0xFF44CCFF;   // cyan: where the player is currently pointed (heading bug)
+    private static final int RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
+    private static final int CURR = 0xFF44CCFF;   // cyan: where the player is pointing now
 
     private Nav.Mode mode;
     private float heading;          // compass deg (0 = N); only meaningful when hasHeading
-    private boolean hasHeading;     // has the dial been set this session / previously
+    private boolean hasHeading;     // whether a heading has been dialled
     private EditBox xBox, zBox;
     private EditBox altBox;
     private Button altMinus, altPlus;
@@ -40,18 +46,17 @@ public class KineNavScreen extends Screen {
     protected void init() {
         int cx = this.width / 2, top = 64;
 
-        // --- altitude selector (always active), above the mode options ---
+        // altitude selector, always active, above the mode buttons
         int abh = 20, abw = 20, ebw = 56, agap = 4;
         int rowW = abw + agap + ebw + agap + abw;
         int ax = cx - rowW / 2, altY = 42;
         altMinus = Button.builder(Component.literal("-"), b -> stepAlt(-ALT_STEP)).bounds(ax, altY, abw, abh).build();
-        altBox   = new EditBox(this.font, ax + abw + agap, altY, ebw, abh, Component.literal("Target altitude"));
+        altBox   = new AltitudeBox(this.font, ax + abw + agap, altY, ebw, abh, Component.literal("Target altitude"));
         altPlus  = Button.builder(Component.literal("+"), b -> stepAlt(ALT_STEP)).bounds(ax + abw + agap + ebw + agap, altY, abw, abh).build();
         altBox.setMaxLength(5);
         altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));
-        altBox.setResponder(s -> applyAlt());
         Tooltip altTip = Tooltip.create(Component.literal(
-            "Target altitude: the bottom of the porpoise. The autopilot climbs while below it, and holds altitude (max speed) while above it."));
+            "Target altitude: the lowest point of each dive. The autopilot climbs until it reaches it, then cruises at full speed with each dive ending just above it."));
         altBox.setTooltip(altTip);
         altMinus.setTooltip(altTip);
         altPlus.setTooltip(altTip);
@@ -69,7 +74,7 @@ public class KineNavScreen extends Screen {
 
         int dialTop = top + bh + 22;                       // just below the mode buttons
         int avail   = (this.height - 30) - dialTop;        // room down to above the Done button
-        dialR  = Math.max(40, Math.min(90, (avail - 50) / 2));   // reserve for the HDG label + "use current" button
+        dialR  = Math.max(40, Math.min(90, (avail - 50) / 2));   // leaves room for the HDG label and the "use current" button
         dialCx = cx;
         dialCy = dialTop + dialR;
 
@@ -78,14 +83,14 @@ public class KineNavScreen extends Screen {
         zBox = new EditBox(this.font, cx + 8,      fy, fw, fh, Component.literal("Z"));
         xBox.setMaxLength(8);
         zBox.setMaxLength(8);
-        if (Nav.hasTarget()) {                 // only restore a previously-set destination; no default
+        if (Nav.hasTarget()) {                 // restore a destination already set; no default
             xBox.setValue(Integer.toString(Nav.targetX()));
             zBox.setValue(Integer.toString(Nav.targetZ()));
         }
         addRenderableWidget(xBox);
         addRenderableWidget(zBox);
 
-        // sets the dial to wherever the player is currently pointed (one tap instead of dragging)
+        // sets the dial to where the player is pointing (one click instead of dragging)
         int useY = dialCy + dialR + 28;
         useCurrentBtn = Button.builder(Component.literal("Use current heading"), b -> useCurrentHeading())
             .bounds(cx - 75, useY, 150, 20).build();
@@ -99,7 +104,7 @@ public class KineNavScreen extends Screen {
 
     private void setMode(Nav.Mode m) {
         this.mode = m;
-        if (m == Nav.Mode.SELECTED) Nav.enterSelected();           // heading stays unset until you dial it
+        if (m == Nav.Mode.SELECTED) Nav.enterSelected();           // the heading stays unset until dialled
         else if (m == Nav.Mode.MANAGED) { Nav.enterManaged(); applyManaged(); }
         else Nav.off();
         updateVisibility();
@@ -107,28 +112,50 @@ public class KineNavScreen extends Screen {
 
     private void applyManaged() {
         Integer x = parseInt(xBox.getValue()), z = parseInt(zBox.getValue());
-        if (x != null && z != null) Nav.setTarget(x, z);           // only commits once both coords are valid
+        if (x != null && z != null) Nav.setTarget(x, z);           // commits only once both coordinates parse
     }
 
+    /** Commit the typed altitude; an empty box or a lone "-" is ignored. Called on Enter, when the box
+     *  loses focus, before a step, and on close, not on every keystroke: typing 350 would otherwise fly
+     *  to 3, then 35, where the game isn't paused. */
     private void applyAlt() {
         Integer v = parseInt(altBox.getValue());
-        if (v != null) FlightDirector.setTargetAltitude(v);        // commit on edit; ignore empty / partial "-"
+        if (v != null) FlightDirector.setTargetAltitude(v);
+        altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));   // show the clamped value
+    }
+
+    /** The altitude box: commits on Enter and when it loses focus. */
+    private final class AltitudeBox extends EditBox {
+        AltitudeBox(Font font, int x, int y, int w, int h, Component name) { super(font, x, y, w, h, name); }
+
+        @Override
+        public boolean keyPressed(KeyEvent event) {
+            if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) { applyAlt(); return true; }
+            return super.keyPressed(event);
+        }
+
+        @Override
+        public void setFocused(boolean focused) {
+            if (isFocused() && !focused) applyAlt();
+            super.setFocused(focused);
+        }
     }
 
     private void stepAlt(int d) {
+        applyAlt();
         FlightDirector.setTargetAltitude(FlightDirector.targetAltitude() + d);
-        altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));   // reflect the clamped value
+        altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));   // show the clamped value
     }
 
     private void updateVisibility() {
         boolean man = mode == Nav.Mode.MANAGED;
         xBox.visible = man; xBox.active = man;
         zBox.visible = man; zBox.active = man;
-        selBtn.active = mode != Nav.Mode.SELECTED;   // greyed = the current mode
+        selBtn.active = mode != Nav.Mode.SELECTED;   // the current mode's button is greyed out
         manBtn.active = mode != Nav.Mode.MANAGED;
         offBtn.active = mode != Nav.Mode.OFF;
         boolean sel = mode == Nav.Mode.SELECTED;
-        useCurrentBtn.visible = sel; useCurrentBtn.active = sel;   // only meaningful when dialing a heading
+        useCurrentBtn.visible = sel; useCurrentBtn.active = sel;   // only for dialling a heading
     }
 
     @Override
@@ -161,17 +188,17 @@ public class KineNavScreen extends Screen {
     private void setHeadingFromMouse(double mx, double my) {
         double dx = mx - dialCx, dy = my - dialCy;
         if (dx == 0 && dy == 0) return;
-        float h = (float) Math.toDegrees(Math.atan2(dx, -dy));   // up = 0 = N, right = 90 = E
+        float h = (float) Math.toDegrees(Math.atan2(dx, -dy));   // up is 0 (north), right is 90 (east)
         heading = (h % 360f + 360f) % 360f;
         hasHeading = true;
         Nav.setHeading(heading);
     }
 
-    /** Set the dial to where the player is currently pointed. MC yaw (0 = south) -> compass (0 = north). */
+    /** Set the dial to where the player is pointing. Minecraft yaw (0 = south) to compass (0 = north). */
     private void useCurrentHeading() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        heading = ((mc.player.getYRot() + 180f) % 360f + 360f) % 360f;
+        heading = Compass.headingF(mc.player.getYRot());
         hasHeading = true;
         Nav.setHeading(heading);
     }
@@ -201,7 +228,7 @@ public class KineNavScreen extends Screen {
             double a = i * 2 * Math.PI / seg;
             int x = dialCx + (int) Math.round(Math.sin(a) * dialR);
             int y = dialCy - (int) Math.round(Math.cos(a) * dialR);
-            if (i > 0) line(g, px, py, x, y, RING);
+            if (i > 0) HudDraw.line(g, px, py, x, y, RING);
             px = x; py = y;
         }
         g.text(this.font, "N", dialCx - 3, dialCy - dialR - 11, LABEL, true);
@@ -209,51 +236,36 @@ public class KineNavScreen extends Screen {
         g.text(this.font, "E", dialCx + dialR + 5, dialCy - 4,  LABEL, true);
         g.text(this.font, "W", dialCx - dialR - 11, dialCy - 4, LABEL, true);
 
-        // current heading bug: a short cyan tick at the rim showing where the player is pointed right now,
-        // so you can dial relative to it (or hit "use current heading" to snap to it)
+        // a short cyan tick at the rim where the player is pointing now, to dial relative to it
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            double pr = Math.toRadians(((mc.player.getYRot() + 180f) % 360f + 360f) % 360f);
+            double pr = Math.toRadians(Compass.headingF(mc.player.getYRot()));
             int ox = dialCx + (int) Math.round(Math.sin(pr) * (dialR + 2));
             int oy = dialCy - (int) Math.round(Math.cos(pr) * (dialR + 2));
             int ix = dialCx + (int) Math.round(Math.sin(pr) * (dialR - 10));
             int iy = dialCy - (int) Math.round(Math.cos(pr) * (dialR - 10));
-            line(g, ox, oy, ix, iy, CURR);
+            HudDraw.line(g, ox, oy, ix, iy, CURR);
         }
 
         if (hasHeading) {
             double hr = Math.toRadians(heading);
             int hx = dialCx + (int) Math.round(Math.sin(hr) * (dialR - 4));
             int hy = dialCy - (int) Math.round(Math.cos(hr) * (dialR - 4));
-            line(g, dialCx, dialCy, hx, hy, GREEN);
+            HudDraw.line(g, dialCx, dialCy, hx, hy, HudColors.GREEN);
         }
         g.fill(dialCx - 2, dialCy - 2, dialCx + 3, dialCy + 3, LABEL);
 
         String hs = hasHeading ? "HDG " + String.format("%03d", Math.round(heading) % 360) : "HDG ---";
-        g.text(this.font, hs, dialCx - this.font.width(hs) / 2, dialCy + dialR + 16, hasHeading ? GREEN : DIM, true);
-    }
-
-    /** thin line via single-pixel fills (Bresenham) */
-    private void line(GuiGraphicsExtractor g, int x1, int y1, int x2, int y2, int color) {
-        int dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1), sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1, err = dx - dy;
-        while (true) {
-            g.fill(x1, y1, x1 + 1, y1 + 1, color);
-            if (x1 == x2 && y1 == y2) break;
-            int e2 = 2 * err;
-            if (e2 > -dy) { err -= dy; x1 += sx; }
-            if (e2 <  dx) { err += dx; y1 += sy; }
-        }
+        g.text(this.font, hs, dialCx - this.font.width(hs) / 2, dialCy + dialR + 16, hasHeading ? HudColors.GREEN : DIM, true);
     }
 
     @Override
     public void onClose() {
+        applyAlt();
         if (mode == Nav.Mode.MANAGED) applyManaged();
         else if (mode == Nav.Mode.SELECTED && hasHeading) Nav.setHeading(heading);
         super.onClose();
     }
-
-    @Override
-    public boolean isPauseScreen() { return true; }   // freeze singleplayer while setting up nav mid-flight
 
     private static Integer parseInt(String s) {
         try { return Integer.parseInt(s.trim()); } catch (Exception e) { return null; }

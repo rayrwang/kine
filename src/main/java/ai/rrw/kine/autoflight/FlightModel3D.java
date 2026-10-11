@@ -1,39 +1,23 @@
 package ai.rrw.kine.autoflight;
 
 /**
- * Pure forward simulator for the TURN-capable elytra autopilot.
- *
- * This is the full 3-D sibling of {@link FlightModel}: the same reverse-engineered
- * updateFallFlyingMovement physics and the same FlightDirector porpoise law (altitude-triggered
- * hold / speed-triggered climb), but in the horizontal plane it keeps vx AND vz and adds the
- * steering term -- horizontal velocity lerps 10%/tick toward a vector of the same horizontal speed
- * pointing along the look heading. Pointing the look off the velocity by a capped offset turns the
- * aircraft; the turn bleeds climb, exactly as the physics dictates.
- *
- * Flown straight (target heading == velocity heading, so the steering offset is 0) this reduces to
- * the 1-D projection in {@link FlightModel} and matches it tick-for-tick to floating-point noise --
- * that equality is asserted in the verification harness, so the 3-D port inherits the 1-D
- * validation. Arithmetic order matches the Python reference (turn_sim.py / terrain_turn_poc.py).
+ * 3-D forward simulator: LivingEntity.updateFallFlyingMovement in full, the {@link PorpoiseLaw} and
+ * the Autopilot's pitch lag. Horizontal velocity turns 10% per tick toward the look heading at
+ * the same horizontal speed, so pointing the look off the velocity turns the aircraft, and the turn
+ * costs climb as the physics dictates.
  */
 public final class FlightModel3D {
     private FlightModel3D() {}
 
-    // physics + law constants: identical to FlightModel (audited equal)
     public static final double GRAV = 0.08, SMOOTH = 0.15, CAP = 7.0;
-    static final double C_DIVE = 40.0, C_UP = -62.0, C_TRIG = 44.0, C_SWEEP = 18.0 / 20.0;
-    static final int    C_TOP  = 11;
-    static final double L_DIVE = 38.0, L_UP = -66.0, L_SWEEP = 24.0 / 20.0;
-    static final int    L_TOP  = 13;
-    static final double DESC_MARGIN = 6.0;
-    static final int PH_HOLD = 0, PH_TOP = 1, PH_SWEEP = 2;
 
     /** Max look-offset (deg) the steering will command in one tick: caps turn aggressiveness. */
     public static final double DELTA_MAX = 20.0;
-    /** Elevated look-offset for the emergency hard bank (sharper turn; bleeds speed but doesn't stall
-     *  like a full reversal). A 90-deg banked turn away from a wall, not a look-flip to reverse. */
+    /** Look offset for the emergency bank: a sharper turn that bleeds speed without the stall a look
+     *  flipped straight backwards would cause. */
     public static final double EMERGENCY_DELTA = 45.0;
 
-    // ---- heading helpers (MC yaw convention: 0=+Z, 90=-X, clockwise from above) ----
+    // heading helpers (Minecraft yaw: 0 = +Z, 90 = -X, clockwise from above)
     /** Velocity heading (yaw, deg) of a horizontal velocity (vx,vz). */
     public static double velYaw(double vx, double vz) { return Math.toDegrees(Math.atan2(-vx, vz)); }
     /** Wrap an angle to (-180, 180]. */
@@ -71,80 +55,54 @@ public final class FlightModel3D {
         v[0] *= 0.99; v[1] *= 0.98; v[2] *= 0.99;                // drag
     }
 
-    /** Full controller + kinematic state. One instance is the "live" aircraft; rollouts copy it. */
-    public static final class State {
+    /** Law and kinematic state. One instance is the live aircraft; rollouts copy it. */
+    public static final class State extends PorpoiseLaw {
         public double x, y, z, vx, vy, vz;     // world kinematics (blocks, blocks/tick)
-        public double target;                   // commanded trough altitude
-        public int phase;
-        public double pitch, cmd;
-        public int topT;
-        public boolean climbing;
-        double pDive, pUp, pSweep;
-        int pTop;
+        public double target;                   // trough floor the law flies to
+        public double pitch;
 
         public State(double x, double y, double z, double vx, double vy, double vz,
                      double target, double pitch, boolean climbing) {
             this.x = x; this.y = y; this.z = z; this.vx = vx; this.vy = vy; this.vz = vz;
             this.target = target; this.pitch = pitch; this.cmd = pitch;
-            this.phase = PH_HOLD; this.topT = 0; this.climbing = climbing;
-            loadProfile();
-        }
-
-        void loadProfile() {
-            if (climbing) { pDive = C_DIVE; pUp = C_UP; pSweep = C_SWEEP; pTop = C_TOP; }
-            else          { pDive = L_DIVE; pUp = L_UP; pSweep = L_SWEEP; pTop = L_TOP; }
+            this.climbing = climbing;
         }
 
         public State copy() {
             State s = new State(x, y, z, vx, vy, vz, target, pitch, climbing);
-            s.phase = phase; s.cmd = cmd; s.topT = topT;
+            s.copyLaw(this);
             return s;
         }
     }
 
+    /** The Autopilot's pitch lag, per tick: ease toward the command, capped at CAP degrees. */
     static double ease(double pitch, double cmd) {
         pitch += Math.max(-CAP, Math.min(CAP, (cmd - pitch) * SMOOTH));
         return Math.max(-90.0, Math.min(90.0, pitch));
     }
 
-    /** Law state machine: recompute cmd/phase from post-physics y and horizontal speed. */
-    static void update(State s) {
-        double hSpeed = Math.sqrt(s.vx * s.vx + s.vz * s.vz) * 20.0;
-        if (s.phase == PH_HOLD) {
-            s.cmd = s.pDive;
-            boolean pull = s.climbing ? (hSpeed >= C_TRIG) : (s.y <= s.target + DESC_MARGIN);
-            if (pull) {
-                s.climbing = s.y < s.target;
-                s.loadProfile();
-                s.phase = PH_TOP; s.topT = 0; s.cmd = s.pUp;
-            }
-        } else if (s.phase == PH_TOP) {
-            s.cmd = s.pUp; s.topT++;
-            if (s.topT >= s.pTop) s.phase = PH_SWEEP;
-        } else {
-            s.cmd += s.pSweep;
-            if (s.cmd >= s.pDive) { s.cmd = s.pDive; s.phase = PH_HOLD; }
-        }
-    }
-
-    /** Advance one tick with an EXPLICIT look yaw (no steering clamp): ease pitch -> physics ->
-     *  integrate -> law. Used by the emergency maneuver, which points the look harder than the normal
-     *  steering cap allows. Returns the pitch flown. */
+    /** Advance one tick with a given look yaw and no steering clamp: ease pitch, physics, integrate,
+     *  law. Returns the pitch flown. */
     public static double stepLook(State s, double lookYaw) {
         s.pitch = ease(s.pitch, s.cmd);
         double[] v = { s.vx, s.vy, s.vz };
         physicsStep(lookYaw, s.pitch, v);
         s.vx = v[0]; s.vy = v[1]; s.vz = v[2];
         s.x += s.vx; s.y += s.vy; s.z += s.vz;
-        update(s);
+        s.update(s.y, Math.sqrt(s.vx * s.vx + s.vz * s.vz) * 20.0, s.target);
         return s.pitch;
     }
 
     /** Advance one tick steering toward `targetHeading` (yaw, deg), rate-limited by DELTA_MAX:
      *  the look is placed at velYaw + clamp(targetHeading - velYaw, +-DELTA_MAX). */
     public static double step(State s, double targetHeading) {
+        return step(s, targetHeading, DELTA_MAX);
+    }
+
+    /** The same with another look offset limit (EMERGENCY_DELTA for the emergency bank). */
+    public static double step(State s, double targetHeading, double maxDelta) {
         double vy0 = velYaw(s.vx, s.vz);
-        double delta = Math.max(-DELTA_MAX, Math.min(DELTA_MAX, wrap180(targetHeading - vy0)));
+        double delta = Math.max(-maxDelta, Math.min(maxDelta, wrap180(targetHeading - vy0)));
         return stepLook(s, vy0 + delta);
     }
 }

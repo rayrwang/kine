@@ -1,19 +1,16 @@
 package ai.rrw.kine.autoflight;
 
 /**
- * Closed-loop policy around {@link TurnPlanner}. Called once per game tick with a freshly seeded
- * {@link FlightModel3D.State}; returns the absolute target heading (yaw, deg) to steer toward this
- * tick, and exposes the current {@link #action()}.
+ * Closed-loop policy around {@link TurnPlanner}. Called once per tick with a freshly seeded
+ * {@link FlightModel3D.State}; returns the heading (yaw, deg) to steer toward this tick and exposes the
+ * current {@link #action()} and trough {@link #floor()}.
  *
- * Normal steering points the look at velYaw + clamp(target - velYaw, +-DELTA_MAX) (gentle dodges).
- * An EMERGENCY is a hard banked turn-around toward the open side when a wall is inside the turn radius:
- * the captured reversed heading is held until the heading has actually come around (a full ~180), then
- * it commits to flying that escape heading (ESCAPE_COMMIT) to build separation -- a hard bank pivots
- * nearly in place, so it must fly away before re-planning toward the destination. It hands control back
- * only when avoidance genuinely can't work: a single turn-around that can't come around in STUCK_MAX
- * ticks (boxed), or MAX_EMERGENCIES turn-arounds against one wall without ever getting past it (endless
- * wall). Altitude lost to the bank is left to the physics -- cutting the turn off when it sinks would
- * defeat the maneuver, since avoidance only runs during low climb-out in the first place.
+ * Plans are re-made every REPLAN_EVERY ticks; a turn is held for TURN_COMMIT ticks so the aircraft
+ * doesn't chase a moving offset. An EMERGENCY reverses toward the open side: the reversed heading is held
+ * until the course has come round (within TURN_DONE_TOL), then flown for ESCAPE_COMMIT ticks to build
+ * separation, since a hard bank pivots almost in place. Control is handed back (DISENGAGE) when a
+ * reversal doesn't come round within STUCK_MAX ticks (boxed in), or after MAX_EMERGENCIES reversals
+ * against one wall without getting past it (an endless wall). Height lost in the bank is accepted.
  */
 public final class TurnController {
     static final int REPLAN_EVERY = 10, TURN_COMMIT = 30, STUCK_MAX = 60, ESCAPE_COMMIT = 50;
@@ -24,7 +21,7 @@ public final class TurnController {
     private int t = 0;
     private int committedUntil = -1;
     private double committedHeading = 0.0;
-    private int action = TurnPlanner.CLB;
+    private int action = TurnPlanner.STRAIGHT;
     private boolean emergency = false;
     private int stuckTicks = 0;          // ticks within one turn-around that hasn't come around yet (boxed)
     private int emergencyCount = 0;      // turn-arounds since last getting clear; trips the endless-wall hand-off
@@ -33,8 +30,8 @@ public final class TurnController {
     private double committedFloor = Double.NaN;   // trough floor latched with the committed leg (NaN until first plan)
 
     public int action() { return action; }
-    /** Trough altitude the live law should fly to this tick -- the cruise floor, or raised by the planner
-     *  to climb OVER terrain rising ahead. Held across the committed leg, like the heading. */
+    /** Trough altitude the live law should fly to this tick: the cruise floor, or higher to climb over
+     *  rising terrain. Held across a committed leg, like the heading. */
     public double floor() { return committedFloor; }
 
     /** Decide the heading to fly this tick. `live` is the current seeded aircraft state. */
@@ -42,20 +39,18 @@ public final class TurnController {
         double destBearing = FlightModel3D.velYaw(destX - live.x, destZ - live.z);
         if (Double.isNaN(committedFloor)) committedFloor = live.target;   // first call: cruise floor
 
-        // Emergency hard bank in progress: hold the captured reversed heading and keep arcing until the
-        // turn-around is actually complete (heading reached). Exiting the instant the immediate collision
-        // clears would only jink a few degrees -- this commits to the full ~180.
+        // Emergency bank in progress: hold the reversed heading until the course has come round. Leaving
+        // as soon as the immediate collision clears would only jink a few degrees.
         if (emergency) {
             committedFloor = live.target;            // bank at cruise; a raised trough was for the abandoned dodge
             double course = FlightModel3D.velYaw(live.vx, live.vz);
             if (Math.abs(FlightModel3D.wrap180(escapeHeading - course)) <= TURN_DONE_TOL) {
-                // Turn-around complete. A hard bank pivots almost in place (speed bled off), so the wall
-                // is still right there -- fly the escape heading straight for a bit to build real
-                // separation before re-planning toward the destination (which still points at the wall).
+                // Turned round. The bank pivots almost in place, so the wall is still close: fly the escape
+                // heading for a while before re-planning toward the destination behind the wall.
                 emergency = false; stuckTicks = 0;
                 committedHeading = course; action = TurnPlanner.TURN; committedUntil = t + ESCAPE_COMMIT;
                 t++; return committedHeading;
-            } else if (++stuckTicks > STUCK_MAX) {        // never came around (boxed in) -> hand off
+            } else if (++stuckTicks > STUCK_MAX) {        // never came round (boxed in): hand off
                 emergency = false; stuckTicks = 0; action = TurnPlanner.DISENGAGE; t++;
                 return course;
             } else {
@@ -71,30 +66,24 @@ public final class TurnController {
                 if (emergencyCount == 0)                     // start of a streak: remember how far the dest was
                     emergencyRefDist = Math.hypot(destX - live.x, destZ - live.z);
                 emergency = true; escapeHeading = pl.heading; action = TurnPlanner.EMERGENCY; stuckTicks = 0;
-                if (++emergencyCount >= MAX_EMERGENCIES) {   // keeps reversing against one wall -> endless -> hand off
+                if (++emergencyCount >= MAX_EMERGENCIES) {   // keeps reversing against one wall: endless, hand off
                     emergency = false; emergencyCount = 0; action = TurnPlanner.DISENGAGE;
                 }
                 t++; return escapeHeading;
-            } else if (pl.action == TurnPlanner.DISENGAGE) {
-                action = TurnPlanner.DISENGAGE;             // planner: no way out (can't climb out) -> hand off
-                committedHeading = destBearing;
             } else if (pl.action == TurnPlanner.TURN) {
-                committedHeading = pl.heading; action = TurnPlanner.TURN;   // routing dodge / escape leg
+                committedHeading = pl.heading; action = TurnPlanner.TURN;
                 committedUntil = t + TURN_COMMIT;
             } else {
-                committedHeading = destBearing; action = TurnPlanner.CLB;
-                // reset the streak only on real progress past the wall (meaningfully closer to the dest),
-                // not just because the path is briefly clear while still approaching it
+                committedHeading = destBearing; action = TurnPlanner.STRAIGHT;
+                // reset the streak only on real progress past the wall, not because the path is briefly
+                // clear while still approaching it
                 if (emergencyCount > 0
                     && Math.hypot(destX - live.x, destZ - live.z) < emergencyRefDist - PROGRESS_RESET)
                     emergencyCount = 0;
             }
         }
-        // Clear cruise, outside any turn/escape commitment: track the destination bearing every tick so a
-        // smoothly-moving destination -- a swept A/D heading bug or selected heading -- is followed
-        // continuously, instead of refreshing the bearing only at each REPLAN_EVERY re-plan and holding it
-        // in between (which reads as one big jerk every half second). The expensive plan() stays throttled;
-        // only this cheap bearing-follow runs each tick.
+        // Outside a committed leg, follow the destination bearing every tick, so a moving destination (the
+        // A/D heading bug) is tracked smoothly between re-plans instead of in half-second jumps.
         if (t >= committedUntil) committedHeading = destBearing;
         t++;
         return committedHeading;

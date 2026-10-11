@@ -20,15 +20,13 @@ This mod only uses vanilla legal mechanics, the only "cheating" is having a comp
 
 Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
-\*heavy assistance from Opus 4.8
-
 ## Current Features
 
 - **Fly long distances without fireworks.**
 	- Start high enough, then press J to engage autopilot.
 	- Terrain aware autopilot with fully optimized flight profile.
 	- Press N to enter a destination, with auto landing.
-	- Visializations: flight director bars, path guiderails, and flight path vector.
+	- Visualizations: flight director bars, path guiderails, and flight path vector.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press K to open).
 - **Water bucket clutch automatically.**
@@ -36,7 +34,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Takes into account number of enemies (spam for more, cooldown for fewer).
 - **Dodge arrows and other projectiles.**
 - **AFK failsafes.**
-	- Logs you out if you gake damage while AFK, autopilot disconnects, or elytra has low durability.
+	- Logs you out if you take damage while AFK, autopilot disconnects, or elytra has low durability.
 - **Fall protection.**
 	- The mod will prevent you from walking off ledges greater than 3 blocks high; you can override it by jumping then walking off.
 - Block breaking percentage and time left indicator.
@@ -87,51 +85,47 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Technical Details*
 
-\*written by Opus 4.8
+\*written by Opus 4.8, revised by Opus 5.5
 
-Built for Minecraft 26.1.2 — the first unobfuscated release — against Mojang mappings on Fabric. Client-side only; every cheat is off by default and toggled from the settings menu (K). State is read live from the client each tick.
+Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (K), and the switches are saved in `config/kine.json`.
 
 ### Elytra autopilot
 
-No fireworks. The autopilot flies a "porpoise" — diving to build airspeed, then snapping the nose up to trade that speed back for altitude (elytra physics make the climb outvalue the dive) — to sustain roughly level cruise or to descend to a set altitude. A flight director draws the commanded pitch, and the commanded heading while steering, as bars; the autopilot (J to engage) follows them with smoothed, rate-limited control so nothing snaps. A/D set a heading bug it holds and tracks; any real mouse movement hands control straight back. Engagement is hysteretic — enough clear air below to arm, a "TOO LOW" advisory if you sink too far — and altitude comes from a downward block scan (radio altimeter), shown as height above ground.
+No fireworks. The autopilot flies a porpoise: it dives to build speed, then pulls up to trade that speed for height, which the elytra physics rewards. Its two profiles were tuned in a model of the game's elytra code (`LivingEntity.updateFallFlyingMovement`): a climb profile that pulls up at a set speed, and an altitude-hold profile that dives down to the target altitude before each pull-up, so a descent from any height ends in one dive. Magenta flight director bars show the commanded pitch and heading; the autopilot (J) follows them with rate-limited control every frame, and A/D move a heading bug. Moving the mouse hands control back, and if the autopilot drops out in flight and you don't take over within 1.5 s, you are disconnected.
 
-Two displays render the trajectory the flight model predicts: guiderails laid along it in the world (depth-sorted against terrain, so they pass behind hills and clouds correctly), and a side-profile cutaway plotting terrain and path out to render distance.
+The flight path rails, drawn in the world, and the trace on the side-on profile map show the path the flight model predicts, turns included.
 
-### Terrain avoidance (opt-in)
+### Terrain avoidance
 
-Turned on in settings, the autopilot rolls the real flight model forward each tick across the loaded heightmap and steers on the result — a receding-horizon search that flies straight when it can, climbs when the way ahead is clear above, turns toward open air when it isn't, and hard-banks from an imminent wall. With no recoverable path it hands control back rather than flying you into the ground. The same model feeds the guiderails, so the drawn path is the predicted one.
+On by default. While engaged, the autopilot rolls the flight model forward over the loaded heightmap every tick: it flies straight when that path clears, raises the porpoise's low point to climb over terrain, turns toward a clear heading, and reverses hard from a wall inside its turn radius. When reversing doesn't get past a wall it hands control back. It also arms only when it finds a path. Terrain is the heightmap's top surface, so overhangs and caves count as solid.
 
 ### Navigation and landing
 
-Press N to set a course: *Selected* holds a compass heading, *Managed* flies to an X/Z coordinate, or *Off*. In Managed mode a translucent green beam marks the target column, the director and autopilot steer to it, and the HUD shows distance and ETA. On arrival (~24 blocks) a landing program picks the nearest safe touchdown column — skipping lava, fire, cactus, magma, powder snow — orbits it tightly instead of overshooting, and descends on an altitude-scheduled pitch: near-vertical when high, easing to a gentle flare by ~12 blocks up. Flying back out cancels it; touchdown ends it.
+N opens the nav screen: *Selected* holds a compass heading, *Managed* flies to an X/Z coordinate, *Off* does neither. A green beam marks a managed target (drawn over terrain, like Baritone's), and the HUD shows distance and ETA. Within 24 blocks of the target the autopilot picks the nearest safe column (no lava, fire, cactus, magma, powder snow, berry bushes, campfires, wither roses or water), circles it and descends, steeply when high and flaring near the ground.
 
 ### Range and endurance
 
-While wearing an elytra the HUD estimates flight time and reach. Endurance sums the worn wing plus every spare you can reach airborne (inventory and offhand, not shulkers), each scaled by Unbreaking, minus aviation-style reserves: a 5% contingency plus a final reserve sized to glide down from your current altitude — so it reads zero just as the durability failsafe would fire. Range is endurance × measured cruise speed (a rolling mean over whole porpoise cycles, so dives and climbs cancel). Both range and ETA are eased into a steady decline rather than left to twitch with each durability step, without the optimism a naive average would add.
+While you wear an elytra, endurance adds up the flight time of every elytra you carry (worn, inventory, offhand; not in shulker boxes), each scaled by Unbreaking, less a 5% contingency and a reserve for gliding down from your height. Range is endurance times your average ground speed over whole porpoise cycles. Range and ETA count down with the clock and drift toward the raw estimate, so they don't jump with each durability point.
 
 ### Durability failsafe and auto-swap
 
-When the worn wing drops below the safe-glide reserve for your altitude you get a land-now warning and a two-tier hot-swap: first to a spare with enough flight time to clear the warning outright (and nothing if none would, so you land rather than shuffle onto another near-dead wing); then, once critically low, to any spare with more life left. Swaps use real container packets and only run with no screen open and an empty cursor. With nothing left and the autopilot flying, it disconnects you after five seconds of no input — out before the wing breaks. Manual flight only warns.
+Below the reserve you get a land-now warning and a hot-swap to a spare that clears it; with 3 durability left, to any spare with more life. On autopilot it disconnects you after 5 s without input, or at once at 2 durability. Swaps are ordinary inventory clicks, made only with no container open.
 
-### Terrain crash protection
+### Crash protection
 
-A movement hook bleeds off only the velocity heading *into* a surface — ground, ceiling, or wall along your path — and never steers, so it can't itself cause a crash. Ground approaches are flared to a survivable descent rate and fall damage cushioned. It reduces impacts but can't guarantee zero, since damage is server-authoritative.
+A hook on elytra movement removes only the velocity heading into the ground, a wall or a ceiling; it never steers. Near the ground it slows the descent below 0.5 blocks per tick, where the game caps fall distance. It reduces impacts but can't guarantee none.
 
-### Water-bucket clutch
+### Combat
 
-An automatic MLG. While falling hard enough to take damage it sweeps your hitbox against real block collision shapes to find the highest surface you'll actually land on, places a water source there — sneaking, so it sits on top rather than waterlogging — and scoops it back once you're down. A bucket is staged to the hotbar when the fall starts; it skips dimensions where water would evaporate.
+The targeting reticle simulates the readied projectile tick by tick (gravity, drag, your own motion) and rings where it lands. The aimbot finds the launch pitch from a closed-form start and secant steps and the yaw allowing for your motion, leading moving targets. The kill aura attacks hostile mobs, and neutral mobs such as endermen after they hit you (piglins also while you wear no gold), and chooses between waiting for a full charge, spamming a crowd and sweeping a cluster; auto weapon holds the best sword or axe by damage per second. Projectile dodge sidesteps projectiles whose flight, with gravity and drag, passes close. Projectiles glow red through walls.
 
-### AFK damage protection
+### Other features
 
-A dead-man switch for when you've stepped away: it tracks real input (keys, the mouse turning the view — not the autopilot moving it — or an open screen), and if you take damage after ~15 s idle it logs you out, naming the source. It complements the autopilot's own dead-man switch, covering damage taken while it's still flying you or while you're on foot.
-
-### Combat and movement
-
-Projectile targeting predicts where an incoming or outgoing projectile is going and either draws a lead reticle or aims for you (aimbot, off by default), with optional glowing outlines; a dodge reads each incoming projectile's closest approach and nudges you laterally clear. Fall prevention stops you walking off drops over three blocks unless you jump first.
+Water-bucket clutch, AFK damage protection (logs you out if you take damage after 15 s with no input), fall prevention (stops you walking off drops of more than 3 blocks), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names.
 
 ### A note on anti-cheat
 
-HUD readouts are invisible to servers. The movement and inventory features send normal-looking inputs and packets and are lower risk, though a strict anti-cheat could still flag something like a mid-flight armor swap. The aimbot is the one reliably bannable feature. Use accordingly.
+HUD readouts are invisible to servers. The movement and inventory features send normal-looking inputs and packets and are lower risk, though a strict anti-cheat could still flag something like an elytra swap in mid-flight. The aimbot and the kill aura are the features most likely to get you banned. Use accordingly.
 
 ---
 
