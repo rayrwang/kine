@@ -18,8 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * same number.
  *
  * Not modelled: water (drag 0.6 instead of 0.99), targets that dodge or deflect arrows, other entities in the
- * way, and any change in the target's motion after the shot (it moves at a constant velocity, one box move per
- * arrow tick). The target's box is where it will be when the arrow spawns, which the caller works out: the client
+ * way, and any change in the target's motion after the shot other than a fall (it moves at a constant velocity,
+ * one box move per arrow tick; the caller can give the height of a falling target by age). The target's box is
+ * where it will be when the arrow spawns, which the caller works out: the client
  * draws other entities behind the server, and the release reaches the server after a network trip.
  */
 public final class HitChance {
@@ -95,6 +96,121 @@ public final class HitChance {
     }
 
     /**
+     * One tick's block boxes filed by block cell, so that a move tests only the boxes in the cells its bounding box
+     * covers. A box is filed under each cell its extent reaches into, and a move looks in each cell that the move's
+     * extent, grown by EPS (more than Box.clip's 1e-7 tolerance), reaches into; so every box a move can hit or start
+     * inside is tested, and the answers are exactly those of testing every box. Boxes more than BIG blocks across,
+     * and all the boxes of a tick spread over more than MAX_CELLS cells, aren't filed: those are tested on every move.
+     */
+    static final class Grid {
+        private static final double EPS = 1e-6;
+        private static final double BIG = 4.0;
+        private static final int MAX_CELLS = 1 << 20;
+
+        private final Box[] every;          // tested on every move
+        private final int x0, y0, z0, nx, ny, nz;
+        private final int[] start;          // the boxes filed under cell c are items[start[c]] to items[start[c + 1] - 1]
+        private final Box[] items;
+
+        Grid(List<Box> boxes) {
+            List<Box> every = new ArrayList<>(), filed = new ArrayList<>();
+            int ax = Integer.MAX_VALUE, ay = Integer.MAX_VALUE, az = Integer.MAX_VALUE;
+            int bx = Integer.MIN_VALUE, by = Integer.MIN_VALUE, bz = Integer.MIN_VALUE;
+            for (Box b : boxes) {
+                if (b.maxX() - b.minX() > BIG || b.maxY() - b.minY() > BIG || b.maxZ() - b.minZ() > BIG) { every.add(b); continue; }
+                filed.add(b);
+                ax = Math.min(ax, lo(b.minX())); bx = Math.max(bx, hi(b.minX(), b.maxX()));
+                ay = Math.min(ay, lo(b.minY())); by = Math.max(by, hi(b.minY(), b.maxY()));
+                az = Math.min(az, lo(b.minZ())); bz = Math.max(bz, hi(b.minZ(), b.maxZ()));
+            }
+            long cells = filed.isEmpty() ? 0 : (long) (bx - ax + 1) * (by - ay + 1) * (bz - az + 1);
+            if (cells > MAX_CELLS) { every.addAll(filed); filed.clear(); cells = 0; }
+            this.every = every.toArray(new Box[0]);
+            if (cells == 0) {
+                x0 = y0 = z0 = 0; nx = ny = nz = 0;
+                start = new int[]{0}; items = new Box[0];
+                return;
+            }
+            x0 = ax; y0 = ay; z0 = az; nx = bx - ax + 1; ny = by - ay + 1; nz = bz - az + 1;
+            start = new int[(int) cells + 1];
+            for (Box b : filed) forCells(b, c -> start[c + 1]++);
+            for (int c = 0; c < cells; c++) start[c + 1] += start[c];
+            items = new Box[start[(int) cells]];
+            int[] fill = start.clone();
+            for (Box b : filed) forCells(b, c -> items[fill[c]++] = b);
+        }
+
+        // the cells a box's extent reaches into: those from its min corner's to the one just inside its max corner
+        private static int lo(double min) { return (int) Math.floor(min); }
+        private static int hi(double min, double max) { return Math.max((int) Math.floor(min), (int) Math.ceil(max) - 1); }
+
+        private void forCells(Box b, java.util.function.IntConsumer f) {
+            for (int i = lo(b.minX()); i <= hi(b.minX(), b.maxX()); i++)
+                for (int j = lo(b.minY()); j <= hi(b.minY(), b.maxY()); j++)
+                    for (int k = lo(b.minZ()); k <= hi(b.minZ(), b.maxZ()); k++)
+                        f.accept(((i - x0) * ny + (j - y0)) * nz + (k - z0));
+        }
+
+        /** Whether a box holds the point (Box.contains). */
+        boolean contains(double x, double y, double z) {
+            for (Box b : every) if (b.contains(x, y, z)) return true;
+            int i = (int) Math.floor(x) - x0, j = (int) Math.floor(y) - y0, k = (int) Math.floor(z) - z0;
+            if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k >= nz) return false;
+            int c = (i * ny + j) * nz + k;
+            for (int n = start[c]; n < start[c + 1]; n++) if (items[n].contains(x, y, z)) return true;
+            return false;
+        }
+
+        /** Where the move from (x, y, z) along (dx, dy, dz) first enters a box (Box.clip), as a fraction of the
+         *  move; 1 if it enters none. */
+        double firstEntry(double x, double y, double z, double dx, double dy, double dz) {
+            double best = 1.0;
+            for (Box b : every) {
+                double s = b.clip(x, y, z, dx, dy, dz);
+                if (s < best) best = s;   // false for NaN, a miss
+            }
+            if (items.length == 0) return best;
+            int ia = Math.max(0, (int) Math.floor(Math.min(x, x + dx) - EPS) - x0), ib = Math.min(nx - 1, (int) Math.floor(Math.max(x, x + dx) + EPS) - x0);
+            int ja = Math.max(0, (int) Math.floor(Math.min(y, y + dy) - EPS) - y0), jb = Math.min(ny - 1, (int) Math.floor(Math.max(y, y + dy) + EPS) - y0);
+            int ka = Math.max(0, (int) Math.floor(Math.min(z, z + dz) - EPS) - z0), kb = Math.min(nz - 1, (int) Math.floor(Math.max(z, z + dz) + EPS) - z0);
+            for (int i = ia; i <= ib; i++)
+                for (int j = ja; j <= jb; j++)
+                    for (int c = (i * ny + j) * nz + ka, end = c + kb - ka; c <= end; c++)
+                        for (int n = start[c]; n < start[c + 1]; n++) {
+                            double s = items[n].clip(x, y, z, dx, dy, dz);
+                            if (s < best) best = s;
+                        }
+            return best;
+        }
+    }
+
+    /**
+     * Blocks with each tick's boxes filed (Grid) the first time that tick is flown and kept, so all the chance
+     * evaluations of one job share them. A tick that has the same list as the one before shares its grid. For one
+     * thread at a time.
+     */
+    private static final class Indexed {
+        private final Blocks blocks;
+        private Grid[] grids = new Grid[0];
+        private List<Box> lastList = null;
+        private Grid lastGrid = null;
+
+        private Indexed(Blocks blocks) { this.blocks = blocks; }
+
+        Grid grid(int age) {
+            if (age >= grids.length) grids = java.util.Arrays.copyOf(grids, Math.max(age + 1, 2 * grids.length));
+            Grid g = grids[age];
+            if (g == null) {
+                List<Box> l = blocks.near(age);
+                g = l == lastList ? lastGrid : new Grid(l);
+                lastList = l; lastGrid = g;
+                grids[age] = g;
+            }
+            return g;
+        }
+    }
+
+    /**
      * One release of the weapon.
      * Start: where the server spawns the arrow, the shooter's position at eye height minus 0.1.
      * Aim: the launch direction before the spread, any length (the game normalizes it); for a bow, the
@@ -109,9 +225,23 @@ public final class HitChance {
         }
     }
 
-    /** The target's hitbox at release and its motion per tick. */
-    public record Target(Box box, double vx, double vy, double vz) {
+    /**
+     * The target's hitbox at release and its motion per tick. Its height goes on by vy a tick; or, for a target
+     * that falls (Ballistics.Course), follows dy, its offset at each arrow age from 0 (the last one holds after
+     * that), with low the lowest offset from each age on.
+     */
+    public record Target(Box box, double vx, double vy, double vz, double[] dy, double[] low) {
+        public Target(Box box, double vx, double vy, double vz) { this(box, vx, vy, vz, null, null); }
+
         public static Target still(Box box) { return new Target(box, 0, 0, 0); }
+
+        /** A target moving vx and vz a tick across whose height follows dy by the arrow's age (dy[0] = 0). */
+        public static Target falling(Box box, double vx, double vz, double[] dy) {
+            double[] low = new double[dy.length];
+            double m = Double.POSITIVE_INFINITY;
+            for (int age = dy.length - 1; age >= 0; age--) low[age] = m = Math.min(m, dy[age]);
+            return new Target(box, vx, dy.length > 1 ? dy[1] - dy[0] : 0.0, vz, dy, low);
+        }
     }
 
     /**
@@ -167,6 +297,10 @@ public final class HitChance {
 
     /** The chance the shot hits, over n fixed spread rolls (4,096 is a good default), the same every call. */
     public static double chance(Shot shot, Target target, Blocks blocks, int n, int maxTicks) {
+        return chance(shot, target, new Indexed(blocks), n, maxTicks);
+    }
+
+    private static double chance(Shot shot, Target target, Indexed blocks, int n, int maxTicks) {
         double a = SPREAD * shot.uncertainty();
         int hits = 0;
         for (double[] s : rollsCached(n))
@@ -180,6 +314,10 @@ public final class HitChance {
 
     /** Whether the shot hits with this spread roll (one value per axis, each in [-a, a]). */
     public static boolean hits(Shot shot, double sx, double sy, double sz, Target target, Blocks blocks, int maxTicks) {
+        return hits(shot, sx, sy, sz, target, new Indexed(blocks), maxTicks);
+    }
+
+    private static boolean hits(Shot shot, double sx, double sy, double sz, Target target, Indexed blocks, int maxTicks) {
         double len = Math.sqrt(shot.aimX() * shot.aimX() + shot.aimY() * shot.aimY() + shot.aimZ() * shot.aimZ());
         double vx = (shot.aimX() / len + sx) * shot.speed() + shot.inheritX();
         double vy = (shot.aimY() / len + sy) * shot.speed() + shot.inheritY();
@@ -196,20 +334,23 @@ public final class HitChance {
     /** Flies one arrow from (x, y, z) with launch velocity (vx, vy, vz), tick by tick as AbstractArrow.tick does. */
     public static Outcome fly(double x, double y, double z, double vx, double vy, double vz,
                               Target target, Blocks blocks, int maxTicks) {
+        return fly(x, y, z, vx, vy, vz, target, new Indexed(blocks), maxTicks);
+    }
+
+    private static Outcome fly(double x, double y, double z, double vx, double vy, double vz,
+                               Target target, Indexed blocks, int maxTicks) {
         Box box0 = target.box();
         for (int age = 1; age <= maxTicks; age++) {
-            List<Box> near = blocks.near(age);
-            for (Box b : near) if (b.contains(x, y, z)) return Outcome.BLOCK;   // stuck where it stands
+            Grid near = blocks.grid(age);
+            if (near.contains(x, y, z)) return Outcome.BLOCK;   // stuck where it stands
 
             // the block the move runs into first cuts the move short; only targets before it count
-            double blockAt = 1.0;
-            for (Box b : near) {
-                double s = b.clip(x, y, z, vx, vy, vz);
-                if (!Double.isNaN(s) && s < blockAt) blockAt = s;
-            }
+            double blockAt = near.firstEntry(x, y, z, vx, vy, vz);
             double ex = vx * blockAt, ey = vy * blockAt, ez = vz * blockAt;
 
-            Box tb = box0.move(target.vx() * age, target.vy() * age, target.vz() * age);
+            double[] dy = target.dy();
+            int at = dy == null ? 0 : Math.min(age, dy.length - 1);
+            Box tb = box0.move(target.vx() * age, dy == null ? target.vy() * age : dy[at], target.vz() * age);
             if (!Double.isNaN(tb.clip(x, y, z, ex, ey, ez))) return Outcome.TARGET;
             double m = margin(age);
             if (m > 0) {
@@ -223,7 +364,9 @@ public final class HitChance {
             vy -= GRAVITY;
 
             // falling and already below the target: it can't come back up
-            if (vy < 0 && y < tb.minY() - 0.3 - Math.abs(target.vy()) * (maxTicks - age)) return Outcome.NONE;
+            boolean below = dy == null ? y < tb.minY() - 0.3 - Math.abs(target.vy()) * (maxTicks - age)
+                                       : y < box0.minY() + target.low()[at] - 0.3;
+            if (vy < 0 && below) return Outcome.NONE;
         }
         return Outcome.NONE;
     }
@@ -237,13 +380,9 @@ public final class HitChance {
      * A move that only grazes the widened box still hits if, from where it touched, the straight line toward
      * the box's centre reaches the real box before any block (ProjectileUtil.getManyEntityHitResult).
      */
-    private static boolean marginHit(double px, double py, double pz, Box tb, List<Box> blocks) {
+    private static boolean marginHit(double px, double py, double pz, Box tb, Grid blocks) {
         double dx = tb.centerX() - px, dy = tb.centerY() - py, dz = tb.centerZ() - pz;
-        double end = 1.0;
-        for (Box b : blocks) {
-            double s = b.clip(px, py, pz, dx, dy, dz);
-            if (!Double.isNaN(s) && s < end) end = s;
-        }
+        double end = blocks.firstEntry(px, py, pz, dx, dy, dz);
         return !Double.isNaN(tb.clip(px, py, pz, dx * end, dy * end, dz * end));
     }
 
@@ -261,10 +400,12 @@ public final class HitChance {
      * coarse grid in the plane facing the shooter, then two finer rounds around the best). Among points
      * within half a percentage point of the best, the one nearest the box centre wins, so an open target
      * keeps the centre and the choice doesn't wander; the result is never worse than aiming at the centre.
-     * The shot's own aim is ignored. Null if no point on the box is in reach. Costs about 64 chance
-     * evaluations (tens of milliseconds), so run it off the game thread.
+     * The shot's own aim is ignored. Null if no point on the box is in reach. Costs 64 chance evaluations,
+     * which share one filing of the block boxes (about 20 ms for a zombie 20 blocks off, 120 ms at 100, measured
+     * 2026-10-11), so run it off the game thread.
      */
     public static Aim bestAim(Shot shot, Target target, Blocks blocks, int maxTicks, Aimer aimer) {
+        Indexed filed = new Indexed(blocks);   // filed once, for all the search's chance evaluations
         Box b = target.box();
         double cx = b.centerX(), cy = b.centerY(), cz = b.centerZ();
         double bx = cx - shot.x(), bz = cz - shot.z(), dist = Math.sqrt(bx * bx + bz * bz);
@@ -283,7 +424,7 @@ public final class HitChance {
             tried = new ArrayList<>();
             for (int i = -nv; i <= nv; i++)
                 for (int j = -nl; j <= nl; j++) {
-                    Aim a = aimAt(shot, target, blocks, maxTicks, aimer, cx, cy, cz, lx, lz, v0 + i * stepV, l0 + j * stepL, rollsByRound[round]);
+                    Aim a = aimAt(shot, target, filed, maxTicks, aimer, cx, cy, cz, lx, lz, v0 + i * stepV, l0 + j * stepL, rollsByRound[round]);
                     if (a != null) tried.add(a);
                 }
             if (tried.isEmpty()) return null;
@@ -292,7 +433,7 @@ public final class HitChance {
         }
         // the box centre itself, at the last round's count, as a floor: the search never does worse than aiming at
         // the centre, and the centre wins any tie with the last round
-        Aim centre = aimAt(shot, target, blocks, maxTicks, aimer, cx, cy, cz, lx, lz, 0, 0, 4096);
+        Aim centre = aimAt(shot, target, filed, maxTicks, aimer, cx, cy, cz, lx, lz, 0, 0, 4096);
         if (centre != null) tried.add(centre);
         return nearestCentreOfBest(tried);
     }
@@ -320,7 +461,7 @@ public final class HitChance {
     }
 
     /** The aim through the box centre moved up by v and sideways by l, with its chance over n rolls. */
-    private static Aim aimAt(Shot shot, Target target, Blocks blocks, int maxTicks, Aimer aimer,
+    private static Aim aimAt(Shot shot, Target target, Indexed blocks, int maxTicks, Aimer aimer,
                              double cx, double cy, double cz, double lx, double lz, double v, double l, int n) {
         double px = cx + l * lx, py = cy + v, pz = cz + l * lz;
         double[] dir = aimer.aim(px, py, pz);

@@ -6,7 +6,6 @@ import ai.rrw.kine.combat.HitChance.Target;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -62,25 +61,28 @@ public final class AimAdvisor {
      * Called each client tick with the shot as aimed now: dir is the launch direction before the spread, and
      * shooterMotion the shooter's per-tick motion as the aim uses it (zero for a weapon that doesn't pass it
      * on). aimSpec: the shot auto aim steers for, which the best-aim search plans (a bow being drawn: its full draw);
-     * the chance is of the shot as released now (spec). leadTicks: how far behind the target's position when the
-     * shot spawns the client shows it (drawing lag, the release's wait and the round trip); the target is moved on
-     * by that much of its motion. Starts the chance job, and the best-aim job if wanted, when their workers are
-     * free. Every weapon here shoots with uncertainty 1.
+     * the chance is of the shot as released now (spec). course: how the target moves on, as the aim leads it.
+     * leadTicks: how far behind the target's position when the shot spawns the client shows it (drawing lag, the
+     * release's wait and the round trip); the target is moved that far along its course. Starts the chance job, and
+     * the best-aim job if wanted, when their workers are free. Every weapon here shoots with uncertainty 1.
      */
     public static void update(ClientLevel level, Vec3 spawn, Vec3 dir, Ballistics.Spec spec, Ballistics.Spec aimSpec,
-                              Vec3 shooterMotion, boolean onGround, Entity target, boolean wantBest, double leadTicks) {
+                              Vec3 shooterMotion, boolean onGround, Entity target, Ballistics.Course course,
+                              boolean wantBest, double leadTicks) {
         boolean doChance = !chanceBusy.get(), doBest = wantBest && !bestBusy.get();
         if (!doChance && !doBest) return;
 
         Shot shot = new Shot(spawn.x, spawn.y, spawn.z, dir.x, dir.y, dir.z, spec.speed(), 1.0,
                              shooterMotion.x, onGround ? 0.0 : shooterMotion.y, shooterMotion.z);
-        Entity mover = target instanceof EnderDragonPart part ? part.parentMob : target;
-        Vec3 targetMotion = new Vec3(mover.getX() - mover.xOld, mover.getY() - mover.yOld, mover.getZ() - mover.zOld);
-        AABB bb = target.getBoundingBox().move(targetMotion.scale(leadTicks));
-        Target tgt = new Target(new Box(bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ),
-                                targetMotion.x, targetMotion.y, targetMotion.z);
+        Vec3 targetMotion = course.motion();
+        AABB bb = target.getBoundingBox().move(course.at(leadTicks));
+        Box box = new Box(bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ);
+        // a falling target's height by the arrow's age, worked out here: the course read the floor on this thread
+        Target tgt = course.falls()
+            ? Target.falling(box, targetMotion.x, targetMotion.z, course.dyTable(leadTicks, MAX_FLIGHT_TICKS))
+            : new Target(box, targetMotion.x, targetMotion.y, targetMotion.z);
         HitChance.Aimer aimer = (px, py, pz) -> {
-            Vec3 d = Ballistics.solveAim(spawn, new Vec3(px, py, pz), targetMotion, aimSpec, shooterMotion, onGround)
+            Vec3 d = Ballistics.solveAim(spawn, new Vec3(px, py, pz), course, leadTicks, aimSpec, shooterMotion, onGround)
                 .subtract(spawn).normalize();
             return new double[]{d.x, d.y, d.z};
         };

@@ -26,9 +26,19 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ambient.Bat;
+import net.minecraft.world.entity.animal.FlyingAnimal;
+import net.minecraft.world.entity.animal.allay.Allay;
+import net.minecraft.world.entity.animal.happyghast.HappyGhast;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.monster.Blaze;
+import net.minecraft.world.entity.monster.Ghast;
+import net.minecraft.world.entity.monster.Phantom;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
@@ -38,6 +48,7 @@ import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -46,7 +57,9 @@ import org.joml.Matrix4f;
 import org.joml.Vector4f;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 
@@ -75,11 +88,13 @@ public class ProjectileTargeting {
     private static final double AIM_RANGE      = 256.0;  // farthest target picked up or kept (blocks); a bow reaches about 117 on the level, 164 from 80 up
     private static final int    RETICLE_TICKS  = 300;    // longest simulated flight for the ring (a long shot from a height takes 90 or more)
     private static final double SEARCH_COS     = Math.cos(Math.toRadians(60.0));   // cut before the solve: a long shot aims up to about 45 degrees above its target
-    // How much older the client's view of a target is than where the target will be when the shot spawns, besides
-    // the round trip: a living entity is drawn 2 ticks behind the last position the server sent (InterpolationHandler's
-    // 3 steps, at the 2 or 3 tick update interval), and a bow or trident fires with the rotation sent the tick before
-    // its release (the release packet carries none, and handleKeybinds runs before the tick's move packet).
+    // How much older the client's view of a target is than the last position the server sent: a living entity is
+    // drawn 2 ticks behind it (InterpolationHandler's 3 steps, at the 2 or 3 tick update interval).
     private static final double INTERP_TICKS   = 2.0;
+    // How far below a falling target its floor is looked for (blocks): first near (a target on the ground or in a jump,
+    // which rises 1.25, finds it there), then far (a fall from rest takes about 46 ticks to drop 64 blocks).
+    private static final double FLOOR_NEAR     = 4.0;
+    private static final double FLOOR_FAR      = 64.0;
 
     // colours
     private static final int COLOR_RING   = 0xFFFFFFFF;
@@ -105,6 +120,7 @@ public class ProjectileTargeting {
     private static Entity lock = null;                // the target auto aim holds, kept from tick to tick
     private static float lastSolYaw, lastSolPitch;    // its solved aim last tick, for the turn's feed-forward
     private static boolean haveLastSol = false;
+    private static final Map<Integer, Ballistics.Course> courses = new HashMap<>();   // each target's course, by entity id, worked out once a tick
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
@@ -196,7 +212,8 @@ public class ProjectileTargeting {
                     .getOrThrow(item.is(Items.TRIDENT) ? DamageTypes.TRIDENT : DamageTypes.ARROW);
     }
 
-    // A hittable entity and its motion per tick, gathered once a tick for the simulated flights.
+    // A hittable entity and its motion per tick, gathered once a tick for the simulated flights (its course, which
+    // reads the floor under it, only once a flight comes near it).
     private record Mover(Entity e, Vec3 motion) {}
 
     private static List<Mover> movers(ClientLevel level, Entity self, Vec3 eye, Predicate<Entity> hittable) {
@@ -208,8 +225,8 @@ public class ProjectileTargeting {
     }
 
     // Stops a simulated flight at the first block or entity (the reticle). Each entity is met where it will be when
-    // the projectile gets there, moving on at its present speed from where it will be when the shot spawns (`lead`
-    // ticks on), as the hit chance models it: a led shot at a moving mob meets it there, not where it stands now.
+    // the projectile gets there, along its course (course) from where it will be when the shot spawns (`lead` ticks
+    // on), as the hit chance models it: a led shot at a moving mob meets it there, not where it stands now.
     // As in the game, the shooter's own vehicle and those riding it can't be hit until the flight has left them.
     private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self, List<Mover> movers, double lead) {
         List<Entity> ride = self.getRootVehicle().getSelfAndPassengers().filter(Entity::isPickable).toList();
@@ -232,7 +249,11 @@ public class ProjectileTargeting {
             Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
             for (Mover m : movers) {
                 if (!left[0] && ride.contains(m.e())) continue;
-                AABB bb = m.e().getBoundingBox().move(m.motion().scale(lead + tick));
+                // across first, where the course goes straight on, so only an entity near the flight reads its floor
+                AABB b0 = m.e().getBoundingBox();
+                double t = lead + tick, hx = m.motion().x * t, hz = m.motion().z * t;
+                if (b0.maxX + hx < seg.minX || b0.minX + hx > seg.maxX || b0.maxZ + hz < seg.minZ || b0.minZ + hz > seg.maxZ) continue;
+                AABB bb = b0.move(course(level, m.e()).at(t));
                 if (!bb.intersects(seg)) continue;
                 Optional<Vec3> h = entityHit(level, self, bb, pos, segEnd, HitChance.margin(tick));
                 if (h.isPresent()) {
@@ -345,11 +366,56 @@ public class ProjectileTargeting {
         return new Vec3(m.getX() - m.xOld, m.getY() - m.yOld, m.getZ() - m.zOld);
     }
 
+    // How a target moves on, for every lead (the solve, the reticle's flights, the hit chance): straight on at its
+    // motion, falling back down for one gravity acts on. Once a tick per target.
+    private static Ballistics.Course course(Level level, Entity target) {
+        return courses.computeIfAbsent(target.getId(), id -> {
+            Vec3 v = motion(target);
+            if (!(target instanceof LivingEntity le) || !falls(le)) return Ballistics.Course.straight(v);
+            return new Ballistics.Course(v, true, le.getGravity(), le.hasEffect(MobEffects.SLOW_FALLING), floor(level, le));
+        });
+    }
+
+    // Whether gravity moves a target as LivingEntity.travelInAir does (26.1.2), so that its lead comes back down rather
+    // than going on in a straight line. Not: no gravity (the NoGravity flag, synced; fliers under FlyingMoveControl and
+    // vexes set it); an elytra glide (travelFallFlying); water or lava (travelInFluid); riding (the mount moves it); a
+    // ladder or vine (handleOnClimbable caps the fall, and a climb rises at a steady rate); levitation; mobs that fly by
+    // a travel of their own without gravity (phantoms, ghasts, happy ghasts and allays: travelFlying), bees and parrots
+    // (FlyingAnimal); mobs that damp their own fall each tick (bats, blazes, the wither); the ender dragon; and creative
+    // players, who may be flying (the server doesn't send other players' abilities). Effects of other entities aren't
+    // sent either, so levitation and slow falling are seen only on the player's own mount.
+    private static boolean falls(LivingEntity e) {
+        if (e.getGravity() <= 0 || e.isFallFlying() || e.isInWater() || e.isInLava() || e.isPassenger() || e.onClimbable()
+            || e.hasEffect(MobEffects.LEVITATION)) return false;
+        if (e instanceof Phantom || e instanceof Ghast || e instanceof HappyGhast || e instanceof Allay || e instanceof FlyingAnimal
+            || e instanceof Bat || e instanceof Blaze || e instanceof WitherBoss || e instanceof EnderDragon) return false;
+        return !(e instanceof Player pl && pl.isCreative());
+    }
+
+    // The floor under a falling target: how far (0 or less) its box can move straight down before it lands, by the
+    // game's own collision (Entity.collideBoundingBox, as Entity.move uses it); negative infinity if there is none within
+    // FLOOR_FAR. Read under the target where it is now, not under its led position: a jump or a short fall lasts 10 to
+    // 30 ticks, in which a running target covers a few blocks and mostly lands about as high as it left, while reading
+    // along the led path would cost a read for every tick of flight for every target, and the straight lead across is
+    // itself a guess past a few blocks.
+    private static double floor(Level level, LivingEntity e) {
+        AABB box = e.getBoundingBox();
+        double near = Entity.collideBoundingBox(e, new Vec3(0, -FLOOR_NEAR, 0), box, level, List.of()).y;
+        if (near > -FLOOR_NEAR) return near;
+        double far = Entity.collideBoundingBox(e, new Vec3(0, -FLOOR_FAR, 0), box, level, List.of()).y;
+        return far > -FLOOR_FAR ? far : Double.NEGATIVE_INFINITY;
+    }
+
+    // A bow or trident fires on a release, which carries no rotation; a crossbow on a use packet, which does.
+    private static boolean firedByRelease(ItemStack item) {
+        return item.is(Items.BOW) || item.is(Items.TRIDENT);
+    }
+
     // Ticks between the target position the client shows and the target's position when the shot spawns, before
-    // the flight itself: the drawing lag, the tick a release waits for its rotation, and the round trip (the
-    // server's measure of it, from the player list).
+    // the flight itself: the drawing lag, the ticks from this tick's turn to the shot it aims (Ballistics.ticksToShot),
+    // and the round trip (the server's measure of it, from the player list).
     private static double leadTicks(Minecraft mc, LocalPlayer p, ItemStack item) {
-        double t = INTERP_TICKS + (item.is(Items.CROSSBOW) ? 0 : 1);   // a crossbow fires with a use packet, which carries its rotation
+        double t = INTERP_TICKS + Ballistics.ticksToShot(firedByRelease(item));
         ClientPacketListener conn = mc.getConnection();
         PlayerInfo info = conn != null ? conn.getPlayerInfo(p.getUUID()) : null;
         if (info != null) t += info.getLatency() / 50.0;
@@ -359,10 +425,10 @@ public class ProjectileTargeting {
     // Ballistic solve with target lead, for a target entity, from where it will be when the shot spawns, at the box
     // centre moved to the best point AimAdvisor last found for it.
     private static Ballistics.Solution solve(LocalPlayer p, Vec3 spawn, Entity target, Spec spec, double lead) {
-        Vec3 tv = motion(target);
-        Vec3 center = target.getBoundingBox().getCenter().add(tv.scale(lead))
+        Ballistics.Course c = course(p.level(), target);
+        Vec3 center = target.getBoundingBox().getCenter().add(c.at(lead))
                             .add(AimAdvisor.aimOffset(target, spawn, p.level().getGameTime()));
-        return Ballistics.solve(spawn, center, tv, spec, shooterMotion(p, spec), p.onGround());
+        return Ballistics.solve(spawn, center, c, lead, spec, shooterMotion(p, spec), p.onGround());
     }
 
     private static void dropLock() { aiming = false; lock = null; haveLastSol = false; }
@@ -396,12 +462,14 @@ public class ProjectileTargeting {
         if (!Settings.projectileReticle && !Settings.autoAim) { dropLock(); valid = false; return; }
 
         valid = false; hitBox = null; hitId = -1; noDamage = null;
+        courses.clear();
         Held held = heldShot(p);
         if (held == null) { dropLock(); return; }
         Spec spec = held.spec();
 
         Vec3 eye = p.getEyePosition();
-        Vec3 spawn = new Vec3(eye.x, p.getEyeY() - 0.1F, eye.z);   // where the server spawns the projectile
+        // where the server spawns the shot this tick's view aims (a bow or trident: one tick of the player's motion on)
+        Vec3 spawn = Ballistics.spawnPoint(eye, shooterMotion(p, spec), firedByRelease(held.item()));
 
         // Weapons fire arrows or tridents. Some targets they hit take no damage (NoDamage); the reticle still
         // shows those, and auto aim leaves them alone.
@@ -465,14 +533,14 @@ public class ProjectileTargeting {
             r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
             if (tgtF == null) tgtF = sf.entity() != null ? sf.entity() : bestTarget(p, level, sf.impact(), r, targets);
             onTarget = tgtF != null && (sf.entity() == tgtF || tgtF.getBoundingBox()
-                .move(motion(tgtF).scale(lead + sf.ticks())).inflate(r).contains(sf.impact()));
+                .move(course(level, tgtF).at(lead + sf.ticks())).inflate(r).contains(sf.impact()));
         }
         // the hit chance of the shot as aimed now, and the best point to aim at while auto aim holds a target;
         // for a target the shot can't hurt, the reason instead
         String why = spec.weapon() && tgtF != null ? NoDamage.reason(tgtF, spawn, type, piercing) : null;
         if (spec.weapon() && tgtF != null && why == null)
             AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec, held.aim(),
-                              shooterMotion(p, spec), p.onGround(), tgtF, locked != null, lead);
+                              shooterMotion(p, spec), p.onGround(), tgtF, course(level, tgtF), locked != null, lead);
         // the target's box and readout show whether or not the ring has somewhere to land (a held target picked up
         // by the crosshair, while the shot as aimed now still falls short or flies off)
         hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
