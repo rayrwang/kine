@@ -61,13 +61,14 @@ public final class AimAdvisor {
     /**
      * Called each client tick with the shot as aimed now: dir is the launch direction before the spread, and
      * shooterMotion the shooter's per-tick motion as the aim uses it (zero for a weapon that doesn't pass it
-     * on). leadTicks: how far behind the target's position when the shot spawns the client shows it (drawing lag,
-     * the release's wait and the round trip); the target is moved on by that much of its motion. Starts the
-     * chance job, and the best-aim job if wanted, when their workers are free. Every weapon here shoots with
-     * uncertainty 1.
+     * on). aimSpec: the shot auto aim steers for, which the best-aim search plans (a bow being drawn: its full draw);
+     * the chance is of the shot as released now (spec). leadTicks: how far behind the target's position when the
+     * shot spawns the client shows it (drawing lag, the release's wait and the round trip); the target is moved on
+     * by that much of its motion. Starts the chance job, and the best-aim job if wanted, when their workers are
+     * free. Every weapon here shoots with uncertainty 1.
      */
-    public static void update(ClientLevel level, Vec3 spawn, Vec3 dir, Ballistics.Spec spec, Vec3 shooterMotion, boolean onGround,
-                              Entity target, boolean wantBest, double leadTicks) {
+    public static void update(ClientLevel level, Vec3 spawn, Vec3 dir, Ballistics.Spec spec, Ballistics.Spec aimSpec,
+                              Vec3 shooterMotion, boolean onGround, Entity target, boolean wantBest, double leadTicks) {
         boolean doChance = !chanceBusy.get(), doBest = wantBest && !bestBusy.get();
         if (!doChance && !doBest) return;
 
@@ -79,7 +80,7 @@ public final class AimAdvisor {
         Target tgt = new Target(new Box(bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ),
                                 targetMotion.x, targetMotion.y, targetMotion.z);
         HitChance.Aimer aimer = (px, py, pz) -> {
-            Vec3 d = Ballistics.solveAim(spawn, new Vec3(px, py, pz), targetMotion, spec, shooterMotion, onGround)
+            Vec3 d = Ballistics.solveAim(spawn, new Vec3(px, py, pz), targetMotion, aimSpec, shooterMotion, onGround)
                 .subtract(spawn).normalize();
             return new double[]{d.x, d.y, d.z};
         };
@@ -112,7 +113,9 @@ public final class AimAdvisor {
             // cover the farthest point it tries (a little past the box's half height and half width).
             Box b = tgt.box();
             double[] c = aimer.aim(b.centerX(), b.centerY(), b.centerZ());
-            Shot centreShot = shot.aimed(c[0], c[1], c[2]);
+            Shot aimShot = new Shot(spawn.x, spawn.y, spawn.z, c[0], c[1], c[2], aimSpec.speed(), 1.0,
+                                    shooterMotion.x, onGround ? 0.0 : shooterMotion.y, shooterMotion.z);
+            Shot centreShot = aimShot;
             double halfH = (b.maxY() - b.minY()) / 2 + 0.3, halfW = Math.max(b.maxX() - b.minX(), b.maxZ() - b.minZ()) / 2;
             int maxTicks = ticksPast(centreShot, tgt);
             List<List<Box>> perTick = blocksAlong(level, centreShot, maxTicks, 1.2 * Math.max(halfH, halfW));
@@ -121,7 +124,7 @@ public final class AimAdvisor {
                 HitChance.Blocks blocks = byAge(perTick);
                 bestWorker.execute(() -> {
                     try {
-                        HitChance.Aim a = HitChance.bestAim(shot, tgt, blocks, maxTicks, aimer);
+                        HitChance.Aim a = HitChance.bestAim(aimShot, tgt, blocks, maxTicks, aimer);
                         lastBest = a == null ? null : new BestResult(id, a.up(), a.side(), now);
                     } catch (RuntimeException e) {
                         lastBest = null;

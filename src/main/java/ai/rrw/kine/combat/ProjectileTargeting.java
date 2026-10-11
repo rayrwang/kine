@@ -45,6 +45,8 @@ import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 
@@ -61,12 +63,17 @@ public class ProjectileTargeting {
 
     // aim assist (the turn itself: AimControl)
     private static final float  MOUSE_EPS      = 0.4f;   // mouse drift (deg) that releases the lock
-    private static final int    COOLDOWN_TICKS = 10;     // ticks aim stays off after you look away
-    private static final double ACQUIRE_DEG    = 6.0;    // a target is picked up when the view is this close to aiming at it (aimGap)
-    private static final double HOLD_DEG       = 10.0;   // and kept while the view stays this close
+    private static final int    SETTLE_TICKS   = 10;     // the view must rest this long (half a second) before a target is picked up
+    // A target is picked up when the view is this close to aiming at it (aimGap): for a mob on the ground, the
+    // reticle ring's own angular radius plus the mob's half width as seen, the reticle's receptive field; in the air,
+    // AIR_ACQUIRE_DEG, wider, since a flying mob is hard to hold the crosshair on.
+    private static final double RING_DEG       = Math.toDegrees(ANG_PER_UNC * SPREAD_MULT);   // about 2 degrees
+    private static final double AIR_ACQUIRE_DEG = 6.0;
+    private static final double HOLD_DEG       = 10.0;   // a held target is kept while the view stays this close
     private static final int    ARC_STEPS      = 16;     // points along aimGap's arc
     private static final double REACH_MISS     = 0.5;    // blocks: a solved shot that passes further from the led point can't reach it
-    private static final double AIM_RANGE      = 128.0;  // farthest target picked up or kept (blocks)
+    private static final double AIM_RANGE      = 256.0;  // farthest target picked up or kept (blocks); a bow reaches about 117 on the level, 164 from 80 up
+    private static final int    RETICLE_TICKS  = 300;    // longest simulated flight for the ring (a long shot from a height takes 90 or more)
     private static final double SEARCH_COS     = Math.cos(Math.toRadians(60.0));   // cut before the solve: a long shot aims up to about 45 degrees above its target
     // How much older the client's view of a target is than where the target will be when the shot spawns, besides
     // the round trip: a living entity is drawn 2 ticks behind the last position the server sent (InterpolationHandler's
@@ -88,11 +95,13 @@ public class ProjectileTargeting {
     private static AABB hitBox = null;
     private static int hitId = -1;   // the shown target's entity id, for the hit chance; -1 when none
     private static String noDamage = null;   // why the shot can't hurt the shown target (NoDamage), or null
+    private static boolean ringOnTarget = false;   // the ring covers the shown target
 
     // aim state
     private static boolean aiming = false;
-    private static float lastAimYaw, lastAimPitch;
-    private static int cooldown = 0;
+    private static float lastYaw, lastPitch;          // the view at the end of the last tick, after any turn of ours
+    private static boolean haveLast = false;
+    private static int stillTicks = 0;                // ticks the pilot has left the view alone
     private static Entity lock = null;                // the target auto aim holds, kept from tick to tick
     private static float lastSolYaw, lastSolPitch;    // its solved aim last tick, for the turn's feed-forward
     private static boolean haveLastSol = false;
@@ -106,7 +115,11 @@ public class ProjectileTargeting {
     }
 
     // which projectile, its flight parameters, and the item it comes from
-    private record Held(Spec spec, ItemStack item) {}
+    // spec: the shot as released now; aim: the shot auto aim steers for (a bow being drawn: its full draw, so the
+    // view moves once to where the finished draw needs it instead of following the draw's changing arc)
+    private record Held(Spec spec, Spec aim, ItemStack item) {
+        Held(Spec spec, ItemStack item) { this(spec, spec, item); }
+    }
 
     private static Held heldShot(LocalPlayer p) {
         if (p.isUsingItem()) {
@@ -116,7 +129,8 @@ public class ProjectileTargeting {
                 float pow = (t * t + 2f * t) / 3f;
                 if (pow > 1f) pow = 1f;
                 if (pow < 0.1f) return null;
-                return new Held(new Spec(0.05, 0.99F, pow * 3.0, 0.0, false, true), use);   // arrow
+                return new Held(new Spec(0.05, 0.99F, pow * 3.0, 0.0, false, true),   // arrow
+                                new Spec(0.05, 0.99F, 3.0, 0.0, false, true), use);
             }
             if (use.is(Items.TRIDENT)) {
                 // TridentItem.releaseUsing: thrown only after 10 ticks of use, never with Riptide, not if it would break
@@ -175,19 +189,35 @@ public class ProjectileTargeting {
                     .getOrThrow(item.is(Items.TRIDENT) ? DamageTypes.TRIDENT : DamageTypes.ARROW);
     }
 
-    // Stops a simulated flight at the first block or entity (the reticle).
-    private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self, Predicate<Entity> hittable) {
+    // A hittable entity and its motion per tick, gathered once a tick for the simulated flights.
+    private record Mover(Entity e, Vec3 motion) {}
+
+    private static List<Mover> movers(ClientLevel level, Entity self, Vec3 eye, Predicate<Entity> hittable) {
+        List<Mover> out = new ArrayList<>();
+        for (Entity e : level.entitiesForRendering())
+            if (e != self && hittable.test(e) && e.position().distanceToSqr(eye) <= AIM_RANGE * AIM_RANGE)
+                out.add(new Mover(e, motion(e)));
+        return out;
+    }
+
+    // Stops a simulated flight at the first block or entity (the reticle). Each entity is met where it will be when
+    // the projectile gets there, moving on at its present speed from where it will be when the shot spawns (`lead`
+    // ticks on), as the hit chance models it: a led shot at a moving mob meets it there, not where it stands now.
+    private static Ballistics.Collider<Entity> collider(ClientLevel level, Entity self, List<Mover> movers, double lead) {
         return (pos, next, tick) -> {
             BlockHitResult bhr = level.clip(new ClipContext(pos, next,
                 ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, self));
             Vec3 segEnd = bhr.getType() != HitResult.Type.MISS ? bhr.getLocation() : next;
 
+            AABB seg = new AABB(pos, segEnd).inflate(0.5);   // the widest margin is 0.3
             Entity ne = null; Vec3 np = null; double best = Double.MAX_VALUE;
-            for (Entity e : level.getEntities(self, new AABB(pos, segEnd).inflate(2.0), hittable)) {
-                Optional<Vec3> h = entityHit(level, self, e.getBoundingBox(), pos, segEnd, HitChance.margin(tick));
+            for (Mover m : movers) {
+                AABB bb = m.e().getBoundingBox().move(m.motion().scale(lead + tick));
+                if (!bb.intersects(seg)) continue;
+                Optional<Vec3> h = entityHit(level, self, bb, pos, segEnd, HitChance.margin(tick));
                 if (h.isPresent()) {
                     double d = pos.distanceToSqr(h.get());
-                    if (d < best) { best = d; ne = e; np = h.get(); }
+                    if (d < best) { best = d; ne = m.e(); np = h.get(); }
                 }
             }
             if (ne != null) return new Ballistics.Hit<>(np, null, ne);
@@ -224,23 +254,36 @@ public class ProjectileTargeting {
     }
 
     // The target auto aim picks up: the one the reticle covers, else the one the view is nearest to aiming at
-    // (aimGap), within ACQUIRE_DEG, in line of sight and in reach of the draw as it is now.
-    private static Entity acquire(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec spec, double lead,
+    // (aimGap), within its pickup width (acquireDeg), in line of sight and in reach of the shot being aimed. All the
+    // client's entities are looked at (a box query this wide would walk thousands of empty sections).
+    private static Entity acquire(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec aim, double lead,
                                   Entity covered, Predicate<Entity> hurtable) {
         if (covered != null && visible(level, p, eye, covered)) return covered;
         Vec3 look = p.getLookAngle();
-        Entity best = null; double bestGap = ACQUIRE_DEG;
-        for (Entity e : level.getEntities(p, new AABB(eye, eye).inflate(AIM_RANGE), hurtable)) {
+        Entity best = null; double bestRatio = 1.0;   // gap as a share of the target's own pickup width
+        for (Entity e : level.entitiesForRendering()) {
+            if (e == p || !hurtable.test(e)) continue;
             Vec3 to = e.getBoundingBox().getCenter().subtract(eye);
             double dist = to.length();
             if (dist < 1e-3 || dist > AIM_RANGE || to.scale(1.0 / dist).dot(look) < SEARCH_COS) continue;
             if (!visible(level, p, eye, e)) continue;
-            Ballistics.Solution s = solve(p, spawn, e, spec, lead);
-            if (Math.abs(s.miss()) > REACH_MISS) continue;   // a bow not drawn far enough yet
-            double gap = aimGap(look, to.scale(1.0 / dist), Ballistics.dirOf(s.yaw(), s.pitch()));
-            if (gap < bestGap) { bestGap = gap; best = e; }
+            Ballistics.Solution s = solve(p, spawn, e, aim, lead);
+            if (Math.abs(s.miss()) > REACH_MISS) continue;   // beyond the weapon's reach
+            double ratio = aimGap(look, to.scale(1.0 / dist), Ballistics.dirOf(s.yaw(), s.pitch())) / acquireDeg(level, e, dist);
+            if (ratio < bestRatio) { bestRatio = ratio; best = e; }
         }
         return best;
+    }
+
+    // How close the view must come to aiming at a target to pick it up, degrees. On the ground (or in water), the
+    // reticle's receptive field: the ring's angular radius plus the target's half width as seen from here, so the
+    // crosshair on the mob picks it up and a few degrees beside it doesn't. In the air (no block just under its
+    // feet), wider. Not onGround(): the client learns that only from movement packets, so a mob standing still
+    // reads as airborne.
+    private static double acquireDeg(ClientLevel level, Entity e, double dist) {
+        boolean airborne = !e.isInWater() && level.noBlockCollision(e, e.getBoundingBox().move(0, -0.25, 0));
+        if (airborne) return AIR_ACQUIRE_DEG;
+        return RING_DEG + Math.toDegrees(Math.atan(e.getBbWidth() / 2 / dist));
     }
 
     // How far the view is from aiming at a target, degrees: its distance to the arc from the target's centre to its
@@ -304,7 +347,23 @@ public class ProjectileTargeting {
 
     private static void dropLock() { aiming = false; lock = null; haveLastSol = false; }
 
+    // Whether the pilot moved the view since the last tick (any turn but ours, which is recorded after it is made):
+    // that lets go of a held target, and a new one is picked up only once the view has rested SETTLE_TICKS, so
+    // sweeping the crosshair across a mob doesn't grab the view.
     private static void tick(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (p == null) { haveLast = false; stillTicks = 0; }
+        else {
+            boolean moved = haveLast && (Math.abs(Mth.wrapDegrees(p.getYRot() - lastYaw)) > MOUSE_EPS
+                                         || Math.abs(p.getXRot() - lastPitch) > MOUSE_EPS);
+            stillTicks = moved ? 0 : Math.min(stillTicks + 1, SETTLE_TICKS);
+            if (moved) dropLock();
+        }
+        aimTick(mc);
+        if (mc.player != null) { lastYaw = mc.player.getYRot(); lastPitch = mc.player.getXRot(); haveLast = true; }
+    }
+
+    private static void aimTick(Minecraft mc) {
         LocalPlayer p = mc.player; ClientLevel level = mc.level;
         if (p == null || level == null) { dropLock(); valid = false; return; }
         if (!Settings.projectileReticle && !Settings.autoAim) { dropLock(); valid = false; return; }
@@ -323,38 +382,37 @@ public class ProjectileTargeting {
         Holder<DamageType> type = damageType(level, held.item());
         boolean piercing = Enchant.level(held.item(), Enchantments.PIERCING) > 0;
         Predicate<Entity> hurtable = hittable.and(e -> NoDamage.reason(e, spawn, type, piercing) == null);
-        Ballistics.Collider<Entity> collider = collider(level, p, hittable);
         double lead = spec.weapon() ? leadTicks(mc, p, held.item()) : 0;
+        Ballistics.Collider<Entity> collider = collider(level, p, movers(level, p, eye, hittable), lead);
 
         // aim assist, weapons only (bow, crossbow, trident), with target lead
-        Entity locked = null;
-        boolean overridden = aiming && (Math.abs(Mth.wrapDegrees(p.getYRot() - lastAimYaw)) > MOUSE_EPS
-                                     || Math.abs(p.getXRot() - lastAimPitch) > MOUSE_EPS);
-        if (overridden) { cooldown = COOLDOWN_TICKS; dropLock(); }
-        if (cooldown > 0) { cooldown--; dropLock(); }
-        else if (!spec.weapon() || !Settings.autoAim) dropLock();
+        Entity locked = null, pending = null;   // pending: the target about to be picked up, shown while the view settles
+        if (!spec.weapon() || !Settings.autoAim) dropLock();
         else {
             // The held target stays held from tick to tick; leading it moves the shot off where it stands now, so
             // what the reticle covers can't be what keeps it. Otherwise pick one up.
             Entity tgt = holds(lock, p, level, eye, hurtable) ? lock : null;
             boolean kept = tgt != null;
             if (!kept) {
-                Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
+                Ballistics.Flight<Entity> s0 = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider, RETICLE_TICKS);
                 Entity covered = null;
                 if (s0.impact() != null) {
                     double r0 = Math.max(MIN_R, eye.distanceTo(s0.impact()) * ANG_PER_UNC * SPREAD_MULT);
-                    covered = bestTarget(p, level, s0.impact(), r0, hurtable);
+                    covered = s0.entity() != null && hurtable.test(s0.entity()) ? s0.entity()
+                            : bestTarget(p, level, s0.impact(), r0, hurtable);
                 }
-                tgt = acquire(p, level, eye, spawn, spec, lead, covered, hurtable);
+                tgt = acquire(p, level, eye, spawn, held.aim(), lead, covered, hurtable);
+                // picked up only once the view has rested; until then it is shown, not turned to
+                if (stillTicks < SETTLE_TICKS) { pending = tgt; tgt = null; }
             }
-            Ballistics.Solution sol = tgt == null ? null : solve(p, spawn, tgt, spec, lead);
+            Ballistics.Solution sol = tgt == null ? null : solve(p, spawn, tgt, held.aim(), lead);
             // a held target whose aim jumps away (a teleport) or that goes behind you is let go, not chased
             if (kept && aimGap(p.getLookAngle(), tgt.getBoundingBox().getCenter().subtract(eye).normalize(),
                                Ballistics.dirOf(sol.yaw(), sol.pitch())) > HOLD_DEG) sol = null;
             if (sol == null) dropLock();
             else if (Math.abs(sol.miss()) > REACH_MISS) {
-                // held, but out of reach of the draw as it is now: hold the view still rather than lob toward it
-                lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
+                // held, but out of reach: hold the view still rather than lob toward it
+                aiming = true;
                 lock = tgt; locked = tgt; haveLastSol = false;
             } else {
                 float yaw = (float) sol.yaw(), pitch = (float) sol.pitch();
@@ -364,31 +422,38 @@ public class ProjectileTargeting {
                 float dPitch = AimControl.step(pitch - p.getXRot(), same ? pitch - lastSolPitch : 0f, count);
                 // turned as a mouse would, by whole counts, so the rotation sent is one a vanilla client could send
                 MouseTurn.toward(p, p.getYRot() + dYaw, Mth.clamp(p.getXRot() + dPitch, -90f, 90f));
-                lastAimYaw = p.getYRot(); lastAimPitch = p.getXRot(); aiming = true;
+                aiming = true;
                 lock = tgt; locked = tgt;
                 lastSolYaw = yaw; lastSolPitch = pitch; haveLastSol = true;
             }
         }
 
         // final reticle, after any aim correction this tick
-        Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider);
-        Entity tgtF = locked;
+        Ballistics.Flight<Entity> sf = Ballistics.simulate(spawn, launchVel(p, p.getYRot(), p.getXRot(), spec), spec, collider, RETICLE_TICKS);
+        Entity tgtF = locked != null ? locked : pending;
         double r = 0;
+        boolean onTarget = false;
         if (sf.impact() != null) {
             r = Math.max(MIN_R, eye.distanceTo(sf.impact()) * ANG_PER_UNC * SPREAD_MULT);
-            if (tgtF == null) tgtF = bestTarget(p, level, sf.impact(), r, hittable);
+            if (tgtF == null) tgtF = sf.entity() != null ? sf.entity() : bestTarget(p, level, sf.impact(), r, hittable);
+            onTarget = tgtF != null && (sf.entity() == tgtF || tgtF.getBoundingBox()
+                .move(motion(tgtF).scale(lead + sf.ticks())).inflate(r).contains(sf.impact()));
         }
         // the hit chance of the shot as aimed now, and the best point to aim at while auto aim holds a target;
         // for a target the shot can't hurt, the reason instead
         String why = spec.weapon() && tgtF != null ? NoDamage.reason(tgtF, spawn, type, piercing) : null;
         if (spec.weapon() && tgtF != null && why == null)
-            AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec,
+            AimAdvisor.update(level, spawn, Ballistics.launchDir(p.getYRot(), p.getXRot(), spec), spec, held.aim(),
                               shooterMotion(p, spec), p.onGround(), tgtF, locked != null, lead);
-        if (sf.impact() == null) return;
-        impact = sf.impact(); normal = sf.normal();
-        radius = r; hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
+        // the target's box and readout show whether or not the ring has somewhere to land (a held target picked up
+        // by the crosshair, while the shot as aimed now still falls short or flies off)
+        hitBox = tgtF != null ? tgtF.getBoundingBox() : null;
         hitId = tgtF != null && spec.weapon() ? tgtF.getId() : -1;
         noDamage = why;
+        ringOnTarget = onTarget;
+        if (sf.impact() == null) return;
+        impact = sf.impact(); normal = sf.normal();
+        radius = r;
         valid = true;
     }
 
@@ -396,7 +461,7 @@ public class ProjectileTargeting {
     // in tick() and projected here, so they show on top of terrain (there is no line render type without
     // depth testing to draw them in the world).
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!valid || !Settings.projectileReticle) return;
+        if ((!valid && hitBox == null) || !Settings.projectileReticle) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -405,13 +470,24 @@ public class ProjectileTargeting {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
 
-        // spread ring on the impact surface, green if it covers a target, else white
+        int targetColor = noDamage != null ? COLOR_NO_DAMAGE : COLOR_ENTITY;
+        if (valid) drawRing(g, vp, cam, W, H, ringOnTarget ? targetColor : COLOR_RING);
+        if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, targetColor);
+
+        // beside the crosshair: why the shot can't hurt the target, or else its hit chance as aimed now
+        if (noDamage != null) g.text(mc.font, noDamage, W / 2 + 6, H / 2 + 4, COLOR_NO_DAMAGE, true);
+        else if (hitId >= 0 && mc.level != null) {
+            double c = AimAdvisor.chance(hitId, mc.level.getGameTime());
+            if (!Double.isNaN(c)) g.text(mc.font, Math.round(c * 100) + "%", W / 2 + 6, H / 2 + 4, COLOR_ENTITY, true);
+        }
+    }
+
+    // The spread ring on the impact surface: green when it covers the shown target, else white.
+    private static void drawRing(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, int ringColor) {
         Vec3 n = normal.normalize();
         Vec3 u = (Math.abs(n.y) < 0.99 ? n.cross(new Vec3(0, 1, 0)) : n.cross(new Vec3(1, 0, 0))).normalize();
         Vec3 w = n.cross(u).normalize();
         Vec3 ic = impact.add(n.scale(0.01));
-        int targetColor = noDamage != null ? COLOR_NO_DAMAGE : COLOR_ENTITY;
-        int ringColor = hitBox != null ? targetColor : COLOR_RING;
         // Walk the ring, drawing a segment only once the projected point has moved at least a pixel. At
         // shallow angles the ellipse's tips bunch into sub-pixel steps that would round to nothing and
         // split the ring into two arcs.
@@ -427,14 +503,6 @@ public class ProjectileTargeting {
                 line2d(g, anchor[0], anchor[1], s[0], s[1], ringColor);
                 anchor = s;
             }                                                  // else keep the anchor and bridge to a later point
-        }
-        if (hitBox != null) boxProjected(g, vp, cam, W, H, hitBox, targetColor);
-
-        // beside the crosshair: why the shot can't hurt the target, or else its hit chance as aimed now
-        if (noDamage != null) g.text(mc.font, noDamage, W / 2 + 6, H / 2 + 4, COLOR_NO_DAMAGE, true);
-        else if (hitId >= 0 && mc.level != null) {
-            double c = AimAdvisor.chance(hitId, mc.level.getGameTime());
-            if (!Double.isNaN(c)) g.text(mc.font, Math.round(c * 100) + "%", W / 2 + 6, H / 2 + 4, COLOR_ENTITY, true);
         }
     }
 
