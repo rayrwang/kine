@@ -11,6 +11,8 @@ import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.attribute.EnvironmentAttributes;
@@ -22,7 +24,10 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LiquidBlockContainer;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -70,8 +75,9 @@ public final class WaterClutch {
     private static final double EDGE_IN       = 0.1;   // aim at least this far inside the edge of the surface under the hitbox
     private static final Random RNG = new Random();
 
-    /** Where the fall lands: a point on the surface, and in how many ticks (0: during this tick's move). */
-    private record Impact(Vec3 point, int ticks) {}
+    /** Where the fall lands: a point on the surface, and in how many ticks (0: during this tick's move). With safe set,
+     *  something that takes no fall damage catches the fall first (catchesFall), and no clutch is wanted. */
+    private record Impact(Vec3 point, int ticks, boolean safe) {}
 
     private static boolean armed = false;              // a dangerous fall with a bucket to hand: sneak, look down, watch
     private static int     sneakTicks = 0;             // ticks the sneak key has been sent for the clutch
@@ -145,15 +151,18 @@ public final class WaterClutch {
         if (p.getAbilities().mayfly) return false;
         if (p.isFallFlying() || p.onGround() || p.isInWater() || p.isInLava() || p.getDeltaMovement().y() >= 0) return false;
         double hurt = p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + HURT_MARGIN;
-        if (p.fallDistance >= hurt) return true;
         Impact imp = predictImpact(mc, p);
+        // a fall into water or onto something else that takes no fall damage needs no clutch, however long (RW: a
+        // player bobbing at the surface pops out of the water for a moment, and the fall then seemed to reach the bottom)
+        if (imp != null && imp.safe()) return false;
+        if (p.fallDistance >= hurt) return true;
         return imp == null || p.fallDistance + (p.getY() - imp.point().y()) >= hurt;
     }
 
     // Turn toward where the fall lands, or straight down until a landing is in sight, at auto aim's eased rate.
     private static void track(Minecraft mc, LocalPlayer p) {
         Impact imp = predictImpact(mc, p);
-        float[] look = imp != null ? lookFor(mc, p, imp.point(), null, ClipContext.Fluid.NONE) : new float[]{ p.getYRot(), 90f };
+        float[] look = imp != null && !imp.safe() ? lookFor(mc, p, imp.point(), null, ClipContext.Fluid.NONE) : new float[]{ p.getYRot(), 90f };
         turnToward(mc, p, look[0], look[1]);
     }
 
@@ -225,7 +234,7 @@ public final class WaterClutch {
         if (!armed || sneakTicks < 1 || fetching) return false;   // the server must already have the sneak
 
         Impact imp = predictImpact(mc, p);
-        if (imp == null) return false;                       // no landing in range yet
+        if (imp == null || imp.safe()) return false;         // no landing in range yet, or none that needs water
         if (imp.point().distanceTo(p.getEyePosition()) > PLACE_REACH) return false;   // not close enough yet
         // a varied tick in the window, keeping one tick in hand before impact where the window allows
         if (placeAt < 0) placeAt = imp.ticks() <= 1 ? imp.ticks() : 1 + RNG.nextInt(imp.ticks());
@@ -303,7 +312,7 @@ public final class WaterClutch {
      * shapes of every block under it, as the game's own collision does, so a thin shape under an edge of the
      * hitbox (a fence post, an end rod) is found; a test at the corners would miss it and place the water
      * a block too low. It takes the highest top the footprint touches and aims at the part of it under the
-     * footprint.
+     * footprint. A fall caught before that top by anything that takes no fall damage (catchesFall) is safe.
      */
     private static Impact predictImpact(Minecraft mc, LocalPlayer p) {
         AABB box = p.getBoundingBox();
@@ -322,6 +331,7 @@ public final class WaterClutch {
             double cx = (fpMinX + fpMaxX) / 2, cz = (fpMinZ + fpMaxZ) / 2;
 
             double bestTop = Double.NEGATIVE_INFINITY, aimX = 0, aimZ = 0;
+            BlockState bestState = null;
             int x0 = Mth.floor(fpMinX), x1 = Mth.floor(fpMaxX);
             int z0 = Mth.floor(fpMinZ), z1 = Mth.floor(fpMaxZ);
             int yHi = Mth.floor(botNow + 0.001), yLo = Mth.floor(botNext) - 2;   // -2 covers tall shapes (fences and walls reach 1.5)
@@ -337,19 +347,55 @@ public final class WaterClutch {
                         double top = y + b.maxY;
                         if (top > botNow + 0.001 || top < botNext - 0.001) continue;   // outside this tick's descent window
                         if (top > bestTop) {
-                            bestTop = top;
+                            bestTop = top; bestState = mc.level.getBlockState(cur);
                             aimX = aimInside(cx, Math.max(fpMinX, sxMin), Math.min(fpMaxX, sxMax));  // aim where the footprint sits on this shape
                             aimZ = aimInside(cz, Math.max(fpMinZ, szMin), Math.min(fpMaxZ, szMax));
                         }
                     }
                 }
             }
-            if (bestTop > Double.NEGATIVE_INFINITY) return new Impact(new Vec3(aimX, bestTop, aimZ), i);
+            double landBottom = bestTop > Double.NEGATIVE_INFINITY ? bestTop : botNext;   // where the box's bottom gets this tick
+            if (catchesFall(mc, fpMinX, fpMaxX, fpMinZ, fpMaxZ, cx, cz, botNow, landBottom)
+                || bestState != null && bestState.is(Blocks.SLIME_BLOCK) && !armed && !p.isShiftKeyDown())   // slime: no damage unless sneaking
+                return new Impact(new Vec3(cx, landBottom, cz), i, true);
+            if (bestTop > Double.NEGATIVE_INFINITY) return new Impact(new Vec3(aimX, bestTop, aimZ), i, false);
 
             offX += vx; offY += vy; offZ += vz;
             vx *= H_DRAG; vz *= H_DRAG; vy = (vy - GRAVITY) * V_DRAG;
         }
         return null;
+    }
+
+    /**
+     * Whether the box, its bottom going down from botNow to landBottom over the footprint, meets something that takes
+     * the fall's damage away first, tested over the whole footprint as the game tests the whole box (26.1.2):
+     * water anywhere under it, its bottom going below a water surface, waterlogged blocks included (the fluid box is
+     * the hitbox shrunk by 0.001, and water resets the fall, Entity.updateFluidInteraction); a cobweb, powder snow or a
+     * sweet berry bush it enters (makeStuckInBlock resets the fall; powder snow's landing does no damage either);
+     * and a climbable block at the feet, where only the block the feet's centre is in counts (LivingEntity.onClimbable).
+     */
+    private static boolean catchesFall(Minecraft mc, double fpMinX, double fpMaxX, double fpMinZ, double fpMaxZ,
+                                       double cx, double cz, double botNow, double landBottom) {
+        BlockPos.MutableBlockPos cur = new BlockPos.MutableBlockPos();
+        int x0 = Mth.floor(fpMinX), x1 = Mth.floor(fpMaxX), z0 = Mth.floor(fpMinZ), z1 = Mth.floor(fpMaxZ);
+        int yHi = Mth.floor(botNow + 0.001), yLo = Mth.floor(landBottom - 0.001);
+        for (int x = x0; x <= x1; x++) {
+            for (int z = z0; z <= z1; z++) {
+                for (int y = yHi; y >= yLo; y--) {
+                    cur.set(x, y, z);
+                    BlockState s = mc.level.getBlockState(cur);
+                    FluidState f = s.getFluidState();
+                    if (f.is(FluidTags.WATER) && y + f.getHeight(mc.level, cur) - 0.001 > landBottom) return true;
+                    if ((s.is(Blocks.COBWEB) || s.is(Blocks.POWDER_SNOW) || s.is(Blocks.SWEET_BERRY_BUSH)) && y + 1 > landBottom + 0.001) return true;
+                }
+            }
+        }
+        int fx = Mth.floor(cx), fz = Mth.floor(cz);
+        for (int y = yHi; y >= yLo; y--) {
+            cur.set(fx, y, fz);
+            if (y + 1 > landBottom + 0.001 && mc.level.getBlockState(cur).is(BlockTags.CLIMBABLE)) return true;
+        }
+        return false;
     }
 
     /** Where to aim on one axis: the point of [lo, hi] (the part of the surface under the hitbox) nearest c, kept

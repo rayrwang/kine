@@ -17,6 +17,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
@@ -51,9 +52,10 @@ public final class Takeoff {
     private Takeoff() {}
 
     /** What the warning row says while standing with rockets in hand. */
-    public enum Status { NONE, READY, BLOCKED, ROCKETS, WORN, WORN_CRUISE, STARS, WATER, AUTOPILOT }
+    public enum Status { NONE, READY, BLOCKED, ROCKETS, WORN, WORN_CRUISE, STARS, LAVA, AUTOPILOT }
 
-    private enum Phase { IDLE, LOOK_UP, JUMP, CLIMB }
+    // SWIM: from water, swimming up until a bob at the surface leaves the water, then the elytra opened there
+    private enum Phase { IDLE, LOOK_UP, JUMP, SWIM, CLIMB }
 
     private static final float LOOK_DPS = 240f;                                    // looking up from the ground, deg/s
     private static final float LEAN_DPS = (float) (TakeoffModel.PITCH_RATE * 20);  // leaning over, as the model leans
@@ -70,6 +72,7 @@ public final class Takeoff {
     private static final int   PLAN_EVERY = 4;         // ticks between re-plans while standing still
     private static final int   STOP_MESSAGE_TICKS = 60;
     private static final int   ARM_WAIT = 20;          // ticks to wait at the cruise for the autopilot to arm
+    private static final int   SWIM_TICKS = 400;       // give up a takeoff from water that hasn't opened the elytra by then
 
     private static Phase phase = Phase.IDLE;
     private static Status status = Status.NONE;
@@ -79,6 +82,7 @@ public final class Takeoff {
     private static float yaw, cmdPitch, setPitch, setYaw;
     private static long lastFrameNanos = 0L;
     private static int jumpTick, pending, failedUses, fired, stopTicks, armWait, emptyTicks;
+    private static int swimTick, swimStep;   // SWIM: ticks so far; 0 swimming up, 1 letting go of jump, 2 pressing it again
     private static int sinceUse, shortestBurn, seenId = -1, seenTicks;   // the rocket last seen pushing, for the log
     private static boolean loggedDetached = false;
     private static boolean lean;
@@ -131,9 +135,13 @@ public final class Takeoff {
         switch (phase) {
             case IDLE -> idle(mc, p);
             case LOOK_UP -> {
-                if (pilotKeys(mc) || !p.onGround() || Autopilot.isEngaged() || !holding(p)) { stop(); return; }
-                if (TakeoffModel.lookedUp(p.getXRot(), MouseTurn.sens(mc, p) * 0.15)) { phase = Phase.JUMP; jumpTick = 0; }
+                if (pilotKeys(mc) || !p.onGround() && !p.isInWater() || Autopilot.isEngaged() || !holding(p)) { stop(); return; }
+                if (TakeoffModel.lookedUp(p.getXRot(), MouseTurn.sens(mc, p) * 0.15)) {
+                    if (p.isInWater()) { phase = Phase.SWIM; swimTick = 0; swimStep = 0; }
+                    else { phase = Phase.JUMP; jumpTick = 0; }
+                }
             }
+            case SWIM -> swimTick(p);
             case JUMP -> {
                 if (pilotKeys(mc)) { stop(); return; }
                 if (++jumpTick >= 3) {
@@ -148,7 +156,7 @@ public final class Takeoff {
     private static void idle(Minecraft mc, LocalPlayer p) {
         status = check(mc, p);
         if (status == Status.NONE || status == Status.BLOCKED || status == Status.WORN || status == Status.STARS
-            || status == Status.WATER || status == Status.AUTOPILOT) {
+            || status == Status.LAVA || status == Status.AUTOPILOT) {
             pathCount = 0; planX = Double.NaN;
             return;
         }
@@ -189,15 +197,16 @@ public final class Takeoff {
         return TakeoffModel.elytraLasts(best, climbTicks, ElytraGuard.landingReserveSeconds(cruiseAgl));
     }
 
-    /** What the row should say while standing; NONE when nothing to offer (not on the ground, no elytra, no rocket). */
+    /** What the row should say while standing or in water; NONE when nothing to offer (in the air, no elytra, no
+     *  rocket). */
     private static Status check(Minecraft mc, LocalPlayer p) {
-        if (!p.onGround() || p.isPassenger() || p.isFallFlying()) return Status.NONE;
+        if (!p.onGround() && !p.isInWater() || p.isPassenger() || p.isFallFlying()) return Status.NONE;
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
         if (!chest.has(DataComponents.GLIDER) || !holding(p)) return Status.NONE;
         if (!Settings.autopilot) return Status.AUTOPILOT;
         if (!LivingEntity.canGlideUsing(chest, EquipmentSlot.CHEST)) return Status.WORN;
         if (heldHasStars(p)) return Status.STARS;
-        if (p.isInWater() || p.isInLava()) return Status.WATER;
+        if (p.isInLava()) return Status.LAVA;
         if (blockedAbove(mc.level, p)) return Status.BLOCKED;
         return Status.READY;
     }
@@ -212,14 +221,32 @@ public final class Takeoff {
         return Math.max(target, ground + (terrainAvoidance ? CRUISE_MIN_AGL : CRUISE_MIN_AGL_NO_AVOIDANCE));
     }
 
-    // Anything that stops motion or holds fluid at head height or above, in any column the player stands in.
+    // Anything that stops motion at head height or above, in any column the player is in. The MOTION_BLOCKING
+    // heightmap also counts fluids, so where it is higher a column is scanned for a block that stops motion: water
+    // above a swimmer is no ceiling (RW: "it is in fact possible to take off from water").
     private static boolean blockedAbove(ClientLevel level, LocalPlayer p) {
         AABB b = p.getBoundingBox();
         int feet = Mth.floor(p.getY());
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int x = Mth.floor(b.minX); x <= Mth.floor(b.maxX - 1.0e-7); x++)
-            for (int z = Mth.floor(b.minZ); z <= Mth.floor(b.maxZ - 1.0e-7); z++)
-                if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) > feet + 1) return true;
+            for (int z = Mth.floor(b.minZ); z <= Mth.floor(b.maxZ - 1.0e-7); z++) {
+                int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+                for (int y = feet + 1; y < top; y++)
+                    if (level.getBlockState(pos.set(x, y, z)).blocksMotion()) return true;
+            }
         return false;
+    }
+
+    // From water: hold jump to swim up; a bob at the surface leaves the water for about 4 ticks (measured in game,
+    // 2026-10-11), and the elytra opens only on a fresh press in a tick that starts out of the water and off the ground
+    // (Player.tryToStartFallFlying, LocalPlayer.aiStep). So once a tick ends out of the water, jump is let go for a
+    // tick and pressed again; if the elytra didn't open, back to swimming for the next bob.
+    private static void swimTick(LocalPlayer p) {
+        if (pilotKeys(Minecraft.getInstance()) || Autopilot.isEngaged() || !holding(p) || ++swimTick > SWIM_TICKS) { stop(); return; }
+        if (p.isFallFlying()) { phase = Phase.CLIMB; pending = 0; failedUses = 0; fired = 0; return; }
+        if (swimStep == 2) swimStep = 0;                               // pressed and didn't open: try the next bob
+        else if (swimStep == 1) swimStep = 2;                          // let go for a tick: press next
+        else if (!p.isInWater() && !p.onGround()) swimStep = 1;        // out of the water: let go next
     }
 
     private static void climbTick(Minecraft mc, LocalPlayer p) {
@@ -328,8 +355,10 @@ public final class Takeoff {
 
     // ---- the keys, read in aiStep ----
 
-    /** Jump, release, jump: the elytra opens on the second press, in the air. */
+    /** Jump, release, jump: the elytra opens on the second press, in the air. From water, jump held to swim up,
+     *  let go for one tick once out of the water, then pressed again. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
+        if (phase == Phase.SWIM) return new Input(false, false, false, false, swimStep != 1, false, false);
         if (phase != Phase.JUMP) return keys;
         boolean jump = jumpTick != 1;
         return new Input(false, false, false, false, jump, false, false);
@@ -479,7 +508,7 @@ public final class Takeoff {
                 case WORN -> { s = "ELYTRA TOO WORN TO TAKE OFF"; color = HudColors.RED; }
                 case WORN_CRUISE -> { s = "ELYTRA TOO WORN TO REACH CRUISE"; color = HudColors.RED; }
                 case STARS -> { s = "ROCKETS WITH STARS WOULD HURT YOU"; color = HudColors.RED; }
-                case WATER -> { s = "CAN'T TAKE OFF FROM WATER"; color = HudColors.RED; }
+                case LAVA -> { s = "CAN'T TAKE OFF FROM LAVA"; color = HudColors.RED; }
                 case AUTOPILOT -> { s = "TURN ON THE AUTOPILOT TO TAKE OFF"; color = HudColors.RED; }
                 default -> { return; }
             }
