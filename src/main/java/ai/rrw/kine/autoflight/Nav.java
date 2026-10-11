@@ -4,6 +4,7 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.NavHud;
 import ai.rrw.kine.ui.KineNavScreen;
+import ai.rrw.kine.util.Motion;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
@@ -22,9 +23,10 @@ import java.util.Set;
 
 /**
  * Lateral navigation for the autopilot. SELECTED holds a compass heading; MANAGED flies to an X/Z
- * coordinate and lands there once it arrives, with the {@link LandingModel} law: a spiral plunge, a brake well
- * above the ground and a slow nose-up finish onto the spot. An aimed landing ({@link Landing}) starts that law at
- * once on the spot picked with the reticle. The autopilot reads desiredYaw()/landing()/landingPitch() to steer;
+ * coordinate and, on arriving, lands there with the {@link LandingModel} law (a spiral plunge, a brake well
+ * above the ground and a slow nose-up finish onto the spot), or first circles over it ({@link HoldModel}), as the
+ * nav screen's At destination choice says: hold, hold till day (while monsters can spawn there), or land. An aimed
+ * landing ({@link Landing}) starts the landing law at once on the spot picked with the reticle. The autopilot reads desiredYaw()/landing()/landingPitch() to steer;
  * this class only ever sets targets, never touches the player directly.
  */
 public class Nav {
@@ -33,6 +35,8 @@ public class Nav {
 
     private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
+    private static final double HOLD_EXIT_RADIUS = 400.0; // end a hold if the pilot takes over and flies past this (the
+                                                          // circle reaches about 240 from the fix before it centres)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far below the column's top to keep looking, if the heightmap is stale
 
@@ -59,6 +63,15 @@ public class Nav {
     private static boolean tripHasTarget = false;
     private static LandingModel.Law law = new LandingModel.Law();
 
+    /** What the autopilot does on reaching a managed destination: circle over it until told otherwise, circle while
+     *  monsters can spawn there and then land, or land at once. */
+    public enum Arrival {
+        HOLD("Hold", "hold"), HOLD_TILL_DAY("Hold till day", "holdTillDay"), LAND("Land", "land");
+        public final String label, key;
+        Arrival(String label, String key) { this.label = label; this.key = key; }
+    }
+    private static boolean holding = false;                  // circling over the destination
+
     private static KeyMapping navKey;
 
     // read by the autopilot and the flight director
@@ -79,6 +92,15 @@ public class Nav {
     public static int     targetX()       { return targetX; }
     public static boolean hasSpot()       { return landing() && haveSpot; }   // landing on a known spot (spotX, spotZ, spotTop)
     public static int     targetZ()       { return targetZ; }
+    public static boolean holding()       { return Settings.navigation && holding; }
+    /** The At destination choice, saved in kine.json (Settings.navArrival); hold till day by default (RW), and for an
+     *  unknown value. */
+    public static Arrival arrival() {
+        for (Arrival a : Arrival.values()) if (a.key.equals(Settings.navArrival)) return a;
+        return Arrival.HOLD_TILL_DAY;
+    }
+    /** Set from the nav screen; a hold in progress acts on it the next tick. */
+    public static void setArrival(Arrival a) { Settings.navArrival = a.key; Settings.save(); }
 
     // set by the nav screen (the landing is cleared first, so an aimed landing's trip comes back before the change)
     public static void enterSelected() { clearLanding(); mode = Mode.SELECTED; }   // mode only; the heading stays unset
@@ -86,7 +108,7 @@ public class Nav {
     public static void setHeading(float headingDeg) { clearLanding(); mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; }
     public static void setTarget(int x, int z)       { clearLanding(); mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); }
     public static void off()                         { clearLanding(); mode = Mode.OFF; }
-    private static void clearLanding()               { landing = false; haveSpot = false; endAimed(); }
+    private static void clearLanding()               { landing = false; haveSpot = false; holding = false; endAimed(); }
 
     /** Land now on the column (x, z) whose top surface is at `top`: picked with the reticle and already checked
      *  safe and reachable by {@link Landing}. */
@@ -100,7 +122,7 @@ public class Nav {
         if (!aimed) { tripMode = mode; tripX = targetX; tripZ = targetZ; tripHasTarget = hasTarget; }   // a second aim keeps the trip
         mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta();
         spotX = x; spotZ = z; spotTop = top; haveSpot = true;
-        landing = true; aimed = true; law = new LandingModel.Law();
+        landing = true; aimed = true; holding = false; law = new LandingModel.Law();
         law.update(px, py, pz, vy, spotX + 0.5, spotTop, spotZ + 0.5);   // steer from now
     }
 
@@ -115,13 +137,20 @@ public class Nav {
 
     /** Minecraft yaw (deg) the autopilot should fly to satisfy the current nav mode. */
     public static float desiredYaw(LocalPlayer p) {
-        return desiredYaw(p.getX(), p.getZ());
+        return desiredYaw(p.getX(), p.getZ(), Motion.trackYaw(p, p.getYRot()), FlightDirector.law().climbing);
     }
 
-    /** The same from a position (x, z), for predictions. */
+    /** The same from a position (x, z), outside a hold (where the velocity doesn't matter). */
     public static float desiredYaw(double x, double z) {
+        return desiredYaw(x, z, 0.0, false);
+    }
+
+    /** The same from a position (x, z), the velocity's yaw and whether the porpoise law is climbing, for predictions.
+     *  While holding it is the look (the circle's), not a course. */
+    public static float desiredYaw(double x, double z, double velYaw, boolean climbing) {
         if (mode == Mode.SELECTED) return wrap180(selectedHeading + 180f);   // compass -> MC yaw (N = yaw 180)
         if (landing) return wrap180((float) law.yaw);                         // the landing law steers
+        if (holding) return wrap180((float) HoldModel.lookYaw(x, z, targetX + 0.5, targetZ + 0.5, velYaw, climbing));
         double dx = targetX + 0.5 - x, dz = targetZ + 0.5 - z;
         return (float) Math.toDegrees(Math.atan2(-dx, dz));                  // en route: fly straight at it
     }
@@ -142,12 +171,13 @@ public class Nav {
         if (mode == Mode.MANAGED && hasTarget) {
             double hdx = (targetX + 0.5) - p.getX(), hdz = (targetZ + 0.5) - p.getZ();
             double dist = Math.sqrt(hdx * hdx + hdz * hdz);
-            if (!landing) {
+            if (!landing && holding) {
+                if (!Autopilot.isEngaged() && dist > HOLD_EXIT_RADIUS) holding = false;   // pilot took over and flew off
+                else if (Autopilot.isEngaged() && p.isFallFlying() && !holdNow(mc)) { holding = false; beginLanding(mc, p); }
+            } else if (!landing) {
                 if (dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.isEngaged()) {
-                    landing = true;
-                    findSafeSpot(mc, p);   // pick a safe touchdown column near the target, once
-                    spotTop = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING, spotX, spotZ);
-                    law = new LandingModel.Law();
+                    if (holdNow(mc)) holding = true;
+                    else beginLanding(mc, p);
                 }
             } else if (!Autopilot.isEngaged() && dist > EXIT_RADIUS) {
                 clearLanding();   // pilot took over and flew off: resume flying to the target (the trip's, if aimed)
@@ -158,6 +188,36 @@ public class Nav {
             if (p.onGround() && !p.isFallFlying()) touchedDown();
             else law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);
         }
+    }
+
+    // Land on the destination: a safe touchdown column near it, picked once, and the landing law from here (from
+    // anywhere in the hold, too: its approach glides in from where it starts).
+    private static void beginLanding(Minecraft mc, LocalPlayer p) {
+        landing = true;
+        findSafeSpot(mc, p);
+        spotTop = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING, spotX, spotZ);
+        law = new LandingModel.Law();
+    }
+
+    // Whether to circle over the destination now rather than land: never once the elytra is short of durability
+    // (the failsafe's land-now warning; the landing then pauses its countdown), always for Hold, and for Hold till
+    // day while monsters can spawn there.
+    private static boolean holdNow(Minecraft mc) {
+        if (ElytraGuard.warning()) return false;
+        return switch (arrival()) {
+            case HOLD -> true;
+            case LAND -> false;
+            case HOLD_TILL_DAY -> monstersCanSpawn(mc.level);
+        };
+    }
+
+    /** Whether a monster could spawn on open ground now: at night, or in a thunderstorm (the light is level-wide,
+     *  so this holds at the destination too). Never in a dimension without days (the Nether, the End), where a
+     *  hold till day would never end. */
+    public static boolean monstersCanSpawn(Level level) {
+        if (level.dimensionType().hasFixedTime()) return false;
+        return HoldModel.darkEnoughToSpawn(level.getSkyDarken(), level.isThundering(),
+            level.dimensionType().monsterSpawnLightTest().maxInclusive());
     }
 
     /** Touched down: the landing ends, and an aimed one gives the trip back. */

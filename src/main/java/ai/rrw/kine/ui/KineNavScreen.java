@@ -31,6 +31,8 @@ public class KineNavScreen extends Screen {
     private static final int ALT_STEP = 10;
     private Button selBtn, manBtn, offBtn;
     private Button useCurrentBtn;
+    private Button holdBtn, tillDayBtn, landBtn;   // what to do on arriving (MANAGED)
+    private int arrivalY;
     private boolean draggingDial = false;
 
     private int dialCx, dialCy, dialR;   // heading dial geometry
@@ -92,6 +94,15 @@ public class KineNavScreen extends Screen {
         addRenderableWidget(xBox);
         addRenderableWidget(zBox);
 
+        // what to do on reaching the destination: a row like the mode buttons, the current choice greyed out
+        arrivalY = fy + 58;
+        holdBtn    = arrivalButton(Nav.Arrival.HOLD, bx, arrivalY, bw, bh,
+            "Circle over the destination until you change this or take over. Lands if the elytra runs short.");
+        tillDayBtn = arrivalButton(Nav.Arrival.HOLD_TILL_DAY, bx + bw + gap, arrivalY, bw, bh,
+            "Circle over the destination while monsters can spawn there (at night, or in a thunderstorm), then land. By day it lands at once.");
+        landBtn    = arrivalButton(Nav.Arrival.LAND, bx + 2 * (bw + gap), arrivalY, bw, bh,
+            "Land as soon as you arrive.");
+
         // sets the dial to where the player is pointing (one click instead of dragging)
         int useY = dialCy + dialR + 28;
         useCurrentBtn = Button.builder(Component.literal("Use current heading"), b -> useCurrentHeading())
@@ -102,6 +113,13 @@ public class KineNavScreen extends Screen {
             .bounds(cx - 50, this.height - 28, 100, 20).build());
 
         updateVisibility();
+    }
+
+    private Button arrivalButton(Nav.Arrival a, int x, int y, int w, int h, String tip) {
+        Button b = Button.builder(Component.literal(a.label), btn -> { Nav.setArrival(a); updateVisibility(); })
+            .bounds(x, y, w, h).build();
+        b.setTooltip(Tooltip.create(Component.literal(tip)));
+        return addRenderableWidget(b);
     }
 
     private void setMode(Nav.Mode m) {
@@ -156,6 +174,10 @@ public class KineNavScreen extends Screen {
         boolean man = mode == Nav.Mode.MANAGED;
         xBox.visible = man; xBox.active = man;
         zBox.visible = man; zBox.active = man;
+        Nav.Arrival arrival = Nav.arrival();
+        holdBtn.visible = man;    holdBtn.active = man && arrival != Nav.Arrival.HOLD;
+        tillDayBtn.visible = man; tillDayBtn.active = man && arrival != Nav.Arrival.HOLD_TILL_DAY;
+        landBtn.visible = man;    landBtn.active = man && arrival != Nav.Arrival.LAND;
         selBtn.active = mode != Nav.Mode.SELECTED;   // the current mode's button is greyed out
         manBtn.active = mode != Nav.Mode.MANAGED;
         offBtn.active = mode != Nav.Mode.OFF;
@@ -221,6 +243,7 @@ public class KineNavScreen extends Screen {
             g.text(this.font, "Z", zBox.getX() - 10, zBox.getY() + 6, DIM, true);
             String hint = "Destination coordinates";
             g.text(this.font, hint, this.width / 2 - this.font.width(hint) / 2, xBox.getY() + 30, DIM, true);
+            g.centeredText(this.font, Component.literal("At destination"), this.width / 2, arrivalY - 12, LABEL);
         } else {
             String hint = "Navigation off";
             g.text(this.font, hint, this.width / 2 - this.font.width(hint) / 2, dialCy, DIM, true);

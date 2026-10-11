@@ -73,9 +73,16 @@ public final class TurnGuard {
         return TurnPlanner.feasible(seed, destBearing, d[0], d[1], terrainOf(mc.level));
     }
 
-    // destination: the nav target in MANAGED, else a far point along the selected heading or the ground course
+    // destination: the nav target in MANAGED, else a far point along the selected heading or the ground course;
+    // while circling over the target, a far point along this tick's look on the circle (Nav.desiredYaw), so a clear
+    // path is followed tick by tick as the circle (TurnController follows the destination's bearing between plans)
+    // and terrain is still dodged
     private static double[] destOf(LocalPlayer p) {
         double px = p.getX(), pz = p.getZ();
+        if (Nav.holding()) {
+            double r = Math.toRadians(Nav.desiredYaw(p));
+            return new double[] { px - Math.sin(r) * 3000.0, pz + Math.cos(r) * 3000.0 };
+        }
         // hasTarget() stays set after leaving MANAGED (the destination is remembered), so check the mode too,
         // or a heading selected after a managed leg would lose to the old target.
         if (Nav.mode() == Nav.Mode.MANAGED && Nav.hasTarget())

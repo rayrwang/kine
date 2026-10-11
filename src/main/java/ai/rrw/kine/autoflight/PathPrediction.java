@@ -60,10 +60,15 @@ public final class PathPrediction {
         boolean emergency = avoidance && action == TurnPlanner.EMERGENCY;
         double look = p.getYRot();
         float navRate = (Nav.landing() ? Autopilot.LANDING_TURN_DPS : Autopilot.NAV_TURN_DPS) / 20f;   // per tick
+        // circling over the destination: the circle, unless terrain avoidance is turning away from something
+        boolean hold = Nav.holding() && !(avoidance && action != TurnPlanner.STRAIGHT);
+        double fixX = Nav.targetX() + 0.5, fixZ = Nav.targetZ() + 0.5;
 
         xs[0] = 0; ys[0] = 0; zs[0] = 0;
         for (int k = 1; k <= TICKS; k++) {
-            if (avoidance) {
+            if (hold) {
+                FlightModel3D.stepLook(s, HoldModel.lookYaw(s.x, s.z, fixX, fixZ, FlightModel3D.velYaw(s.vx, s.vz), s.climbing));
+            } else if (avoidance) {
                 if (emergency) {
                     double course = FlightModel3D.velYaw(s.vx, s.vz);
                     if (Math.abs(FlightModel3D.wrap180(heading - course)) <= TurnController.TURN_DONE_TOL) emergency = false;
@@ -72,7 +77,8 @@ public final class PathPrediction {
                 else if (action == TurnPlanner.STRAIGHT) FlightModel3D.step(s, FlightModel3D.velYaw(destX - s.x, destZ - s.z));
                 else FlightModel3D.step(s, heading);
             } else {
-                if (Nav.steering()) look += Mth.clamp(Mth.wrapDegrees(Nav.desiredYaw(s.x, s.z) - (float) look), -navRate, navRate);
+                if (Nav.steering()) look += Mth.clamp(Mth.wrapDegrees(Nav.desiredYaw(s.x, s.z, FlightModel3D.velYaw(s.vx, s.vz), s.climbing)
+                    - (float) look), -navRate, navRate);
                 FlightModel3D.stepLook(s, look);
             }
             xs[k] = s.x - px; ys[k] = s.y - py; zs[k] = s.z - pz;

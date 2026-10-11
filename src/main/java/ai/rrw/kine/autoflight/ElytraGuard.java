@@ -43,6 +43,9 @@ public class ElytraGuard {
     private static boolean swapRequested = false;   // the next tick is the inventory's opening for a swap
     private static double  swapMinSeconds;          // the flight time the swap's wing must clear (from the request)
 
+    /** The land-now warning is up: the worn elytra's flight time is below the reserve for gliding down. */
+    public static boolean warning() { return warning; }
+
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ElytraGuard::tick);
         HudElementRegistry.attachElementAfter(

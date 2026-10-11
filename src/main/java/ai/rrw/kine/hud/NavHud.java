@@ -4,10 +4,12 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.HoldModel;
 import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.util.Compass;
+import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.util.Smoothing;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -89,8 +91,8 @@ public final class NavHud {
             if (mode == Nav.Mode.MANAGED && Nav.hasTarget()) {
                 double hdx = (Nav.targetX() + 0.5) - p.getX(), hdz = (Nav.targetZ() + 0.5) - p.getZ();
                 dist = Math.sqrt(hdx * hdx + hdz * hdz);
-                line2 = landing
-                    ? "LANDING"
+                line2 = landing ? "LANDING"
+                    : Nav.holding() ? holdLine(mc)
                     : "DIST " + Readouts.distance(dist) + "    ETA " + Readouts.eta(smoothEta(dist / RangeEndurance.speedEstimate()));
             }
         }
@@ -281,6 +283,16 @@ public final class NavHud {
             case 3 -> BEAM_MARGIN * v.w + v.y;
             default -> BEAM_MARGIN * v.w - v.y;
         };
+    }
+
+    // While circling over the destination: HOLDING, and for a hold till day when it will land: the time until surface
+    // spawning stops at dawn (an estimate from the clock and the rain; the landing itself waits for the live light),
+    // or STORM while a thunderstorm keeps it dark enough all day.
+    private static String holdLine(Minecraft mc) {
+        if (Nav.arrival() != Nav.Arrival.HOLD_TILL_DAY || mc.level == null) return "HOLDING";
+        if (mc.level.isThundering()) return "HOLDING, STORM";
+        int ticks = HoldModel.ticksToDawn(mc.level.getOverworldClockTime(), mc.level.getRainLevel(1.0F));
+        return "HOLDING, LAND IN " + KineTime.format(ticks / 20.0);
     }
 
     /** Forget the smoothed ETA, so a new destination starts fresh instead of easing from the old one. */

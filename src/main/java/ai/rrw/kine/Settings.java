@@ -146,6 +146,9 @@ public final class Settings {
     public static final Option AUTO_AIM                   = toggle("autoAim", COMBAT, false, v -> autoAim = v);
     public static final Option KILL_AURA                  = toggle("killAura", COMBAT, false, v -> killAura = v);
 
+    /** The nav screen's At destination choice (Nav.Arrival's key), kept here so it is saved with the rest. */
+    public static String navArrival = "holdTillDay";
+
     // the switches above the options
     private static boolean enabled = true;
     private static final Map<Section, Boolean> SECTION_ON = new EnumMap<>(Section.class);
@@ -185,6 +188,7 @@ public final class Settings {
                 }
             }
             if (o.has("enabled") && o.get("enabled").isJsonPrimitive()) enabled = o.get("enabled").getAsBoolean();
+            if (o.has("navArrival") && o.get("navArrival").isJsonPrimitive()) navArrival = o.get("navArrival").getAsString();
             for (Section s : Section.values()) {
                 JsonElement e = o.get(sectionKey(s));
                 if (e != null && e.isJsonPrimitive()) SECTION_ON.put(s, e.getAsBoolean());
@@ -208,6 +212,7 @@ public final class Settings {
         JsonObject o = new JsonObject();
         o.addProperty("enabled", enabled);
         for (Section s : Section.values()) o.addProperty(sectionKey(s), SECTION_ON.get(s));
+        o.addProperty("navArrival", navArrival);
         for (Option opt : ALL) {
             if (opt.isMode()) o.addProperty(opt.key, Show.values()[opt.value].key);
             else o.addProperty(opt.key, opt.value != 0);
