@@ -27,9 +27,8 @@ import org.lwjgl.glfw.GLFW;
 
 public class Autopilot {
 
-    // Rates are per second so the motion is the same at any frame rate.
-    private static final float SMOOTH    = 0.15f; // pitch ease fraction per tick toward the director
-    private static final float MAX_DPS   = 140f;  // cap on pitch change per second (deg), 7 deg per tick
+    // Turn rates, per second. The steering is planned once a tick (pitch eased by FlightModel3D.ease, 0.15 of the gap
+    // capped at 7 deg, the lag the planner's rollouts fly), and each frame turns the view its share of the way there.
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D is held (deg)
     static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
     private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
@@ -44,7 +43,9 @@ public class Autopilot {
 
     private static KeyMapping toggleKey;
     private static boolean engaged = false;
-    private static float cmdPitch, cmdYaw;          // what we're commanding, advanced per frame
+    private static float cmdPitch, cmdYaw;          // the command for the coming tick, planned once a tick
+    private static float basePitch, baseYaw;        // the view at the last tick boundary: frames turn from here to the command
+    private static boolean planned = false;         // the command has been planned since the last tick boundary
     private static float setPitch, setYaw;          // the view after our last turn (whole mouse counts from the command)
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
@@ -101,8 +102,27 @@ public class Autopilot {
         control();
     }
 
-    // Eases pitch toward the flight director and turns with A/D, both scaled by real elapsed time. A
-    // manual mouse input (rotation drifting away from what was commanded) hands control straight back;
+    /**
+     * At the start of each client tick, before the crosshair pick, the keybinds and the player's move (MinecraftTickMixin),
+     * whatever screen is open: the view goes the rest of the way to this tick's command, so the server gets the command
+     * as planned, one step a tick, at any frame rate; the frames until the next tick turn from here toward the next.
+     */
+    public static void onTickStart(Minecraft mc) {
+        if (!engaged || mc.isPaused()) return;
+        LocalPlayer p = mc.player;
+        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing())) return;
+        if (lastFrameNanos == 0L) return;     // no frame yet since engaging or a pause: the first frame takes the view
+        if (!planned) plan(mc, p);            // no frame since the last tick (under 20 fps): plan now
+        turnTo(p, cmdYaw, cmdPitch);
+        baseYaw = p.getYRot();
+        basePitch = p.getXRot();
+        planned = false;
+    }
+
+    // Each frame: hands control back on the pilot's mouse, moves the A/D heading bug, and turns the view its share of
+    // the way from where it was at the last tick to this tick's command (the partial tick), so the view moves evenly
+    // through the tick instead of arriving early and waiting (the 20 Hz stop-start a per-frame chase of a per-tick
+    // target gives). A manual mouse input (rotation drifting away from what was set) hands control straight back;
     // checked here, on the same cadence as the writes, so the autopilot's own writes never read as the pilot.
     private static void control() {
         if (!engaged) return;
@@ -128,13 +148,6 @@ public class Autopilot {
             if (landingMouse > LANDING_BUMP_DEG) { disengage(); return; }
         } else if (moved > drift) { disengage(); return; }
 
-        // pitch: during the landing program follow the gentle descent; otherwise follow the director
-        float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
-        float factor = (float) (1.0 - Math.pow(1.0 - SMOOTH, dt * 20.0));
-        float step   = (target - cmdPitch) * factor;
-        float cap    = MAX_DPS * dt;
-        cmdPitch += Math.max(-cap, Math.min(cap, step));
-
         // A/D moves the heading bug: it nudges the selected heading and enters SELECTED, so it steers
         // whether terrain avoidance or the nav law is flying, since both fly toward that heading.
         boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
@@ -145,22 +158,32 @@ public class Autopilot {
             Nav.setHeading(base + (apRight ? 1f : -1f) * TURN_DPS * dt);
         }
 
-        // yaw: the landing law while landing; else terrain avoidance steers (faithful look placement) toward the
-        // commanded course, dodging terrain > nav heading law. Both honor the selected heading / A/D bug set above.
+        if (!planned) plan(mc, p);
+        float a = Mth.clamp(mc.getDeltaTracker().getGameTimeDeltaPartialTick(true), 0f, 1f);
+        turnTo(p, baseYaw + a * Mth.wrapDegrees(cmdYaw - baseYaw), basePitch + a * (cmdPitch - basePitch));
+    }
+
+    // The command for the coming tick, one tick's step from the last: pitch eased toward the landing law's or the
+    // director's pitch as the flight model eases it; yaw by the landing law's turn rate while landing, else terrain
+    // avoidance's look placement (or its emergency bank), else the nav law's turn rate. Planned once a tick, at the
+    // first frame after it (the targets are set at the end of the tick) or at the next tick's start.
+    private static void plan(Minecraft mc, LocalPlayer p) {
+        float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
+        cmdPitch = Mth.clamp((float) FlightModel3D.ease(cmdPitch, target), -90f, 90f);
+
         if (Nav.landing()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
-            float maxTurn = LANDING_TURN_DPS * dt;
+            float maxTurn = (float) LandingModel.YAW_RATE;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         } else if (Settings.terrainAvoidance && TurnGuard.steering()) {
             if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
                 // imminent wall: hard bank toward the open side at elevated authority, the look slewed
                 // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
-                // The side is the one planned, not re-read from the heading 179 deg away, which a frame
-                // spanning two ticks can carry past the wrap to the blocked side.
+                // The side is the one planned, not re-read from the heading 179 deg away.
                 float velYaw = (float) Motion.trackYaw(p, cmdYaw);
                 float bankTarget = velYaw + (float) TurnController.bankOffset(TurnGuard.desiredHeading(), velYaw,
                     TurnGuard.emergencySide(), FlightModel3D.EMERGENCY_DELTA);
-                float maxStep = EMERGENCY_FLICK_DPS * dt;
+                float maxStep = EMERGENCY_FLICK_DPS / 20f;
                 cmdYaw += Math.max(-maxStep, Math.min(maxStep, Mth.wrapDegrees(bankTarget - cmdYaw)));
             } else {
                 // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
@@ -172,23 +195,26 @@ public class Autopilot {
             }
         } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
-            float maxTurn = NAV_TURN_DPS * dt;
+            float maxTurn = NAV_TURN_DPS / 20f;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         }
         // else nothing is commanded: hold the current heading
+        planned = true;
+    }
 
-        // Turn the view as a mouse would: by whole counts toward the command, so every rotation sent is one a
-        // vanilla client could send (at most half a count, 0.075 deg at the default sensitivity, off the command)
-        cmdPitch = Mth.clamp(cmdPitch, -90f, 90f);
-        MouseTurn.toward(p, cmdYaw, cmdPitch);
+    // Turn the view as a mouse would: by whole counts toward (yaw, pitch), so every rotation sent is one a vanilla
+    // client could send (at most half a count, 0.075 deg at the default sensitivity, off the command).
+    private static void turnTo(LocalPlayer p, float yaw, float pitch) {
+        MouseTurn.toward(p, yaw, Mth.clamp(pitch, -90f, 90f));
         setPitch = p.getXRot();
         setYaw   = p.getYRot();
     }
 
     // Take the current view as both the command and what we last set.
     private static void holdView(LocalPlayer p) {
-        cmdPitch = setPitch = p.getXRot();
-        cmdYaw   = setYaw   = p.getYRot();
+        cmdPitch = setPitch = basePitch = p.getXRot();
+        cmdYaw   = setYaw   = baseYaw   = p.getYRot();
+        planned = false;
     }
 
     /** Engage for an aimed landing (Landing), even too low to arm: the landing law needs no flight director. */

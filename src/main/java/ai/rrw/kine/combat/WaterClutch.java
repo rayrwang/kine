@@ -97,6 +97,11 @@ public final class WaterClutch {
     private static float   restoreYaw = 0f, restorePitch = 0f;
     private static boolean returning = false;
     private static float   lastSetYaw, lastSetPitch;   // the view after our last turn
+    // A tick's turn is planned at the tick's end and made over the frames until the next tick, each frame its share of
+    // the way (the partial tick), then finished at the next tick's start, before anything uses the rotation; so the
+    // view moves evenly instead of jumping once a tick, and the server gets the same rotation as before.
+    private static boolean frameTurn = false;
+    private static float   baseYaw, basePitch, nextYaw, nextPitch;
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(WaterClutch::tick);
@@ -121,7 +126,7 @@ public final class WaterClutch {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || mc.gameMode == null || !Settings.waterBucketClutch) {
             if (active) finish(mc, p);
-            armed = false; fetching = false; tracking = false; returning = false;
+            armed = false; fetching = false; tracking = false; returning = false; frameTurn = false;
             return;
         }
         if (fetching && InventoryClicks.isOpenTick()) { stageBucketToHotbar(mc, p); fetching = false; }   // the open tick's end
@@ -205,12 +210,38 @@ public final class WaterClutch {
                              : h.getDirection() == Direction.UP && Math.abs(h.getLocation().y - target.y) < 0.01;
     }
 
+    // Plans this tick's turn toward (yaw, pitch), at auto aim's eased rate; the frames make it (onFrame, onTickStart).
     private static void turnToward(Minecraft mc, LocalPlayer p, float yaw, float pitch) {
         double count = MouseTurn.sens(mc, p) * 0.15;
         float dYaw = AimControl.step(Mth.wrapDegrees(yaw - p.getYRot()), 0f, count);
         float dPitch = AimControl.step(pitch - p.getXRot(), 0f, count);
-        MouseTurn.toward(p, p.getYRot() + dYaw, Mth.clamp(p.getXRot() + dPitch, -90f, 90f));
+        baseYaw = p.getYRot(); basePitch = p.getXRot();
+        nextYaw = baseYaw + dYaw; nextPitch = Mth.clamp(basePitch + dPitch, -90f, 90f);
+        frameTurn = true;
+    }
+
+    /** Each frame (MinecraftFrameMixin): the planned turn's share so far. The pilot moving the view ends a return. */
+    public static void onFrame(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (!frameTurn || p == null || mc.isPaused()) return;
+        if (returning && pilotMoved(p)) { returning = false; frameTurn = false; return; }
+        float a = Mth.clamp(mc.getDeltaTracker().getGameTimeDeltaPartialTick(true), 0f, 1f);
+        MouseTurn.toward(p, baseYaw + a * Mth.wrapDegrees(nextYaw - baseYaw), basePitch + a * (nextPitch - basePitch));
         lastSetYaw = p.getYRot(); lastSetPitch = p.getXRot();
+    }
+
+    /** At the start of a tick (MinecraftTickMixin), before the pick, the keybinds and the move: the rest of the turn. */
+    public static void onTickStart(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (!frameTurn || p == null || mc.isPaused()) return;
+        frameTurn = false;
+        if (returning && pilotMoved(p)) { returning = false; return; }
+        MouseTurn.toward(p, nextYaw, nextPitch);
+        lastSetYaw = p.getYRot(); lastSetPitch = p.getXRot();
+    }
+
+    private static boolean pilotMoved(LocalPlayer p) {
+        return Math.abs(Mth.wrapDegrees(p.getYRot() - lastSetYaw)) > PILOT_EPS || Math.abs(p.getXRot() - lastSetPitch) > PILOT_EPS;
     }
 
     private static void startReturn(LocalPlayer p) {
@@ -220,13 +251,11 @@ public final class WaterClutch {
 
     // One step of easing the view back to where it was before the fall; the pilot moving it ends the return.
     private static void stepReturn(Minecraft mc, LocalPlayer p) {
-        if (Math.abs(Mth.wrapDegrees(p.getYRot() - lastSetYaw)) > PILOT_EPS || Math.abs(p.getXRot() - lastSetPitch) > PILOT_EPS) {
-            returning = false;
-            return;
-        }
+        if (pilotMoved(p)) { returning = false; return; }
         turnToward(mc, p, restoreYaw, restorePitch);
         double count = MouseTurn.sens(mc, p) * 0.15;
-        if (Math.abs(Mth.wrapDegrees(restoreYaw - p.getYRot())) <= count && Math.abs(restorePitch - p.getXRot()) <= count) returning = false;
+        // back once this tick's planned turn gets there (the frames still make it)
+        if (Math.abs(Mth.wrapDegrees(restoreYaw - nextYaw)) <= count && Math.abs(restorePitch - nextPitch) <= count) returning = false;
     }
 
     /** Place or scoop, just before the game's keybind step (VanillaActions). True if it acted or holds the view. */
