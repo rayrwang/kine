@@ -15,7 +15,8 @@ import java.util.List;
  * Kine's settings (K). A switch for the whole mod at the top, one on each section's header, and a button per
  * feature: on/off, or for the elytra, speed and altitude displays off, elytra only or always. A feature
  * whose section or the whole mod is switched off greys out and keeps its own setting. Hovering a row shows
- * its description on the right.
+ * its description on the right. A folder row (the Visibility section's) lists its settings in the right pane
+ * when clicked, and closes when clicked again.
  */
 public class KineSettingsScreen extends Screen {
 
@@ -33,6 +34,9 @@ public class KineSettingsScreen extends Screen {
     private static final int ALL = -2, OPTION = -1;   // Row.switchOf: the whole mod, a feature, else a section's index
     private record Row(Button button, int baseY, String desc, Opt opt, int switchOf) {}
     private final List<Row> rows = new ArrayList<>();
+    private final List<Row> paneRows = new ArrayList<>();   // the open folder's settings, in the right pane (not scrolled)
+    private Opt openFolder;                                  // the folder whose settings the right pane shows, or null
+    private int paneTextTop;                                 // where the description text starts while a folder is open
     private int[] baseHeaderY;
     private int rowX, colW, headH;
     private int viewTop, viewBottom, contentHeight, maxScroll, scrollOffset;
@@ -43,8 +47,12 @@ public class KineSettingsScreen extends Screen {
         this.parent = parent;
     }
 
-    private record Opt(String name, String desc, Settings.Option option) {
-        static Opt of(String n, String d, Settings.Option o) { return new Opt(n, d, o); }
+    /** A setting's row, or a folder of them (option null, children set) shown in the right pane when opened. */
+    private record Opt(String name, String desc, Settings.Option option, Opt[] children) {
+        static Opt of(String n, String d, Settings.Option o) { return new Opt(n, d, o, null); }
+        static Opt folder(String n, String d, Opt... children) { return new Opt(n, d, null, children); }
+        boolean isFolder() { return children != null; }
+        Settings.Section section() { return isFolder() ? children[0].option().section : option().section; }
     }
 
     private record Section(Settings.Section section, Opt[] opts) {}
@@ -149,6 +157,41 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_FUEL =
         "Counts your rockets' burn in flight-duration-1 rockets, a green number with a rocket icon beside END "
         + "and RNG, and while one boosts you, a bar of how far through its burn it likely is.";
+    private static final String DESC_FOG_FOLDER =
+        "Fog you can switch off: under water, in lava and powder snow, in the Nether, in rain, in a boss fight, and "
+        + "the fade at your render distance. Click to list them on the right.";
+    private static final String DESC_OVERLAY_FOLDER =
+        "Effects and overlays you can switch off: Darkness, Blindness, and the fire, underwater, pumpkin, frost and "
+        + "portal overlays. Click to list them on the right.";
+    private static final String DESC_NO_WATER_FOG =
+        "Removes the fog under water, so you see as far as you do on land.";
+    private static final String DESC_NO_LAVA_FOG =
+        "Removes the fog inside lava, so you can see around you while you're in it, the sky included.";
+    private static final String DESC_NO_POWDER_SNOW_FOG =
+        "Removes the fog inside powder snow, so you can see out while you're in it.";
+    private static final String DESC_NO_NETHER_FOG =
+        "Removes the Nether's thick fog, so you see out to your render distance there.";
+    private static final String DESC_NO_RAIN_FOG =
+        "Keeps rain and thunderstorms from pulling the fog in closer.";
+    private static final String DESC_NO_BOSS_FOG =
+        "Removes the fog of the Ender Dragon fight and the darkening of the world while a Wither's health bar shows.";
+    private static final String DESC_NO_DISTANCE_FOG =
+        "Removes the fade at the edge of your render distance: far terrain ends in a hard edge instead of fading out.";
+    private static final String DESC_NO_DARKNESS =
+        "Removes the Darkness effect from wardens and sculk shriekers: no dimming pulses, no short fog, and the "
+        + "sky stays visible.";
+    private static final String DESC_NO_BLINDNESS =
+        "Removes the Blindness effect's short black fog and lets the sky show.";
+    private static final String DESC_NO_FIRE_OVERLAY =
+        "Hides the flames drawn over your view while you're burning. You still burn.";
+    private static final String DESC_NO_UNDERWATER_OVERLAY =
+        "Hides the dark water texture drawn over your view while your head is under water.";
+    private static final String DESC_NO_PUMPKIN_OVERLAY =
+        "Hides the blur drawn over your view while you wear a carved pumpkin.";
+    private static final String DESC_NO_FROST_OVERLAY =
+        "Hides the frost drawn around your view while you freeze in powder snow. You still freeze.";
+    private static final String DESC_NO_PORTAL_OVERLAY =
+        "Hides the purple swirl drawn over your view while you stand in a nether portal.";
     private static final String DESC_ALL =
         "Switches every Kine feature off at once, and back on, keeping each one's own setting. K still opens "
         + "this menu.";
@@ -166,6 +209,24 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Block breaking progress", DESC_MINING, Settings.DISPLAY_MINING_PROGRESS),
             Opt.of("Display speed", DESC_SPEED, Settings.DISPLAY_SPEED),
             Opt.of("Display ground speed", DESC_GROUND, Settings.DISPLAY_GROUND_SPEED),
+        }),
+        new Section(Settings.Section.VISIBILITY, new Opt[]{
+            Opt.folder("Fog", DESC_FOG_FOLDER,
+                Opt.of("No water fog", DESC_NO_WATER_FOG, Settings.NO_WATER_FOG),
+                Opt.of("No lava fog", DESC_NO_LAVA_FOG, Settings.NO_LAVA_FOG),
+                Opt.of("No powder snow fog", DESC_NO_POWDER_SNOW_FOG, Settings.NO_POWDER_SNOW_FOG),
+                Opt.of("No Nether fog", DESC_NO_NETHER_FOG, Settings.NO_NETHER_FOG),
+                Opt.of("No rain fog", DESC_NO_RAIN_FOG, Settings.NO_RAIN_FOG),
+                Opt.of("No boss fog", DESC_NO_BOSS_FOG, Settings.NO_BOSS_FOG),
+                Opt.of("No distance fog", DESC_NO_DISTANCE_FOG, Settings.NO_DISTANCE_FOG)),
+            Opt.folder("Effects & overlays", DESC_OVERLAY_FOLDER,
+                Opt.of("No darkness", DESC_NO_DARKNESS, Settings.NO_DARKNESS),
+                Opt.of("No blindness", DESC_NO_BLINDNESS, Settings.NO_BLINDNESS),
+                Opt.of("No fire overlay", DESC_NO_FIRE_OVERLAY, Settings.NO_FIRE_OVERLAY),
+                Opt.of("No underwater overlay", DESC_NO_UNDERWATER_OVERLAY, Settings.NO_UNDERWATER_OVERLAY),
+                Opt.of("No pumpkin overlay", DESC_NO_PUMPKIN_OVERLAY, Settings.NO_PUMPKIN_OVERLAY),
+                Opt.of("No frost overlay", DESC_NO_FROST_OVERLAY, Settings.NO_FROST_OVERLAY),
+                Opt.of("No portal overlay", DESC_NO_PORTAL_OVERLAY, Settings.NO_PORTAL_OVERLAY)),
         }),
         new Section(Settings.Section.FLIGHT, new Opt[]{
             Opt.of("Heading arc", DESC_HEADING, Settings.DISPLAY_HEADING_ARC),
@@ -215,6 +276,7 @@ public class KineSettingsScreen extends Screen {
         int doneH = 18;
         viewBottom = this.height - doneH - 12;
         rows.clear();
+        paneRows.clear();
         baseHeaderY = new int[SECTIONS.length];
 
         int cY = 0;
@@ -230,7 +292,10 @@ public class KineSettingsScreen extends Screen {
             rows.add(new Row(addRenderableWidget(sw), cY, DESC_SECTION, null, s));
             cY += headH;
             for (Opt opt : SECTIONS[s].opts()) {
-                Button b = Button.builder(label(opt), btn -> { opt.option().cycle(); changed(); })
+                Button b = Button.builder(label(opt), btn -> {
+                        if (opt.isFolder()) { openFolder = openFolder == opt ? null : opt; rebuildWidgets(); }
+                        else { opt.option().cycle(); changed(); }
+                    })
                     .bounds(rowX, viewTop + cY, colW, ROW_H).build();
                 rows.add(new Row(addRenderableWidget(b), cY, opt.desc(), opt, OPTION));
                 cY += ROW_STEP;
@@ -254,6 +319,26 @@ public class KineSettingsScreen extends Screen {
         descTextTop = viewTop + resetH + 6;
         addRenderableWidget(Button.builder(Component.literal("Reset to defaults"), b -> { Settings.resetDefaults(); changed(); })
             .bounds(resetX, viewTop, resetW, resetH).build());
+
+        // the open folder's settings, in the right pane under its name; the description goes below them
+        paneRows.clear();
+        int paneX = rowX + colW + MARGIN;
+        int paneW = Math.min(240, this.width - paneX - MARGIN);
+        int py = descTextTop + this.font.lineHeight + 6;
+        if (openFolder != null && paneW >= 80) {
+            // rows shrink (down to 16 high) on a short screen so at least four lines of description fit below them
+            int n = openFolder.children().length;
+            int room = this.height - 8 - py - 4 * (this.font.lineHeight + 2);
+            int step = Math.max(16, Math.min(ROW_STEP, room / n));
+            for (Opt opt : openFolder.children()) {
+                Button b = Button.builder(label(opt), btn -> { opt.option().cycle(); changed(); })
+                    .bounds(paneX, py, paneW, step - 2).build();
+                paneRows.add(new Row(addRenderableWidget(b), py, opt.desc(), opt, OPTION));
+                py += step;
+            }
+        }
+        paneTextTop = paneRows.isEmpty() ? descTextTop : py + 6;
+        refresh();
     }
 
     /** After any change: relabel every button, and switch the outline pack if its effective setting moved. */
@@ -263,6 +348,10 @@ public class KineSettingsScreen extends Screen {
     }
 
     private void refresh() {
+        for (Row r : paneRows) {
+            r.button().setMessage(label(r.opt()));
+            r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section());
+        }
         for (Row r : rows) {
             if (r.switchOf() == ALL) {
                 r.button().setMessage(allLabel());
@@ -271,7 +360,7 @@ public class KineSettingsScreen extends Screen {
                 r.button().active = Settings.enabled();
             } else {
                 r.button().setMessage(label(r.opt()));
-                r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().option().section);
+                r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section());
             }
         }
     }
@@ -293,7 +382,12 @@ public class KineSettingsScreen extends Screen {
         return Component.literal(on ? "ON" : "OFF");
     }
 
-    private static Component label(Opt opt) {
+    private Component label(Opt opt) {
+        if (opt.isFolder()) {
+            int on = 0;
+            for (Opt c : opt.children()) if (c.option().value() != 0) on++;
+            return Component.literal(opt.name() + ": " + on + " of " + opt.children().length + " on  " + (openFolder == opt ? "<" : ">"));
+        }
         return Component.literal(opt.name() + ": " + opt.option().label());
     }
 
@@ -339,17 +433,26 @@ public class KineSettingsScreen extends Screen {
         int descW = this.width - descX - MARGIN;
         if (descW < 80) return;
 
-        String hovered = null;
-        for (Row r : rows) {
-            Button b = r.button();
-            if (b.visible && mouseX >= b.getX() && mouseX <= b.getX() + b.getWidth()
-                && mouseY >= b.getY() && mouseY <= b.getY() + ROW_H) { hovered = r.desc(); break; }
+        if (openFolder != null && !paneRows.isEmpty()) {
+            boolean on = Settings.enabled() && Settings.sectionOn(openFolder.section());
+            graphics.text(this.font, Component.literal(openFolder.name()), descX, descTextTop + 2, on ? HEADER : 0xFF777777);
         }
 
-        String text = hovered != null ? hovered : HINT;
+        String hovered = null;
+        for (List<Row> list : List.of(paneRows, rows)) {
+            for (Row r : list) {
+                Button b = r.button();
+                if (b.visible && mouseX >= b.getX() && mouseX <= b.getX() + b.getWidth()
+                    && mouseY >= b.getY() && mouseY <= b.getY() + b.getHeight()) { hovered = r.desc(); break; }
+            }
+            if (hovered != null) break;
+        }
+
+        String idle = openFolder != null && !paneRows.isEmpty() ? openFolder.desc() : HINT;
+        String text = hovered != null ? hovered : idle;
         int color = hovered != null ? 0xFFFFFFFF : 0xFF909090;
         List<FormattedCharSequence> lines = this.font.split(Component.literal(text), descW);
-        int ty = descTextTop;
+        int ty = paneTextTop;
         for (FormattedCharSequence line : lines) {
             graphics.text(this.font, line, descX, ty, color);
             ty += this.font.lineHeight + 2;

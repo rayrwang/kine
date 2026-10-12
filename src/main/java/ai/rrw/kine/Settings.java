@@ -33,7 +33,7 @@ public final class Settings {
 
     /** The settings screen's sections; each has an on/off switch over its features. */
     public enum Section {
-        HUD("Heads-up display"), FLIGHT("Elytra flight"), SAFETY("Safety"), COMBAT("Combat");
+        HUD("Heads-up display"), VISIBILITY("Visibility"), FLIGHT("Elytra flight"), SAFETY("Safety"), COMBAT("Combat");
         public final String title;
         Section(String title) { this.title = title; }
     }
@@ -48,6 +48,8 @@ public final class Settings {
 
     // Effective values, read by the features.
     public static boolean displayMobHealths, displayMobNames, displayMiningProgress,
+        noWaterFog, noLavaFog, noPowderSnowFog, noNetherFog, noRainFog, noBossFog, noDistanceFog,
+        noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
         autopilot, takeoff, landing, navigation, terrainAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, afkDamageProtection,
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura;
@@ -108,7 +110,7 @@ public final class Settings {
         return o;
     }
 
-    private static final Section HUD = Section.HUD, FLIGHT = Section.FLIGHT, SAFETY = Section.SAFETY, COMBAT = Section.COMBAT;
+    private static final Section HUD = Section.HUD, VISIBILITY = Section.VISIBILITY, FLIGHT = Section.FLIGHT, SAFETY = Section.SAFETY, COMBAT = Section.COMBAT;
     private static final Show ELYTRA = Show.ELYTRA;
 
     public static final Option DISPLAY_MOB_HEALTHS        = toggle("displayMobHealths", HUD, true, v -> displayMobHealths = v);
@@ -116,6 +118,21 @@ public final class Settings {
     public static final Option DISPLAY_MINING_PROGRESS    = toggle("displayMiningProgress", HUD, true, v -> displayMiningProgress = v);
     public static final Option DISPLAY_SPEED              = mode("displaySpeed", HUD, ELYTRA, v -> displaySpeed = v);
     public static final Option DISPLAY_GROUND_SPEED       = mode("displayGroundSpeed", HUD, ELYTRA, v -> displayGroundSpeed = v);
+
+    public static final Option NO_WATER_FOG               = toggle("noWaterFog", VISIBILITY, false, v -> noWaterFog = v);
+    public static final Option NO_LAVA_FOG                = toggle("noLavaFog", VISIBILITY, false, v -> noLavaFog = v);
+    public static final Option NO_POWDER_SNOW_FOG         = toggle("noPowderSnowFog", VISIBILITY, false, v -> noPowderSnowFog = v);
+    public static final Option NO_NETHER_FOG              = toggle("noNetherFog", VISIBILITY, false, v -> noNetherFog = v);
+    public static final Option NO_RAIN_FOG                = toggle("noRainFog", VISIBILITY, false, v -> noRainFog = v);
+    public static final Option NO_BOSS_FOG                = toggle("noBossFog", VISIBILITY, false, v -> noBossFog = v);
+    public static final Option NO_DISTANCE_FOG            = toggle("noDistanceFog", VISIBILITY, false, v -> noDistanceFog = v);
+    public static final Option NO_DARKNESS                = toggle("noDarkness", VISIBILITY, false, v -> noDarkness = v);
+    public static final Option NO_BLINDNESS               = toggle("noBlindness", VISIBILITY, false, v -> noBlindness = v);
+    public static final Option NO_FIRE_OVERLAY            = toggle("noFireOverlay", VISIBILITY, false, v -> noFireOverlay = v);
+    public static final Option NO_UNDERWATER_OVERLAY      = toggle("noUnderwaterOverlay", VISIBILITY, false, v -> noUnderwaterOverlay = v);
+    public static final Option NO_PUMPKIN_OVERLAY         = toggle("noPumpkinOverlay", VISIBILITY, false, v -> noPumpkinOverlay = v);
+    public static final Option NO_FROST_OVERLAY           = toggle("noFrostOverlay", VISIBILITY, false, v -> noFrostOverlay = v);
+    public static final Option NO_PORTAL_OVERLAY          = toggle("noPortalOverlay", VISIBILITY, false, v -> noPortalOverlay = v);
 
     public static final Option DISPLAY_HEADING_ARC        = mode("displayHeadingArc", FLIGHT, ELYTRA, v -> displayHeadingArc = v);
     public static final Option DISPLAY_ALTITUDE           = mode("displayAltitude", FLIGHT, ELYTRA, v -> displayAltitude = v);
