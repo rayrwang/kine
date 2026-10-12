@@ -23,7 +23,8 @@ import org.joml.Matrix4f;
 import java.util.Optional;
 
 /**
- * The beam over a managed destination, from the ground to the top of the build height, and the landing block's top face
+ * The beam over a managed destination, from the ground up to at least 45 degrees above the eye (never below the top of
+ * the build height; far beyond two render distances drawn scaled toward the camera), and the landing block's top face
  * outlined, drawn in the world rather than on the HUD, so terrain and the rails hide it where they are in front of it
  * and it covers them where it is in front (RW, 2026-10-11). A faint copy is also drawn through everything, so the
  * destination can still be found behind hills. Two passes on the level render event either side of the rails': the
@@ -49,6 +50,9 @@ public final class NavBeam {
     private static final double CORE_HALF_W = 0.06;
     private static final double EDGE_HALF_W = 0.04;     // the face's edge strips
     private static final double FACE_LIFT   = 0.01;     // the face's edges sit this far above the block, clear of its surface
+    private static final double TOP_DEG     = 45;       // the top's least angle above the eye: past the screen's top edge
+                                                        // when looking level at the default field of view (70)
+    private static final double TOP_TAN     = Math.tan(Math.toRadians(TOP_DEG));
 
     // debugQuads with no depth test, for the faint copy (the game has no position-colour quads without one)
     private static final RenderPipeline SEE_THROUGH_PIPELINE = RenderPipelines.register(
@@ -80,12 +84,15 @@ public final class NavBeam {
         boolean spot = Nav.hasSpot();
         int bx = spot ? Mth.floor(Nav.spotX()) : Nav.targetX(), bz = spot ? Mth.floor(Nav.spotZ()) : Nav.targetZ();
         double ground = spot ? Nav.spotTop() : columnTop(level, bx, bz);
-        double baseY = Double.isNaN(ground) ? level.getMinY() : ground, topY = level.getMaxY() + 1;
+        double baseY = Double.isNaN(ground) ? level.getMinY() : ground;
         double wx = bx + 0.5, wz = bz + 0.5;
 
         Vec3 cam = mc.gameRenderer.getMainCamera().position();
         Matrix4f mat = ctx.poseStack().last().pose();
         double dx = wx - cam.x, dz = wz - cam.z, dist = Math.sqrt(dx * dx + dz * dz);
+        // the top at least TOP_DEG above the eye at any distance, so a far beam looks as tall as a near one and stands
+        // above you at cruise (RW: "it shoudl amingain same ange not smae world wehgiht"); never below the top of the world
+        double topY = Math.max(level.getMaxY() + 1, cam.y + dist * TOP_TAN);
         // across the strip, square to the line of sight; straight above the column, any direction will do
         double ax = dist > 1.0e-3 ? -dz / dist : 1.0, az = dist > 1.0e-3 ? dx / dist : 0.0;
         // one gui pixel at the beam's distance, in blocks: the old HUD beam's widths were in gui pixels
@@ -93,25 +100,36 @@ public final class NavBeam {
         double bodyPx = Math.max(2.0, Math.min(16.0, 600.0 / Math.max(1.0, dist)));
         double body = Math.max(HALF_W, dist * gpx * bodyPx / 2.0), core = Math.max(CORE_HALF_W, dist * gpx);
         double edge = Math.max(EDGE_HALF_W, Math.hypot(dist, ground - cam.y) * gpx);
+        // Past the projection's far plane (four render distances, Camera.depthFar) the beam would be cut off, so beyond
+        // two render distances it is drawn scaled toward the camera: the same place and size on screen (as WalkBeam).
+        double near = mc.options.getEffectiveRenderDistance() * 32.0;
+        boolean scaled = dist > near;
+        if (scaled) {
+            double k = near / dist;
+            wx = cam.x + (wx - cam.x) * k; wz = cam.z + (wz - cam.z) * k;
+            baseY = cam.y + (baseY - cam.y) * k; topY = cam.y + (topY - cam.y) * k;
+            body *= k; core *= k;
+        }
+        boolean showFace = !Double.isNaN(ground) && !scaled;
 
         if (faint) {
             VertexConsumer vc = ctx.bufferSource().getBuffer(SEE_THROUGH);
             strip(vc, mat, cam, wx, wz, ax, az, body, baseY, topY, GHOST_BODY);
             strip(vc, mat, cam, wx, wz, ax, az, core, baseY, topY, GHOST_CORE);
-            if (!Double.isNaN(ground)) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, GHOST_FACE);
+            if (showFace) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, GHOST_FACE);
             ctx.bufferSource().endBatch(SEE_THROUGH);
             return;
         }
         VertexConsumer vc = ctx.bufferSource().getBuffer(RenderTypes.debugQuads());
         strip(vc, mat, cam, wx, wz, ax, az, body, baseY, topY, BODY);
         strip(vc, mat, cam, wx, wz, ax, az, core, baseY, topY, CORE);
-        if (!Double.isNaN(ground)) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, FACE);
+        if (showFace) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, FACE);
         ctx.bufferSource().endBatch(RenderTypes.debugQuads());
 
         // depth for the core and the face's edges (both windings: waterMask culls back faces)
         VertexConsumer mvc = ctx.bufferSource().getBuffer(RenderTypes.waterMask());
         stripMask(mvc, mat, cam, wx, wz, ax, az, core, baseY, topY);
-        if (!Double.isNaN(ground)) faceMask(mvc, mat, cam, bx, ground + FACE_LIFT, bz, edge);
+        if (showFace) faceMask(mvc, mat, cam, bx, ground + FACE_LIFT, bz, edge);
         ctx.bufferSource().endBatch(RenderTypes.waterMask());
     }
 
