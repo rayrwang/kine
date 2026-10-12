@@ -51,6 +51,8 @@ public class Autopilot {
     private static long  lastFrameNanos = 0L;       // for real per-frame dt
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
     private static float landingMouse = 0f;         // while landing: the pilot's recent mouse movement (deg), fading
+    private static boolean rotationSet = false;     // the server set the rotation (a teleport): start again from it
+    private static boolean yawCatchUp = false;      // since then, terrain avoidance's look placement eases at the bank rate
 
     // "AUTOPILOT OFF" warning and dead-man disconnect after a disengage in flight
     private static boolean warnActive = false;
@@ -113,6 +115,7 @@ public class Autopilot {
         LocalPlayer p = mc.player;
         if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing())) return;
         if (lastFrameNanos == 0L) return;     // no frame yet since engaging or a pause: the first frame takes the view
+        takeSetRotation(p);
         if (!planned) plan(mc, p);            // no frame since the last tick (under 20 fps): plan now
         turnTo(p, cmdYaw, cmdPitch);
         baseYaw = p.getYRot();
@@ -137,6 +140,7 @@ public class Autopilot {
         lastFrameNanos = now;
         if (dt <= 0f) return;
         if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
+        takeSetRotation(p);   // a rotation the server set is not the pilot's mouse
 
         // a pilot's mouse disengages. While landing only a deliberate move does: the frames' mouse movement is tallied
         // and fades over about half a second, so a small accidental bump near the ground is turned back below (letting
@@ -193,7 +197,17 @@ public class Autopilot {
                 float velYaw = (float) Motion.trackYaw(p, cmdYaw);
                 float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
                 float dmax = (float) FlightModel3D.DELTA_MAX;
-                cmdYaw = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+                float place = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+                if (yawCatchUp) {
+                    // after a server-set rotation the look may be far from the velocity: reach the placement at the
+                    // emergency bank's rate instead of in one tick; in steady flight the placement moves a few
+                    // degrees a tick and this never binds
+                    float maxStep = EMERGENCY_FLICK_DPS / 20f, err = Mth.wrapDegrees(place - cmdYaw);
+                    cmdYaw += Math.max(-maxStep, Math.min(maxStep, err));
+                    if (Math.abs(err) <= maxStep) yawCatchUp = false;
+                } else {
+                    cmdYaw = place;
+                }
             }
         } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
@@ -210,6 +224,21 @@ public class Autopilot {
         MouseTurn.toward(p, yaw, Mth.clamp(pitch, -90f, 90f));
         setPitch = p.getXRot();
         setYaw   = p.getYRot();
+    }
+
+    /** The server set the player's rotation (ClientPacketListenerMixin: a teleport, or a rotation alone). */
+    public static void onRotationSet() {
+        if (engaged) rotationSet = true;
+    }
+
+    // After a server-set rotation, turn from it: it becomes the command and what we last set, so the next turns ease
+    // from there at the usual rates (no snap back to the old command, which the server would see in one tick), and
+    // the frames don't read the jump as the pilot's mouse.
+    private static void takeSetRotation(LocalPlayer p) {
+        if (!rotationSet) return;
+        rotationSet = false;
+        holdView(p);
+        yawCatchUp = true;
     }
 
     // Take the current view as both the command and what we last set.

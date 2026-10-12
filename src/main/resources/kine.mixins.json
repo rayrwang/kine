@@ -13,7 +13,8 @@
 		"MultiPlayerGameModeMixin",
 		"KeyMappingAccessor",
 		"PlayerAccessor",
-		"FireworkRocketAccessor"
+		"FireworkRocketAccessor",
+		"ClientPacketListenerMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

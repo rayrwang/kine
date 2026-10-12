@@ -111,6 +111,15 @@ public final class KillAura {
         attacksSent++;
     }
 
+    /** The server set the player's rotation (ClientPacketListenerMixin: a teleport, or a rotation alone), and the
+     *  client answered with it, so that is now the rotation last sent: turn on from it within MAX_TURN, and drop the
+     *  offset held from the old view, which would otherwise be put back in one tick. Packets are handled between
+     *  ticks, when no turn of this tick is applied. */
+    public static void onRotationSet(LocalPlayer p) {
+        heldX = heldY = 0;
+        sentYaw = p.getYRot(); sentPitch = p.getXRot(); sentKnown = true;
+    }
+
     /** Whether the rotation sent is turned away from your view this tick. */
     public static boolean turned() {
         return heldX != 0 || heldY != 0;
