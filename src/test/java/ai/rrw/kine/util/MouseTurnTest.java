@@ -108,4 +108,17 @@ class MouseTurnTest {
         ky = MouseTurn.pitchCounts(-90.0 + 89.95, -89.95f, deg);
         assertTrue(-89.95f + ky * deg >= -90.0);
     }
+
+    @Test
+    void aTurnIsCutToTheLimitAlongTheStraightLine() {
+        // within the limit: all the way, the yaw the short way round
+        float[] r = MouseTurn.limit(170f, 0f, -170f, 10f, 30.0);
+        assertEquals(190f, r[0], 1e-4);
+        assertEquals(10f, r[1], 1e-4);
+        // 90 to the side and 40 down: cut to 30 of travel in the same direction
+        r = MouseTurn.limit(0f, 0f, 90f, 40f, 30.0);
+        assertEquals(30.0, MouseTurn.travel(0, 0, r[0], r[1]), 1e-4);
+        assertEquals(40.0 / 90.0, r[1] / r[0], 1e-5);
+        assertEquals(Math.hypot(20, 5), MouseTurn.travel(355, 0, 15, 5), 1e-9);
+    }
 }

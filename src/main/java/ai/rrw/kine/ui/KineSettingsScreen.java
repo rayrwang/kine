@@ -110,8 +110,8 @@ public class KineSettingsScreen extends Screen {
         + "can't dodge point-blank or very fast shots. Lower ban risk than the aimbot.";
     private static final String DESC_AURA =
         "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
-        + "you wear no gold). Your view stays put; the server sees a quick turn to each target. Spams crowds, "
-        + "else waits for full charge. Servers may ban it.";
+        + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
+        + "stays put; the server sees turns no faster than a quick flick. Servers may ban it.";
     private static final String DESC_WEAPON =
         "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
         + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";

@@ -2,6 +2,7 @@ package ai.rrw.kine.mixin;
 
 import ai.rrw.kine.VanillaActions;
 import ai.rrw.kine.autoflight.Autopilot;
+import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.WaterClutch;
 import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
@@ -11,7 +12,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Three points in the client tick. Its start, before anything else, whatever screen is open: the autopilot and the
- * water clutch finish the turns their frames have been making toward this tick's rotation. Just before handleKeybinds, where a vanilla client
+ * water clutch finish the turns their frames have been making toward this tick's rotation, and the kill aura turns to
+ * the rotation it holds for the server. Just before handleKeybinds, where a vanilla client
  * attacks and uses items (after this tick's crosshair pick, before the player moves and sends its rotation). And just
  * after the entities tick, once the player has sent this tick's rotation and before the tick-end packet.
  */
@@ -21,6 +23,7 @@ public class MinecraftTickMixin {
     private void kine$tickStart(CallbackInfo ci) {
         Autopilot.onTickStart((Minecraft) (Object) this);
         WaterClutch.onTickStart((Minecraft) (Object) this);
+        KillAura.onTickStart((Minecraft) (Object) this);
     }
 
     @Inject(method = "tick",

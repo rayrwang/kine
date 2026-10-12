@@ -3,9 +3,8 @@ package ai.rrw.kine.combat;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
-import ai.rrw.kine.util.Enchant;
+import ai.rrw.kine.mixin.PlayerAccessor;
 import ai.rrw.kine.util.MouseTurn;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -13,17 +12,22 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.monster.creaking.Creaking;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
+import net.minecraft.world.entity.monster.spider.Spider;
+import net.minecraft.world.entity.monster.warden.Warden;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -36,202 +40,546 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * Melee kill aura against hostile mobs and neutral mobs that have hit you, toggled in the settings
- * screen. It attacks mobs in reach with line of sight, as a vanilla client would: just before the game's
- * keybind step it turns toward the target by whole mouse counts, has the game pick what that rotation's
- * crosshair is on, and attacks through the game's own startAttack only if that is a target; the player's
- * move packet then carries that rotation, and once it has gone out the view is turned back by whole counts
- * to where it was, so your view never moves (the server sees a flick there and back). For that one tick
- * your walking follows the turned rotation, as it would for a vanilla client.
+ * Melee kill aura against hostile mobs and neutral mobs that have hit you, toggled in the settings screen. When to
+ * swing and at which mob is SwingPlan's (bursts of quick hits and a charged hit, sweeps when they pay more, and
+ * threats first); this class finds the mobs and makes the swings the vanilla way.
  *
- * <p>From the 26.1.2 combat code: a hit's damage is scaled by {@code 0.2 + 0.8*charge^2}, the charge
- * resets on every swing, and a struck mob takes full damage again only after 10 ticks. So the aura
- * picks a mode from the number of targets and the weapon:
- * <ul>
- *   <li><b>Sweep</b>: a Sweeping Edge sword on the ground against a cluster, when the hit will sweep (not a
- *       sprint hit, not moving fast). Wait for a full charge and hit the mob with the most neighbours in its
- *       sweep box.</li>
- *   <li><b>Spam</b>: a crowd of fresh targets. Swing every tick at the nearest mob not hit in the last
- *       10 ticks. Each hit does only the 20% floor, but many hits on many mobs beat waiting.</li>
- *   <li><b>Wait</b>: one or a few targets. Strike on a full charge, so every hit lands full damage.</li>
- * </ul>
+ * <p>The rotation the server gets is the aura's own, kept apart from your view: the aura turns the player by whole
+ * mouse counts at the start of each tick to the rotation it holds, so the game's own pick, its startAttack and the
+ * move packet all have it, and turns back once the move packet has gone out, so your view never moves. That rotation
+ * turns at most MAX_TURN degrees a tick (RW's rule: no faster than a fast human flick), toward the mob it means to hit
+ * next, and back to your view when there is nothing to hit. Only on foot: gliding, swimming, riding or climbing, it
+ * turns out for the one tick of a swing and back the next, both within MAX_TURN of your view, so the flight or the
+ * vehicle follows the turn for one tick at most.
  *
- * <p>Targets are mobs only (never players, armour stands or animals): hostiles ({@link Enemy}) always,
- * neutral mobs (endermen and zombified piglins included, though the game counts them as hostile) only
- * for a while after they damage you, read client-side from {@code getLastDamageSource} because mob
- * anger isn't synced to the client. Adult piglins attack a player without gold armour, so they are
- * targets then; while you wear gold they are neutral.
+ * <p>While the rotation sent is turned away from your view your walking would follow it, so the movement keys are
+ * swapped for the ones that walk where you meant to go (to the nearest of the eight directions). And the aura stands
+ * down while you use an item, click or hold attack or use: its rotation comes back to your view first, and the
+ * clicks you made meanwhile wait for it (at most a few ticks), so they go where you look.
+ *
+ * <p>Targets are mobs only (never players, armour stands or animals): hostiles ({@link Enemy}) always, neutral mobs
+ * only for a while after they damage you, read from {@code getLastDamageSource} because mob anger isn't synced to the
+ * client. Neutral: the NeutralMob ones (endermen and zombified piglins included, though the game counts them as
+ * hostile), piglins while you wear gold, the warden (it fights only what it hears or smells; a hit would anger it),
+ * and spiders where it is bright (they pick no target at light value 0.5 and up, Spider.SpiderTargetGoal). A creaking
+ * bound to its heart takes no damage (Creaking.hurtServer), so it is left alone.
  */
 public final class KillAura {
     private KillAura() {}
 
-    // A struck mob sets invulnerableTime to 20 and takes full damage again once it is at or below 10,
-    // that is 10 ticks later.
-    private static final int   HIT_REFRACTORY = 10;
-    // Charge needed to swing in the wait and sweep modes. Vanilla allows sweeps and crits above 0.9, but a
-    // sword or axe takes at least 12.5 ticks to charge, longer than the 10-tick window, so swinging at 0.9
-    // only restarts the charge 1.5 ticks early for 5% less damage. A full charge gives the most damage per
-    // second and the largest sweep.
-    private static final float FULL_CHARGE    = 1.0f;
-    private static final int   ANGRY_TICKS    = 600;   // a neutral mob that hits you stays a target this long (30 s)
-    private static final int   WEAPON_PERIOD  = 10;    // re-pick the best weapon at most this often while fighting
+    private static final int    ANGRY_TICKS   = 600;   // a neutral mob that hits you stays a target this long (30 s)
+    private static final int    WEAPON_PERIOD = 10;    // re-pick the best weapon at most this often while fighting
     private static final double SWEEP_X = 1.0, SWEEP_Y = 0.25, SWEEP_Z = 1.0;   // vanilla sweep-box inflation
+    /** The most the rotation sent may turn in one tick, as mouse travel sqrt(yaw^2 + pitch^2): a fast human flick (RW,
+     *  June: "just don't make it so fast that it looksk like cheating"; the fast-pitch study's estimate). */
+    public static final double MAX_TURN = 30.0;
+    // what the aura plans with, a count's width under MAX_TURN, so rounding to whole counts stays inside it
+    private static final double TURN_BUDGET = MAX_TURN - 0.5;
+    private static final int    CLICK_HOLD_TICKS = 20;   // your clicks held back longer than this (1 s) are dropped
+    private static final double MOB_REACH = Math.sqrt(2.04F) - 0.6F;   // a mob's melee reach past its box (Mob.DEFAULT_ATTACK_REACH)
+    private static final double CREEPER_SWELL = 3.0;   // a creeper starts its fuse within 3 blocks (Creeper's SwellGoal)
 
-    private static final Map<Integer, Integer> lastHit    = new HashMap<>();   // entityId -> tick we last hit it
+    /** A hit of ours on a mob: the tick the window it opened began, and the biggest hit in that window. */
+    private record Hit(int tick, double damage) {}
+
+    private static final Map<Integer, Hit> hits = new HashMap<>();
     private static final Map<Integer, Integer> angryUntil = new HashMap<>();   // neutral entityId -> tick its anger lapses
     private static int tick = 0;
-    private static int lastHurtTime = 0;   // player's hurtTime last tick, to spot a fresh incoming hit
+    private static int lastHurtTime = 0;        // player's hurtTime last tick, to spot a fresh incoming hit
     private static int lastWeaponTick = -100;   // last tick auto weapon selection ran
     private static Item lastHeld = null;        // the main-hand item when last checked, to see a switch
+    private static int attacksSent = 0;         // attacks the game has sent (MultiPlayerGameModeMixin)
+    private static LocalPlayer lastPlayer = null;
 
-    private static MouseTurn.Turn flick = MouseTurn.Turn.NONE;   // this tick's turn toward a target, undone after it is sent
-    private static int attacksSent = 0;   // attacks the game has sent (MultiPlayerGameModeMixin)
+    // The rotation sent, as an offset from your view in mouse counts, held from tick to tick; and this tick's turn,
+    // undone after the move packet. sentYaw/sentPitch: the rotation the last move packet carried.
+    private static int heldX = 0, heldY = 0;
+    private static float appliedYaw = 0f, appliedPitch = 0f;
+    private static float sentYaw, sentPitch;
+    private static boolean sentKnown = false;
+    private static int turnDir = 0;   // the way the rotation sent last turned in yaw: 1, -1, or 0 for not yet
 
-    public static void register() {
-        ClientTickEvents.END_CLIENT_TICK.register(KillAura::onTick);   // toggled from the settings menu (K)
-    }
+    // your clicks (attack, use, pick block) held back while the rotation sent is away from your view
+    private static final int[] heldClicks = new int[3];
+    private static int heldClicksSince = 0;
 
     /** The game sent an attack or a spear's stab (MultiPlayerGameModeMixin). */
     public static void onAttackSent() {
         attacksSent++;
     }
 
-    private static void onTick(Minecraft mc) {
-        tick++;
-        LocalPlayer p = mc.player;
-        if (p == null || mc.level == null) { lastHit.clear(); angryUntil.clear(); return; }
-        trackAnger(p);   // learn which neutral mobs are angry at us, even when the aura is off
+    /** Whether the rotation sent is turned away from your view this tick. */
+    public static boolean turned() {
+        return heldX != 0 || heldY != 0;
     }
 
-    /** Fights, just before the game's keybind step (VanillaActions); no screen is open here. */
+    // ---------------------------------------------------------------- the tick
+
+    /** The start of every tick, whatever screen is open (MinecraftTickMixin, after the autopilot's and the clutch's
+     *  turns): turn to the rotation held, so this tick's pick and move packet have it. With a screen open a vanilla
+     *  client can't turn, and neither the view nor the rotation sent changes. */
+    public static void onTickStart(Minecraft mc) {
+        tick++;
+        LocalPlayer p = mc.player;
+        if (p == null || mc.level == null || p != lastPlayer) {
+            hits.clear(); angryUntil.clear();
+            heldX = heldY = 0; appliedYaw = appliedPitch = 0f; sentKnown = false;
+            lastPlayer = p;
+            return;
+        }
+        trackAnger(p);   // learn which neutral mobs are angry at us, even when the aura is off
+        if (appliedYaw != 0f || appliedPitch != 0f) {   // a tick that never reached the entities (paused): undo it first
+            MouseTurn.undo(p, new MouseTurn.Turn(0, 0, appliedYaw, appliedPitch));
+            appliedYaw = appliedPitch = 0f;
+        }
+        if (turned() && !mc.isPaused()) apply(MouseTurn.by(p, heldX, heldY));
+    }
+
+    /** Just before the game's keybind step (VanillaActions); no screen is open here. Fights, then turns the rotation
+     *  sent toward where it should be, within MAX_TURN of the last one sent. */
     public static void beforeKeybinds(Minecraft mc) {
         LocalPlayer p = mc.player;
-        if (!Settings.killAura || p == null || mc.level == null || mc.gameMode == null || !p.isAlive() || p.isUsingItem()) return;
-        if (p.isSpectator()) return;   // a spectator's startAttack spectates the mob: the server moves the camera into it
-        // A new item in the main hand (auto weapon's, or yours): the game sends the slot change at the start of the
-        // tick after the switch, this one, and the server takes the item's attack damage and speed only when it next
-        // ticks the player, so a swing now would hit with the old item's. Swing from the next tick.
-        Item heldItem = p.getMainHandItem().getItem();
-        if (heldItem != lastHeld) { lastHeld = heldItem; return; }
-        // The game's startAttack refuses while missTime is up: after a click in the air, and after an inventory
-        // close (InventoryClicks.closeAsVanilla) until the tick after next, as for a vanilla client.
-        if (mc.missTime > 0) return;
-        // Your own right-click goes in this tick's keybind step, along whatever the crosshair is on then: with a
-        // swing's turn on, toward the aura's target (a pearl, a potion, a crossbow bolt). No swing in that tick.
-        if (useClicked(mc)) return;
+        if (p == null || mc.level == null || mc.gameMode == null) return;
+        if (!sentKnown) { sentYaw = p.getYRot(); sentPitch = p.getXRot(); sentKnown = true; }
+        boolean you = yourInput(mc, p);
+        boolean on = Settings.killAura && p.isAlive() && !p.isSpectator() && !you;
+        boolean onFoot = onFoot(p);
 
+        float viewYaw = p.getYRot() - appliedYaw, viewPitch = p.getXRot() - appliedPitch;
+        float[] want = {viewYaw, viewPitch};   // where the rotation sent should go: your view unless fighting
+        if (on) {
+            float[] aim = fight(mc, p, onFoot, viewYaw, viewPitch);
+            if (aim == null) { holdClicks(mc); return; }   // it swung: the rotation is set for this tick
+            if (onFoot) want = aim;
+        }
+        if (!turned() && want[0] == viewYaw && want[1] == viewPitch) { holdClicks(mc); return; }   // idle, on your view: hands off
+        float[] next = MouseTurn.limit(sentYaw, sentPitch, want[0], want[1], TURN_BUDGET);
+        int[] c = MouseTurn.countsTo(p, next[0], next[1]);
+        if (c[0] != 0 || c[1] != 0) {
+            apply(MouseTurn.by(p, c[0], c[1]));
+            ((MinecraftInvoker) mc).invokePick(1.0F);
+        }
+        holdClicks(mc);
+    }
+
+    /** Once the player has sent this tick's rotation (VanillaActions, after the entities tick): note it and turn back
+     *  to your view. */
+    public static void afterEntities(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (p == null) return;
+        double turned = sentKnown ? Mth.wrapDegrees(p.getYRot() - sentYaw) : 0.0;
+        if (Math.abs(turned) > 0.5) turnDir = turned > 0 ? 1 : -1;
+        sentYaw = p.getYRot(); sentPitch = p.getXRot(); sentKnown = true;
+        if (appliedYaw == 0f && appliedPitch == 0f) { heldX = heldY = 0; return; }
+        double deg = MouseTurn.sens(mc, p) * 0.15;
+        MouseTurn.undo(p, new MouseTurn.Turn(0, 0, appliedYaw, appliedPitch));
+        // held for the next tick within half a turn of the view: whole turns round a crowd would otherwise pile up
+        // (the server wraps the yaw, so a turn of 360 is no turn to it)
+        heldX = (int) Math.round(Mth.wrapDegrees(appliedYaw) / deg);
+        heldY = (int) Math.round(appliedPitch / deg);
+        appliedYaw = appliedPitch = 0f;
+        ((MinecraftInvoker) mc).invokePick(1.0F);
+    }
+
+    private static void apply(MouseTurn.Turn t) {
+        appliedYaw += t.movedYaw();
+        appliedPitch += t.movedPitch();
+    }
+
+    /** On foot: the rotation sent can stay turned from the view from tick to tick. Gliding, in water, riding,
+     *  climbing, flying or falling, the turn would steer you, so it lasts only the tick of a swing. */
+    private static boolean onFoot(LocalPlayer p) {
+        return !p.isFallFlying() && !p.isInWater() && !p.isPassenger() && !p.onClimbable() && !p.getAbilities().flying
+            && p.fallDistance < 2.0;
+    }
+
+    // ---------------------------------------------------------------- your input
+
+    /** Whether you are acting yourself: using an item, or attack, use or pick block clicked or held. */
+    private static boolean yourInput(Minecraft mc, LocalPlayer p) {
+        if (p.isUsingItem()) return true;
+        KeyMapping[] keys = {mc.options.keyAttack, mc.options.keyUse, mc.options.keyPickItem};
+        for (KeyMapping k : keys) if (((KeyMappingAccessor) k).kine$getClickCount() > 0 || k.isDown()) return true;
+        return heldClicks[0] + heldClicks[1] + heldClicks[2] > 0;
+    }
+
+    /** With the rotation sent away from your view, your clicks wait (and a held use doesn't repeat) so they don't go
+     *  where the aura aims; once it is back on your view they go in this tick's keybind step. */
+    private static void holdClicks(Minecraft mc) {
+        KeyMapping[] keys = {mc.options.keyAttack, mc.options.keyUse, mc.options.keyPickItem};
+        boolean away = appliedYaw != 0f || appliedPitch != 0f;
+        if (away) {
+            for (int i = 0; i < 3; i++) {
+                KeyMappingAccessor k = (KeyMappingAccessor) keys[i];
+                if (k.kine$getClickCount() > 0) {
+                    if (heldClicks[0] + heldClicks[1] + heldClicks[2] == 0) heldClicksSince = tick;
+                    heldClicks[i] += k.kine$getClickCount();
+                    k.kine$setClickCount(0);
+                }
+            }
+            MinecraftInvoker game = (MinecraftInvoker) mc;
+            if (mc.options.keyUse.isDown() && game.kine$getRightClickDelay() == 0) game.kine$setRightClickDelay(1);
+            if (tick - heldClicksSince > CLICK_HOLD_TICKS) java.util.Arrays.fill(heldClicks, 0);
+        } else if (heldClicks[0] + heldClicks[1] + heldClicks[2] > 0) {
+            for (int i = 0; i < 3; i++) {
+                KeyMappingAccessor k = (KeyMappingAccessor) keys[i];
+                k.kine$setClickCount(k.kine$getClickCount() + heldClicks[i]);
+            }
+            java.util.Arrays.fill(heldClicks, 0);
+        }
+    }
+
+    /** The movement keys for this tick: while the rotation sent is turned yaw degrees from your view your walking would
+     *  follow it, so the keys are swapped for the ones that walk nearest where you meant (VanillaActions, first). */
+    public static Input adjustInput(LocalPlayer p, Input keys) {
+        if (Math.abs(appliedYaw) < 1e-4f) return keys;
+        return walkKeys(keys, appliedYaw);
+    }
+
+    /** The keys that walk, at a rotation turned yaw degrees from the view, nearest the way these keys walk at the
+     *  view (Entity.getInputVector turns the input by the yaw): one of the eight directions, or none. */
+    static Input walkKeys(Input keys, double yaw) {
+        double x = (keys.left() ? 1 : 0) - (keys.right() ? 1 : 0);
+        double z = (keys.forward() ? 1 : 0) - (keys.backward() ? 1 : 0);
+        if (x == 0 && z == 0) return keys;
+        double n = Math.hypot(x, z);
+        x /= n; z /= n;
+        double r = Math.toRadians(yaw), cos = Math.cos(r), sin = Math.sin(r);
+        double x1 = x * cos + z * sin, z1 = z * cos - x * sin;   // the same direction, in the turned rotation's frame
+        double s = Math.sin(Math.toRadians(22.5));
+        return new Input(z1 > s, z1 < -s, x1 > s, x1 < -s, keys.jump(), keys.shift(), keys.sprint());
+    }
+
+    // ---------------------------------------------------------------- the fight
+
+    /** One mob in reach, what the plan knows of it, and the rotation that puts the crosshair on it (null if none). */
+    private record Target(LivingEntity e, SwingPlan.Mob m, float[] rot) {}
+
+    /**
+     * Picks the swing for this tick and makes it if there is one. Returns null after a swing (this tick's rotation is
+     * then set), else the rotation to turn toward: the mob the plan will hit next, or your view.
+     */
+    private static float[] fight(Minecraft mc, LocalPlayer p, boolean onFoot, float viewYaw, float viewPitch) {
+        float[] view = {viewYaw, viewPitch};
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         Vec3 eye = p.getEyePosition();
         AABB area = p.getBoundingBox().inflate(reach + 1.0);
 
-        List<LivingEntity> inReach = new ArrayList<>();
-        LivingEntity nearestTarget = null;
-        double nearestDist = Double.MAX_VALUE;
-        for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x, p))) {
-            LivingEntity t = (LivingEntity) e;
-            if (eyeToBox(eye, t.getBoundingBox()) > reach) continue;
-            if (!lineOfSight(p, eye, t)) continue;
-            inReach.add(t);
-            double d = eye.distanceToSqr(t.getBoundingBox().getCenter());
-            if (d < nearestDist) { nearestDist = d; nearestTarget = t; }
-        }
-        if (inReach.isEmpty()) return;
-
-        // Auto weapon: equip the best sword or axe for this target before swinging. Re-picked every
-        // WEAPON_PERIOD ticks (the target can change), and at once when not holding a weapon.
-        if (Settings.autoWeapon) {
-            ItemStack cur = p.getMainHandItem();
-            boolean holdingWeapon = cur.is(h -> h.is(ItemTags.SWORDS)) || cur.is(h -> h.is(ItemTags.AXES));
-            if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
-                lastWeaponTick = tick;
-                if (WeaponSelect.choose(mc, p, nearestTarget, inReach.size())) return;   // switched: no swing until the server has it (lastHeld)
-            }
-        }
+        List<LivingEntity> found = new ArrayList<>();
+        for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x, p)))
+            if (eyeToBox(eye, e.getBoundingBox()) <= reach) found.add((LivingEntity) e);
+        if (found.isEmpty()) return view;
+        found.sort(Comparator.comparingDouble(t -> eye.distanceToSqr(t.getBoundingBox().getCenter())));   // the plan's list order
 
         ItemStack held = p.getMainHandItem();
-        // A spear stabs along the rotation the server already has (the last move packet's), not this tick's turn,
-        // so a flick would stab whatever is in your view: no swing with one.
-        if (held.has(DataComponents.PIERCING_WEAPON)) return;
-        boolean sweepSword = held.is(h -> h.is(ItemTags.SWORDS)) && Enchant.level(held, Enchantments.SWEEPING_EDGE) > 0;
-        float charge = p.getAttackStrengthScale(0.5f);
+        boolean canSweep = p.onGround() && !p.isSprinting() && slow(p);
+        List<SwingPlan.Mob> mobs = mobsFor(p, found, held);
 
-        // Sweep: a Sweeping Edge sword, fully charged, against a cluster, when the hit will sweep.
-        if (sweepSword && sweeps(p) && charge >= FULL_CHARGE) {
-            LivingEntity hub = bestSweepTarget(p, inReach);
-            if (hub != null) {
-                LivingEntity hit = attack(mc, p, hub);
-                if (hit != null) {
-                    for (LivingEntity o : inReach) if (swept(p, hit, o)) lastHit.put(o.getId(), tick);   // the sweep caught these too
-                    return;
-                }
-                // the crosshair couldn't be put on it: on to the others below
+        // Auto weapon: the sword or axe that sustains the most damage against these mobs. Switching waits a tick.
+        boolean noSwing = false;
+        if (Settings.autoWeapon) {
+            boolean holdingWeapon = held.is(ItemTags.SWORDS) || held.is(ItemTags.AXES);
+            if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
+                lastWeaponTick = tick;
+                if (WeaponSelect.choose(mc, p, found, mobs, canSweep)) noSwing = true;
             }
         }
+        // A new item in the main hand: the game sends the slot change at the start of the tick after the switch, this
+        // one, and the server takes the item's attack damage and speed only when it next ticks the player, so a swing
+        // now would hit with the old item's. Swing from the next tick.
+        Item heldItem = p.getMainHandItem().getItem();
+        if (heldItem != lastHeld) { lastHeld = heldItem; noSwing = true; }
+        // The game's startAttack refuses while missTime is up: after a click in the air, and after an inventory close
+        // until the tick after next, as for a vanilla client.
+        if (mc.missTime > 0) noSwing = true;
+        // A spear stabs along the rotation the server already has (the last move packet's), not this tick's, so a
+        // swing could stab whatever that points at: none with one.
+        if (held.has(DataComponents.PIERCING_WEAPON)) noSwing = true;
 
-        // Otherwise the mobs that take full damage again (not hit in the last 10 ticks), nearest first.
-        List<LivingEntity> fresh = new ArrayList<>();
-        for (LivingEntity t : inReach) if (!refractory(t)) fresh.add(t);
-        if (fresh.isEmpty()) return;   // every target was hit too recently: a swing would do nothing
-        fresh.sort(Comparator.comparingDouble(t -> eye.distanceToSqr(t.getBoundingBox().getCenter())));
+        // where each mob can be hit from, and whether this tick's turn can get there
+        List<Target> ts = new ArrayList<>();
+        Vec3 look = Vec3.directionFromRotation(p.getXRot(), p.getYRot());
+        List<Entity> pickable = mc.level.getEntities(p, area, e -> !e.isSpectator() && e.isPickable());
+        for (int i = 0; i < found.size(); i++) {
+            LivingEntity t = found.get(i);
+            SwingPlan.Mob m = mobs.get(i);
+            float[] r = aimAt(p, eye, look, t, reach, pickable);
+            m.inPlay = r != null;   // out of reach along every ray, or something in the way: it can still take sweeps
+            if (r != null) {
+                double travel = MouseTurn.travel(sentYaw, sentPitch, r[0], r[1]);
+                Vec3 c = t.getBoundingBox().getCenter();
+                double flat = Math.max(0.3, Math.hypot(c.x - eye.x, c.z - eye.z));
+                m.yaw = Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-(c.x - eye.x), c.z - eye.z)) - sentYaw);
+                m.halfWidth = Math.toDegrees(Math.atan2(t.getBbWidth() / 2, flat));
+                m.turnTicks = travel <= TURN_BUDGET ? 0 : (int) Math.ceil((travel - TURN_BUDGET) / TURN_BUDGET);
+                m.reachable = !noSwing && travel <= TURN_BUDGET
+                    && (onFoot || MouseTurn.travel(viewYaw, viewPitch, r[0], r[1]) <= TURN_BUDGET);
+            } else {
+                m.reachable = false;
+            }
+            ts.add(new Target(t, m, r));
+        }
 
-        // Spam or wait: a spammed hit does the 20% floor, one per fresh mob, and a mob is fresh every 10
-        // ticks, so spam deals about 0.02 * N * base per tick. Waiting deals one full hit per attack delay D
-        // (D >= 12.5 for a sword or axe), base / D per tick. Spam wins past N = 50 / D fresh mobs: 5 for a
-        // sword, 3 for a netherite axe. Enchantments add little to the floor hit, so they raise this a bit.
-        int spamMin = spamThreshold(p.getCurrentItemAttackStrengthDelay());
+        SwingPlan.Weapon w = weapon(p, held);
+        int k = ((PlayerAccessor) p).kine$getAttackStrengthTicker();
+        boolean critable = !p.onClimbable() && !p.isInWater() && !p.hasEffect(MobEffects.BLINDNESS) && !p.isPassenger()
+            && !p.isSprinting() && !p.isFallFlying();
+        boolean canCrit = critable && p.fallDistance > 0 && !p.onGround();
+        int critIn = critable && !canCrit && !p.onGround() ? critIn(p.getDeltaMovement().y) : -1;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            SwingPlan.Swing s = SwingPlan.decide(w, k, canSweep && w.sword(), canCrit, critIn, mobs, TURN_BUDGET);
+            if (s.hit() < 0) {
+                float[] r = s.aim() >= 0 && onFoot ? ts.get(s.aim()).rot() : null;
+                return r != null ? r : view;
+            }
+            Target t = ts.get(s.hit());
+            float[] r = onFoot ? lead(p, eye, t.e(), reach, pickable, t.rot()) : t.rot();
+            if (attack(mc, p, t.e(), r[0], r[1], w, k, canSweep && w.sword(), canCrit, found, mobs)) return null;
+            t.m().reachable = false;   // the crosshair couldn't be put on it: plan again without it
+        }
+        return view;
+    }
 
-        if (fresh.size() >= spamMin) {
-            attackFirst(mc, p, fresh);                       // crowd: swing every tick
-        } else if (charge >= FULL_CHARGE) {
-            attackFirst(mc, p, fresh);                       // few: only on a full charge
+    /** In a jump, rising: the ticks until a swing would crit, -1 if more than 4. Player.canCriticalAttack reads the state
+     *  the last move packet gave (falling, not on the ground); this tick's move goes by vy, then each tick
+     *  vy = (vy - 0.08) * 0.98 (LivingEntity.travel). A swing crits the tick after the first move down. */
+    static int critIn(double vy) {
+        for (int j = 1; j <= 4; j++) {
+            if (vy < 0) return j;
+            vy = (vy - 0.08) * 0.98;
+        }
+        return -1;
+    }
+
+    /** The plan's view of each mob: health, armour, the weapon's bonus against it, its window, its sweep neighbours,
+     *  and how soon its attack would reach you. */
+    private static List<SwingPlan.Mob> mobsFor(LocalPlayer p, List<LivingEntity> found, ItemStack held) {
+        List<SwingPlan.Mob> mobs = new ArrayList<>();
+        for (LivingEntity t : found) {
+            SwingPlan.Mob m = new SwingPlan.Mob(t.getHealth(), t.getArmorValue());
+            m.toughness = t.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
+            m.bonus = WeaponSelect.bonus(held, t);
+            Hit h = hits.get(t.getId());
+            int own = h != null && tick - h.tick() < SwingPlan.WINDOW ? SwingPlan.WINDOW - (tick - h.tick()) : 0;
+            // the client sets invulnerableTime 20 when the server reports a full hit from anything, a tick after the
+            // server did; a full hit again once the server's is at 10
+            int seen = Math.max(0, t.invulnerableTime - (SwingPlan.WINDOW + 1));
+            m.freshIn = Math.max(own, seen);
+            m.lastHurt = own > 0 && own >= seen ? h.damage() : Double.MAX_VALUE;   // another's hit: size unknown
+            m.contact = contact(p, t);
+            mobs.add(m);
+        }
+        for (int i = 0; i < found.size(); i++) {
+            List<Integer> sw = new ArrayList<>();
+            for (int j = 0; j < found.size(); j++) if (swept(p, found.get(i), found.get(j))) sw.add(j);
+            mobs.get(i).swept = sw.stream().mapToInt(Integer::intValue).toArray();
+        }
+        return mobs;
+    }
+
+    /** The held weapon as the plan sees it: the attack damage the server will use (the item's, the player's 1, and
+     *  Strength or Weakness), the charge delay, a sword or not, and the sweep ratio. */
+    private static SwingPlan.Weapon weapon(LocalPlayer p, ItemStack held) {
+        SwingPlan.Weapon w = WeaponSelect.weaponOf(p, held);
+        return new SwingPlan.Weapon(w.damage(), p.getCurrentItemAttackStrengthDelay(), w.sword(), w.sweepRatio());
+    }
+
+    /** Whether the player moves less than 2.5 times its speed a tick, as Player.isSweepAttack asks of the movement the
+     *  server knows (the last move's). */
+    private static boolean slow(LocalPlayer p) {
+        double dx = p.getX() - p.xo, dz = p.getZ() - p.zo;
+        double max = p.getSpeed() * 2.5;
+        return dx * dx + dz * dz < max * max;
+    }
+
+    /** Turn to (yaw, pitch) and attack what that rotation's crosshair is on, through the game's own pick and
+     *  startAttack, if it is a target in reach; else turn back. Records the hit and its sweep. */
+    private static boolean attack(Minecraft mc, LocalPlayer p, LivingEntity planned, float yaw, float pitch, SwingPlan.Weapon w,
+                                  int k, boolean canSweep, boolean canCrit, List<LivingEntity> found, List<SwingPlan.Mob> mobs) {
+        int[] c = MouseTurn.countsTo(p, yaw, pitch);
+        MouseTurn.Turn turn = MouseTurn.by(p, c[0], c[1]);
+        MinecraftInvoker game = (MinecraftInvoker) mc;
+        game.invokePick(1.0F);
+        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
+        if (MouseTurn.travel(sentYaw, sentPitch, p.getYRot(), p.getXRot()) <= MAX_TURN
+            && mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() instanceof LivingEntity hit
+            && isTarget(hit, p) && eyeToBox(p.getEyePosition(), hit.getBoundingBox()) <= reach
+            && (hit == planned || fresh(hit))) {   // another mob in the way: only if a hit on it isn't wasted
+            // startAttack returns false after hitting an entity too, and the charge can't tell (it is already 0 the
+            // tick after the held item changes), so see whether the game sent the attack
+            int before = attacksSent;
+            game.invokeStartAttack();
+            if (attacksSent != before) {
+                apply(turn);
+                record(p, hit, w, k, canSweep, canCrit, found, mobs);
+                return true;
+            }
+        }
+        MouseTurn.undo(p, turn);   // nothing to hit there
+        game.invokePick(1.0F);
+        return false;
+    }
+
+    /** Whether a mob takes a full hit now: not hit by us in the last 10 ticks, and not hurt by anything else lately
+     *  (the client marks a full hit from any source with invulnerableTime 20). */
+    private static boolean fresh(LivingEntity e) {
+        Hit h = hits.get(e.getId());
+        return (h == null || tick - h.tick() >= SwingPlan.WINDOW) && e.invulnerableTime <= SwingPlan.WINDOW + 1;
+    }
+
+    /** Note a hit and what its sweep caught: when their windows began and the biggest hit in each. */
+    private static void record(LocalPlayer p, LivingEntity hit, SwingPlan.Weapon w, int k, boolean canSweep,
+                               boolean canCrit, List<LivingEntity> found, List<SwingPlan.Mob> mobs) {
+        float c = SwingPlan.charge(k, w.delay());
+        boolean crit = canCrit && c > 0.9F;
+        int i = found.indexOf(hit);
+        double bonus = i >= 0 ? mobs.get(i).bonus : WeaponSelect.bonus(p.getMainHandItem(), hit);
+        note(hit, SwingPlan.hitDamage(w, bonus, c, crit));
+        if (w.sword() && canSweep && c > 0.9F && !crit) {
+            for (int j = 0; j < found.size(); j++) {
+                LivingEntity o = found.get(j);
+                if (swept(p, hit, o)) note(o, SwingPlan.sweepDamage(w, mobs.get(j).bonus, c));
+            }
         }
     }
 
-    /** Attack the first of these the crosshair can be put on: a block in the way of one (tall grass, a cobweb)
-     *  stops the game's pick, so the next is tried rather than none. Returns the entity hit, or null. */
-    private static LivingEntity attackFirst(Minecraft mc, LocalPlayer p, List<LivingEntity> targets) {
-        for (LivingEntity t : targets) {
-            LivingEntity hit = attack(mc, p, t);
-            if (hit != null) return hit;
+    private static void note(LivingEntity e, double damage) {
+        Hit h = hits.get(e.getId());
+        if (h != null && tick - h.tick() < SwingPlan.WINDOW) {
+            if (damage > h.damage()) hits.put(e.getId(), new Hit(h.tick(), damage));   // the excess over the last
+        } else {
+            hits.put(e.getId(), new Hit(tick, damage));
+        }
+    }
+
+    /** Ticks until the mob's attack reaches you, from its distance and its speed toward you: for a creeper the 3
+     *  blocks its fuse starts at (and 0 once lit), for the rest its melee reach past its box. */
+    static double contact(LocalPlayer p, LivingEntity t) {
+        double gap;
+        if (t instanceof Creeper c) {
+            if (c.getSwellDir() > 0 || c.isIgnited()) return 0.0;
+            gap = Math.sqrt(p.distanceToSqr(t)) - CREEPER_SWELL;
+        } else {
+            AABB pb = p.getBoundingBox(), tb = t.getBoundingBox();
+            if (tb.minY >= pb.maxY || tb.maxY <= pb.minY) return Double.POSITIVE_INFINITY;   // its attack box doesn't reach up or down
+            double half = (pb.getXsize() + tb.getXsize()) / 2 + MOB_REACH;
+            gap = Math.max(Math.abs(t.getX() - p.getX()), Math.abs(t.getZ() - p.getZ())) - half;
+        }
+        if (gap <= 0) return 0.0;
+        double dx = t.getX() - p.getX(), dz = t.getZ() - p.getZ(), d = Math.sqrt(dx * dx + dz * dz);
+        if (d < 1e-6) return 0.0;
+        double vx = (t.getX() - t.xo) - (p.getX() - p.xo), vz = (t.getZ() - t.zo) - (p.getZ() - p.zo);
+        double closing = -(vx * dx + vz * dz) / d;
+        return closing > 1e-3 ? gap / closing : Double.POSITIVE_INFINITY;
+    }
+
+    /**
+     * A rotation that puts the crosshair on the mob within reach with nothing in the way (no block, and no other entity
+     * the game's pick would take first: ProjectileUtil.getEntityHitResult takes the nearest box along the ray, grown by
+     * its pick radius), turning as little as can be from the rotation now: aiming where the look ray would meet the
+     * mob's (slightly shrunken) box at its depth, else at the box point nearest the eye, its centre, the top of its
+     * head, or either side. Null if none of them reach it: in a packed crowd, the mobs behind the first row.
+     */
+    private static float[] aimAt(LocalPlayer p, Vec3 eye, Vec3 look, LivingEntity t, double reach, List<Entity> others) {
+        AABB bb = t.getBoundingBox();
+        AABB in = bb.deflate(Math.min(0.1, Math.min(bb.getXsize(), Math.min(bb.getYsize(), bb.getZsize())) * 0.25));
+        Vec3 c = bb.getCenter();
+        double depth = eye.distanceTo(c);
+        Vec3 onRay = eye.add(look.scale(depth));
+        Vec3 side = new Vec3(c.z - eye.z, 0, eye.x - c.x);   // across the line of sight
+        side = side.lengthSqr() < 1e-9 ? new Vec3(1, 0, 0) : side.normalize().scale(in.getXsize() / 2);
+        Vec3[] points = {clampInto(onRay, in), clampInto(eye, in), c, new Vec3(c.x, in.maxY, c.z),
+                         clampInto(c.add(side), in), clampInto(c.subtract(side), in)};
+        for (Vec3 q : points) {
+            Vec3 d = q.subtract(eye);
+            if (d.lengthSqr() < 1e-9) continue;
+            Vec3 dir = d.normalize();
+            if (!clear(p, eye, dir, t, reach, others)) continue;
+            float yaw = (float) Math.toDegrees(Math.atan2(-dir.x, dir.z));
+            float pitch = (float) Math.toDegrees(Math.atan2(-dir.y, Math.sqrt(dir.x * dir.x + dir.z * dir.z)));
+            return new float[]{p.getYRot() + Mth.wrapDegrees(yaw - p.getYRot()), pitch};
         }
         return null;
     }
 
-    /** Whether the game's keybind step will use an item for you this tick (Minecraft.handleKeybinds): a right-click
-     *  waiting, or right-click held with the delay between uses run out. */
-    private static boolean useClicked(Minecraft mc) {
-        KeyMapping use = mc.options.keyUse;
-        return ((KeyMappingAccessor) use).kine$getClickCount() > 0
-            || use.isDown() && ((MinecraftInvoker) mc).kine$getRightClickDelay() == 0;
+    /** Whether the game's pick along this direction from the eye takes this mob: its box within reach, no block and no
+     *  other entity (its box grown by its pick radius) nearer, and the eye not inside another's box. */
+    private static boolean clear(LocalPlayer p, Vec3 eye, Vec3 dir, LivingEntity t, double reach, List<Entity> others) {
+        Vec3 end = eye.add(dir.scale(reach));
+        Optional<Vec3> entry = t.getBoundingBox().clip(eye, end);
+        if (entry.isEmpty()) return false;   // beyond reach along this ray
+        double at = entry.get().distanceToSqr(eye);
+        BlockHitResult block = p.level().clip(new ClipContext(eye, entry.get(), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+        if (block.getType() != HitResult.Type.MISS && block.getLocation().distanceToSqr(eye) < at - 1.0e-6) return false;
+        for (Entity o : others) {
+            if (o == t) continue;
+            AABB ob = o.getBoundingBox().inflate(o.getPickRadius());
+            if (ob.contains(eye)) return false;
+            Optional<Vec3> oe = ob.clip(eye, end);
+            if (oe.isPresent() && oe.get().distanceToSqr(eye) < at - 1.0e-6) return false;
+        }
+        return true;
     }
 
-    /** Fresh targets in reach from which spamming beats waiting, for a weapon with this attack delay
-     *  (ticks to a full charge): more than 50 / delay. */
-    static int spamThreshold(float attackDelay) {
-        return (int) Math.floor(50.0 / attackDelay) + 1;
+    /**
+     * Where on the mob to aim a swing, turning in the way the rotation has been turning: the point of its box, at the
+     * aim's pitch, furthest that way within this tick's turn. Going round a crowd, each swing then ends as far on as
+     * it can, and the next mob is a shorter turn away (with the nearest point of each, mobs 30 degrees apart took two
+     * ticks each other time). The aim as given if that point isn't clear.
+     */
+    private static float[] lead(LocalPlayer p, Vec3 eye, LivingEntity t, double reach, List<Entity> others, float[] r) {
+        if (turnDir == 0) return r;
+        AABB bb = t.getBoundingBox();
+        AABB in = bb.deflate(Math.min(0.1, Math.min(bb.getXsize(), Math.min(bb.getYsize(), bb.getZsize())) * 0.25));
+        double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;   // the box's yaw from the eye, from r
+        for (double x : new double[]{in.minX, in.maxX})
+            for (double z : new double[]{in.minZ, in.maxZ}) {
+                double y = Mth.wrapDegrees(Math.toDegrees(Math.atan2(-(x - eye.x), z - eye.z)) - r[0]);
+                lo = Math.min(lo, y);
+                hi = Math.max(hi, y);
+            }
+        double dp = r[1] - sentPitch;
+        double maxDy = Math.sqrt(Math.max(0.0, TURN_BUDGET * TURN_BUDGET - dp * dp));
+        double fromSent = Mth.wrapDegrees(r[0] - sentYaw);
+        double a = Math.max(lo, -maxDy - fromSent), b = Math.min(hi, maxDy - fromSent);   // reachable and on the box
+        if (a > b) return r;
+        float yaw = (float) (r[0] + (turnDir > 0 ? b : a));
+        if (clear(p, eye, Vec3.directionFromRotation(r[1], yaw), t, reach, others)) return new float[]{yaw, r[1]};
+        return r;
     }
+
+    private static Vec3 clampInto(Vec3 v, AABB b) {
+        return new Vec3(Mth.clamp(v.x, b.minX, b.maxX), Mth.clamp(v.y, b.minY, b.maxY), Mth.clamp(v.z, b.minZ, b.maxZ));
+    }
+
+    // ---------------------------------------------------------------- targets
 
     /** Mobs only: hostiles always, neutral mobs only for a while after they hit you. */
     private static boolean isTarget(Entity e, LivingEntity player) {
         if (!(e instanceof Mob mob) || !mob.isAlive() || mob.isSpectator()) return false;
-        if (mob instanceof Enemy && !neutral(mob)) return true;
-        if (piglinHostile(mob, player)) return true;
+        if (mob instanceof Creaking c && c.isHeartBound()) return false;   // only flinches (Creaking.hurtServer)
         Integer until = angryUntil.get(mob.getId());
-        return until != null && until > tick;
+        if (until != null && until > tick) return true;
+        if (neutral(mob)) return piglinHostile(mob, player);
+        return mob instanceof Enemy;
     }
 
-    /** Mobs that leave the player alone until provoked, though some count as hostile (Enemy) in the game:
-     *  the NeutralMob ones (endermen, zombified piglins, wolves, bees, iron golems, polar bears) and
-     *  piglins, which ignore players wearing gold (see piglinHostile). Piglin brutes attack anyone and
-     *  stay hostile. */
-    private static boolean neutral(Mob mob) {
-        return mob instanceof NeutralMob || mob instanceof Piglin;
+    /** Mobs that leave the player alone until provoked, though some count as hostile (Enemy) in the game: the
+     *  NeutralMob ones (endermen, zombified piglins, wolves, bees, iron golems, polar bears), piglins (they ignore
+     *  players wearing gold, see piglinHostile), the warden (it goes for what it hears or smells; a hit would anger
+     *  it), and spiders and cave spiders where it is bright: at a light value of 0.5 and up they pick no target
+     *  (Spider.SpiderTargetGoal; one already chasing you may keep on, and is a target once it hits you). Piglin
+     *  brutes attack anyone and stay hostile. */
+    static boolean neutral(Mob mob) {
+        return mob instanceof NeutralMob || mob instanceof Piglin || mob instanceof Warden
+            || mob instanceof Spider s && s.getLightLevelDependentMagicValue() >= 0.5F;
     }
 
-    /** An adult piglin attacks a player who wears no gold armour (the game's own test), so it is a
-     *  target then, before it hits. Baby piglins never attack. */
+    /** An adult piglin attacks a player who wears no gold armour (the game's own test), so it is a target then,
+     *  before it hits. Baby piglins never attack. */
     private static boolean piglinHostile(Mob mob, LivingEntity player) {
         return mob instanceof Piglin piglin && !piglin.isBaby() && !PiglinAi.isWearingSafeArmor(player);
     }
@@ -247,80 +595,8 @@ public final class KillAura {
         lastHurtTime = p.hurtTime;
         if ((tick & 63) == 0) {   // prune now and then so the maps don't grow without bound
             angryUntil.values().removeIf(v -> v <= tick);
-            lastHit.values().removeIf(v -> v + HIT_REFRACTORY <= tick);
+            hits.values().removeIf(h -> h.tick() + 2 * SwingPlan.WINDOW <= tick);
         }
-    }
-
-    private static boolean refractory(Entity e) {
-        Integer t = lastHit.get(e.getId());
-        return t != null && tick - t < HIT_REFRACTORY;
-    }
-
-    /** Turn toward the target by whole mouse counts and attack what that rotation's crosshair is on, through
-     *  the game's own pick and startAttack, if it is a target in reach; else turn straight back, before the
-     *  rotation is sent. Returns the entity hit, or null. */
-    private static LivingEntity attack(Minecraft mc, LocalPlayer p, LivingEntity target) {
-        Vec3 eye = p.getEyePosition();
-        Vec3 aim = aimPoint(eye, target.getBoundingBox());
-        Vec3 d = aim.subtract(eye);
-        float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
-        float pitch = (float) Math.toDegrees(Math.atan2(-d.y, Math.sqrt(d.x * d.x + d.z * d.z)));
-        MouseTurn.Turn turn = MouseTurn.toward(p, yaw, pitch);
-        MinecraftInvoker game = (MinecraftInvoker) mc;
-        game.invokePick(1.0F);
-        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
-        if (mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() instanceof LivingEntity hit
-            && isTarget(hit, p) && eyeToBox(eye, hit.getBoundingBox()) <= reach) {
-            // startAttack returns false after hitting an entity too, and the charge can't tell (it is already 0 the
-            // tick after the held item changes), so see whether the game sent the attack
-            int sent = attacksSent;
-            game.invokeStartAttack();
-            if (attacksSent != sent) {
-                flick = turn;   // the attack went out with this turn: keep it for this tick's move packet
-                lastHit.put(hit.getId(), tick);
-                return hit;
-            }
-        }
-        MouseTurn.undo(p, turn);   // nothing to hit there: no turn goes out
-        game.invokePick(1.0F);
-        return null;
-    }
-
-    /** Undo this tick's turn once the player has sent it (VanillaActions, after the entities tick). */
-    public static void afterEntities(Minecraft mc) {
-        if (flick == MouseTurn.Turn.NONE || mc.player == null) { flick = MouseTurn.Turn.NONE; return; }
-        MouseTurn.undo(mc.player, flick);
-        flick = MouseTurn.Turn.NONE;
-        ((MinecraftInvoker) mc).invokePick(1.0F);
-    }
-
-    /** Where to aim: the point of the slightly shrunken box nearest the eye, so the crosshair ray enters the
-     *  box about as near as the box comes, and so within reach whenever the box is. */
-    private static Vec3 aimPoint(Vec3 eye, AABB bb) {
-        AABB in = bb.deflate(Math.min(0.1, Math.min(bb.getXsize(), Math.min(bb.getYsize(), bb.getZsize())) * 0.25));
-        return new Vec3(Mth.clamp(eye.x, in.minX, in.maxX), Mth.clamp(eye.y, in.minY, in.maxY), Mth.clamp(eye.z, in.minZ, in.maxZ));
-    }
-
-    /** The fresh target whose sweep catches the most others (at least one, else null). */
-    private static LivingEntity bestSweepTarget(LocalPlayer p, List<LivingEntity> targets) {
-        LivingEntity best = null;
-        int bestN = 0;
-        for (LivingEntity t : targets) {
-            if (refractory(t)) continue;
-            int n = 0;
-            for (LivingEntity o : targets) if (swept(p, t, o)) n++;
-            if (n > bestN) { bestN = n; best = t; }
-        }
-        return best;
-    }
-
-    /** Whether a full-charge sword hit now sweeps (Player.isSweepAttack): on the ground, not sprinting (a sprint
-     *  hit knocks back instead), and moving less than 2.5 times your speed, which the server reads from your last
-     *  move. */
-    private static boolean sweeps(LocalPlayer p) {
-        double dx = p.getX() - p.xo, dz = p.getZ() - p.zo;
-        double max = p.getSpeed() * 2.5;
-        return p.onGround() && !p.isSprinting() && dx * dx + dz * dz < max * max;
     }
 
     /** Whether a sweep around a hit on `hit` reaches `o` (Player.doSweepAttack): o's box meets the hit mob's box
@@ -337,14 +613,4 @@ public final class KillAura {
         double dz = Math.max(Math.max(bb.minZ - eye.z, 0.0), eye.z - bb.maxZ);
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
-
-    // Against outline shapes, as the game's crosshair pick (Entity.pick) is: tall grass, cobwebs and sugar cane
-    // have no collision but stop the pick.
-    private static boolean lineOfSight(LocalPlayer p, Vec3 eye, LivingEntity t) {
-        Vec3 aim = t.getBoundingBox().getCenter();
-        BlockHitResult hit = p.level().clip(new ClipContext(eye, aim, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
-        return hit.getType() == HitResult.Type.MISS
-            || hit.getLocation().distanceToSqr(eye) >= aim.distanceToSqr(eye) - 1.0e-3;
-    }
-
 }

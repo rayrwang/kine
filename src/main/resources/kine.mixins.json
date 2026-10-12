@@ -12,6 +12,7 @@
 		"KeyboardInputMixin",
 		"MultiPlayerGameModeMixin",
 		"KeyMappingAccessor",
+		"PlayerAccessor",
 		"FireworkRocketAccessor"
 	],
 	"injectors": {

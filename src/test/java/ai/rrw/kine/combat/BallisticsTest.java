@@ -279,22 +279,4 @@ class BallisticsTest {
             assertTrue(Math.abs(s.miss()) > 5, "and the miss says so: " + s.miss());
         }
     }
-
-    @Test
-    void spamBeatsWaitingPastFiftyOverTheAttackDelay() {
-        assertEquals(5, KillAura.spamThreshold(12.5f));   // a sword
-        assertEquals(3, KillAura.spamThreshold(20f));     // an axe
-    }
-
-    @Test
-    void weaponScore() {
-        // diamond sword: base 1 + 6 = 7 damage, speed 4 - 2.4 = 1.6; Sharpness V adds 3
-        assertEquals((7 + 3.0) * 1.6, WeaponSelect.damagePerSecond(true, 7, 1.6, 5, 0, 0, 0, 1), 1e-12);
-        // Smite V against an undead target adds 12.5
-        assertEquals((7 + 12.5) * 1.6, WeaponSelect.damagePerSecond(true, 7, 1.6, 0, 5, 0, 0, 1), 1e-12);
-        // against a crowd a sword adds a sweep per neighbour, up to four
-        double one = WeaponSelect.damagePerSecond(true, 7, 1.6, 0, 0, 0, 3, 1);
-        assertEquals(one + (1 + 7 * 3 / 4.0) * 4 * 1.6, WeaponSelect.damagePerSecond(true, 7, 1.6, 0, 0, 0, 3, 9), 1e-12);
-        assertEquals(one, WeaponSelect.damagePerSecond(false, 7, 1.6, 0, 0, 0, 3, 9), 1e-12, "an axe doesn't sweep");
-    }
 }

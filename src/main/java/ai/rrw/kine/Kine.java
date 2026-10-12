@@ -72,7 +72,6 @@ public class Kine implements ClientModInitializer {
         WaterClutch.register();
         AfkGuard.register();
         ProjectileTargeting.register();
-        KillAura.register();
         WeaponSelect.register();
         KineMenu.register();
     }

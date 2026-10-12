@@ -22,8 +22,8 @@ import net.minecraft.world.entity.player.Input;
  *       rotation's crosshair is on and this tick's move packet carries that rotation.</li>
  *   <li>Movement is pressed keys ({@link #adjustInput}), so the player moves by the game's own physics
  *       and the input packet shows the keys.</li>
- *   <li>A turn made only for an attack is undone once the rotation has been sent ({@link #afterEntities}),
- *       so the camera never shows it.</li>
+ *   <li>The kill aura's rotation is its own: turned to at the start of each tick and undone once the rotation has
+ *       been sent ({@link #afterEntities}), so the camera never shows it; it turns at most 30 degrees a tick.</li>
  *   <li>Inventory clicks run at the end of a tick, between ticks, each batch followed by the close packet
  *       a vanilla client sends when it closes its inventory. Where a feature asks for it, the tick before the
  *       clicks plays the inventory's opening (InventoryClicks.requestOpen): every key up, no action.</li>
@@ -52,6 +52,7 @@ public final class VanillaActions {
      *  with no screen up). */
     public static Input adjustInput(LocalPlayer p, Input keys) {
         if (Minecraft.getInstance().screen != null) { WaterClutch.sneakNotSent(); return keys; }
+        keys = KillAura.adjustInput(p, keys);   // first: your keys, for the rotation the aura sends; the rest press theirs for it
         keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);
