@@ -157,6 +157,9 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_FUEL =
         "Counts your rockets' burn in flight-duration-1 rockets, a green number with a rocket icon beside END "
         + "and RNG, and while one boosts you, a bar of how far through its burn it likely is.";
+    private static final String DESC_FULLBRIGHT =
+        "Lights everything at full brightness, as if every block had light level 15: see in caves and at night "
+        + "without torches. Only your view changes; mobs still spawn in the dark.";
     private static final String DESC_FOG_FOLDER =
         "Fog you can switch off: under water, in lava and powder snow, in the Nether, in rain, in a boss fight, and "
         + "the fade at your render distance. Click to list them on the right.";
@@ -211,6 +214,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Display ground speed", DESC_GROUND, Settings.DISPLAY_GROUND_SPEED),
         }),
         new Section(Settings.Section.VISIBILITY, new Opt[]{
+            Opt.of("Fullbright", DESC_FULLBRIGHT, Settings.FULLBRIGHT),
             Opt.folder("Fog", DESC_FOG_FOLDER,
                 Opt.of("No water fog", DESC_NO_WATER_FOG, Settings.NO_WATER_FOG),
                 Opt.of("No lava fog", DESC_NO_LAVA_FOG, Settings.NO_LAVA_FOG),

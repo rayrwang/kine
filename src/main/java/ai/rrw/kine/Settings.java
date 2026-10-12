@@ -48,7 +48,7 @@ public final class Settings {
 
     // Effective values, read by the features.
     public static boolean displayMobHealths, displayMobNames, displayMiningProgress,
-        noWaterFog, noLavaFog, noPowderSnowFog, noNetherFog, noRainFog, noBossFog, noDistanceFog,
+        fullbright, noWaterFog, noLavaFog, noPowderSnowFog, noNetherFog, noRainFog, noBossFog, noDistanceFog,
         noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
         autopilot, takeoff, landing, navigation, terrainAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, afkDamageProtection,
@@ -119,6 +119,7 @@ public final class Settings {
     public static final Option DISPLAY_SPEED              = mode("displaySpeed", HUD, ELYTRA, v -> displaySpeed = v);
     public static final Option DISPLAY_GROUND_SPEED       = mode("displayGroundSpeed", HUD, ELYTRA, v -> displayGroundSpeed = v);
 
+    public static final Option FULLBRIGHT                 = toggle("fullbright", VISIBILITY, false, v -> fullbright = v);
     public static final Option NO_WATER_FOG               = toggle("noWaterFog", VISIBILITY, false, v -> noWaterFog = v);
     public static final Option NO_LAVA_FOG                = toggle("noLavaFog", VISIBILITY, false, v -> noLavaFog = v);
     public static final Option NO_POWDER_SNOW_FOG         = toggle("noPowderSnowFog", VISIBILITY, false, v -> noPowderSnowFog = v);
