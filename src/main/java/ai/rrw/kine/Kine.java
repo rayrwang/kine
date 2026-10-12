@@ -9,6 +9,7 @@ import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.PathPrediction;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.AfkGuard;
+import ai.rrw.kine.combat.AutoTotem;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.WaterClutch;
@@ -70,6 +71,7 @@ public class Kine implements ClientModInitializer {
         ElytraGuard.register();
         InventoryClicks.register();
         WaterClutch.register();
+        AutoTotem.register();             // after the clutch: each asks for the inventory at the end of a tick, in this order
         AfkGuard.register();
         ProjectileTargeting.register();
         WeaponSelect.register();

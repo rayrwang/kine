@@ -51,7 +51,7 @@ public final class Settings {
         fullbright, noWaterFog, noLavaFog, noPowderSnowFog, noNetherFog, noRainFog, noBossFog, noDistanceFog,
         noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
         autopilot, takeoff, landing, navigation, terrainAvoidance,
-        elytraDuraFailsafe, fallPrevention, waterBucketClutch, afkDamageProtection,
+        elytraDuraFailsafe, fallPrevention, waterBucketClutch, autoTotem, afkDamageProtection,
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
@@ -154,6 +154,7 @@ public final class Settings {
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);
     public static final Option FALL_PREVENTION            = toggle("fallPrevention", SAFETY, true, v -> fallPrevention = v);
     public static final Option WATER_BUCKET_CLUTCH        = toggle("waterBucketClutch", SAFETY, true, v -> waterBucketClutch = v);
+    public static final Option AUTO_TOTEM                 = toggle("autoTotem", SAFETY, false, v -> autoTotem = v);
     public static final Option AFK_DAMAGE_PROTECTION      = toggle("afkDamageProtection", SAFETY, true, v -> afkDamageProtection = v);
 
     public static final Option PROJECTILE_RETICLE         = toggle("projectileReticle", COMBAT, true, v -> projectileReticle = v);

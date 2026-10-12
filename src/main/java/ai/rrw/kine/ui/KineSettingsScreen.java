@@ -157,6 +157,9 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_FUEL =
         "Counts your rockets' burn in flight-duration-1 rockets, a green number with a rocket icon beside END "
         + "and RNG, and while one boosts you, a bar of how far through its burn it likely is.";
+    private static final String DESC_TOTEM =
+        "Keeps a totem of undying in your offhand: when it holds none, one moves there from your inventory, through "
+        + "the inventory as a player would (your keys let go for a tick). Whatever was in the offhand takes its place.";
     private static final String DESC_FULLBRIGHT =
         "Lights everything at full brightness, as if every block had light level 15: see in caves and at night "
         + "without torches. Only your view changes; mobs still spawn in the dark.";
@@ -253,6 +256,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, Settings.ELYTRA_DURA_FAILSAFE),
             Opt.of("Fall prevention", DESC_FALL, Settings.FALL_PREVENTION),
             Opt.of("Water bucket clutch", DESC_CLUTCH, Settings.WATER_BUCKET_CLUTCH),
+            Opt.of("Auto totem", DESC_TOTEM, Settings.AUTO_TOTEM),
             Opt.of("AFK damage protection", DESC_AFK, Settings.AFK_DAMAGE_PROTECTION),
         }),
         // ordered by ban risk, the riskiest last: client-side only, then movement keys, then fighting
@@ -329,7 +333,7 @@ public class KineSettingsScreen extends Screen {
         int paneX = rowX + colW + MARGIN;
         int paneW = Math.min(240, this.width - paneX - MARGIN);
         int py = descTextTop + this.font.lineHeight + 6;
-        if (openFolder != null && paneW >= 80) {
+        if (openFolder != null && openFolder.isFolder() && paneW >= 80) {
             // rows shrink (down to 16 high) on a short screen so at least four lines of description fit below them
             int n = openFolder.children().length;
             int room = this.height - 8 - py - 4 * (this.font.lineHeight + 2);
