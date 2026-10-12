@@ -20,6 +20,7 @@ import ai.rrw.kine.hud.FlightPathVector;
 import ai.rrw.kine.hud.FlightProfile;
 import ai.rrw.kine.hud.MiningHud;
 import ai.rrw.kine.hud.MobHealthHud;
+import ai.rrw.kine.hud.NavBeam;
 import ai.rrw.kine.hud.NavHud;
 import ai.rrw.kine.hud.RadioAltimeter;
 import ai.rrw.kine.hud.RangeEndurance;
@@ -55,7 +56,9 @@ public class Kine implements ClientModInitializer {
         Takeoff.register();               // before the rails, which draw its path
         Landing.register();
         PathPrediction.register();
+        NavBeam.registerFaint();          // before the rails, which draw over its faint copy
         FlightPathRails.register();
+        NavBeam.register();               // after the rails, so they hide it where they are nearer
         FlightPathVector.register();
         FlightProfile.register();
         RadioAltimeter.register();

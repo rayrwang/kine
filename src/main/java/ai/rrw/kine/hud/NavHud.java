@@ -14,25 +14,18 @@ import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.util.Smoothing;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
-import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix4f;
-import org.joml.Vector4f;
 
 /**
  * The navigation display: the heading arc across the top, the annunciator rows above the crosshair
  * (the nav block with HDG or COORD and DIST and ETA, the vertical mode on its left, AP on its right),
- * the insufficient-durability warning, and the beam over a managed target. Reads Nav, FlightDirector
+ * and the insufficient-durability warning (the beam over a managed target is drawn in the world, NavBeam). Reads Nav, FlightDirector
  * and RangeEndurance; changes nothing but its own ETA smoothing.
  */
 public final class NavHud {
@@ -41,11 +34,7 @@ public final class NavHud {
     private static final double ARC_HALF_DEG   = 24.0;       // the arc spans this far each side of the apex (circle deg)
     private static final double ARC_VIS_HDG    = 60.0;       // compass degrees shown each side of the current heading
     private static final int    ARC_BOX_TOP    = 4;          // gap from the top of the screen to the heading box
-    private static final int    COLUMN_BODY    = 0x4044FF44; // translucent green beam
-    private static final int    COLUMN_CORE    = 0x9044FF44; // brighter centre line
     private static final double ETA_TC         = 12.0;   // time constant (s) that smooths the porpoise wobble out of the ETA
-    private static final float  BEAM_NEAR_W    = 0.05f;  // the beam is cut where it passes this close in front of the camera
-    private static final float  BEAM_MARGIN    = 2.0f;   // and this many half-screens from the centre, well off screen
 
     private static double etaShown = Double.NaN;  // smoothed ETA on display (s)
     private static long   etaNanos = 0L;          // wall-clock time of the last ETA update
@@ -77,7 +66,6 @@ public final class NavHud {
 
         Nav.Mode mode = Nav.mode();
         boolean landing = Nav.landing();
-        if (readouts && mode == Nav.Mode.MANAGED && Nav.hasTarget()) drawTargetColumn(g, mc, W, H);
 
         // the centred nav block shows unless nav is off or the too-low warning has the slot
         boolean navCenter = readouts && mode != Nav.Mode.OFF && !(FlightDirector.isTooLow() && !landing);
@@ -204,85 +192,6 @@ public final class NavHud {
         int x = HudLayout.modeRightEdge(cx, halfCenter) - blockW;
         g.text(mc.font, l1, x + (blockW - mc.font.width(l1)) / 2, lineY, col, true);
         g.text(mc.font, l2, x + (blockW - mc.font.width(l2)) / 2, etaY, col, true);
-    }
-
-    /** A beam over the target column from the ground to the top of the build height, and the landing block's top
-     *  face outlined in green, projected to the screen and drawn as a HUD element, so they show through terrain
-     *  like Baritone's goal beam. The ground is the landing spot's surface, or else the column's top where the
-     *  client has its chunk; with neither, the beam runs from the bottom of the world and no face is drawn. Only
-     *  the part in view is drawn. */
-    private static void drawTargetColumn(GuiGraphicsExtractor g, Minecraft mc, int W, int H) {
-        if (mc.level == null) return;
-        // while landing on a known spot (a safe column found near the target, or the aimed one), the beam stands on it
-        boolean spot = Nav.hasSpot();
-        int bx = spot ? Mth.floor(Nav.spotX()) : Nav.targetX(), bz = spot ? Mth.floor(Nav.spotZ()) : Nav.targetZ();
-        double ground = spot ? Nav.spotTop() : columnTop(mc.level, bx, bz);
-        double baseY = Double.isNaN(ground) ? mc.level.getMinY() : ground, topY = mc.level.getMaxY() + 1;
-        Camera cam = mc.gameRenderer.getMainCamera();
-        Matrix4f vp = cam.getViewRotationProjectionMatrix(new Matrix4f());
-        Vec3 c = cam.position();
-        double wx = bx + 0.5, wz = bz + 0.5;
-        if (!Double.isNaN(ground)) drawTopFace(g, vp, c, bx, ground, bz, W, H);
-
-        Vector4f[] seg = clipSegment(ScreenProjection.clip(vp, c, wx, baseY, wz), ScreenProjection.clip(vp, c, wx, topY, wz));
-        if (seg == null) return;   // no part of the beam in view
-        float[] base = ScreenProjection.toScreen(seg[0], W, H);
-        float[] top  = ScreenProjection.toScreen(seg[1], W, H);
-
-        double ddx = wx - c.x, ddz = wz - c.z;
-        double dist = Math.sqrt(ddx * ddx + ddz * ddz);
-        int width = (int) Math.max(2, Math.min(16, 600.0 / Math.max(1.0, dist)));
-        HudDraw.alongSegment(g, base[0], base[1], top[0], top[1], 1f, hl -> {
-            g.fill(-hl, -width / 2, hl, width / 2, COLUMN_BODY);
-            g.fill(-hl, -1, hl, 1, COLUMN_CORE);
-        });
-    }
-
-    // The top of a column where the client has its chunk (the MOTION_BLOCKING heightmap, as the landing spot search
-    // reads it), else NaN.
-    private static double columnTop(ClientLevel level, int x, int z) {
-        if (!level.hasChunkAt(new BlockPos(x, level.getMinY(), z))) return Double.NaN;
-        return level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
-    }
-
-    // The block's top face at height y, its four edges in green.
-    private static void drawTopFace(GuiGraphicsExtractor g, Matrix4f vp, Vec3 c, int x, double y, int z, int W, int H) {
-        double[][] k = {{x, z}, {x + 1, z}, {x + 1, z + 1}, {x, z + 1}};
-        for (int i = 0; i < 4; i++) {
-            double[] a = k[i], b = k[(i + 1) % 4];
-            Vector4f[] seg = clipSegment(ScreenProjection.clip(vp, c, a[0], y, a[1]), ScreenProjection.clip(vp, c, b[0], y, b[1]));
-            if (seg == null) continue;
-            float[] p0 = ScreenProjection.toScreen(seg[0], W, H), p1 = ScreenProjection.toScreen(seg[1], W, H);
-            HudDraw.alongSegment(g, p0[0], p0[1], p1[0], p1[1], 0f, hl -> g.fill(-hl - 1, -1, hl + 1, 1, HudColors.GREEN));
-        }
-    }
-
-    /**
-     * The part of the segment a-b (clip space, before the perspective divide) in front of the camera and within
-     * BEAM_MARGIN half-screens of the centre, as its two ends in clip space, or null if no part is. Cut here, a
-     * beam with one end behind the camera still shows (close to the target and in the landing spiral the top end
-     * is), and its ends stay at sane pixel coordinates.
-     */
-    static Vector4f[] clipSegment(Vector4f a, Vector4f b) {
-        float t0 = 0f, t1 = 1f;
-        for (int i = 0; i < 5; i++) {   // each plane as a linear function of the point, at least 0 inside
-            float da = inside(i, a), db = inside(i, b);
-            if (da < 0 && db < 0) return null;
-            if (da < 0) t0 = Math.max(t0, da / (da - db));
-            else if (db < 0) t1 = Math.min(t1, da / (da - db));
-        }
-        if (t0 > t1) return null;
-        return new Vector4f[]{ new Vector4f(a).lerp(b, t0), new Vector4f(a).lerp(b, t1) };
-    }
-
-    private static float inside(int plane, Vector4f v) {
-        return switch (plane) {
-            case 0 -> v.w - BEAM_NEAR_W;
-            case 1 -> BEAM_MARGIN * v.w + v.x;
-            case 2 -> BEAM_MARGIN * v.w - v.x;
-            case 3 -> BEAM_MARGIN * v.w + v.y;
-            default -> BEAM_MARGIN * v.w - v.y;
-        };
     }
 
     // While circling over the destination: HOLDING, and for a hold till day when it will land: the time until surface
