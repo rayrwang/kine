@@ -121,4 +121,22 @@ class MouseTurnTest {
         assertEquals(40.0 / 90.0, r[1] / r[0], 1e-5);
         assertEquals(Math.hypot(20, 5), MouseTurn.travel(355, 0, 15, 5), 1e-9);
     }
+
+    @Test
+    void wholeTurnsKeepTheYawSentContinuous() {
+        assertEquals(0f, MouseTurn.wholeTurns(10f));
+        assertEquals(0f, MouseTurn.wholeTurns(-179.9f));
+        assertEquals(360f, MouseTurn.wholeTurns(182.25f));
+        assertEquals(-360f, MouseTurn.wholeTurns(-200f));
+        assertEquals(720f, MouseTurn.wholeTurns(890f));
+        assertEquals(1080f, MouseTurn.wholeTurns(900f));   // Mth.wrapDegrees maps to [-180, 180): 900 = 1080 - 180
+        // The kill aura round a crowd, against Grim on a local server (2026-10-12): the rotation sent 182.25 off a view
+        // at 0. Held as 182.25 - 360 off a view moved by +360, the next tick's 29.55 further sends 211.80, a turn of
+        // 29.55; the offset alone wrapped sent -148.20, a raw jump of 330.45 (Grim's AimModulo360).
+        float view = 0f, applied = 182.25f;
+        float whole = MouseTurn.wholeTurns(applied);
+        float nextSent = (view + whole) + (applied - whole) + 29.55f;
+        assertEquals(211.8f, nextSent, 1e-3);
+        assertEquals(29.55f, nextSent - (view + applied), 1e-3);
+    }
 }

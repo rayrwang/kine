@@ -12,7 +12,7 @@
 
 Minecraft elytra autopilot from takeoff to landing, aimbot and kill aura, safety features, and HUD displays.
 
-This mod only uses vanilla legal mechanics, the only "cheating" is having a computer instead of a monkey at the controls.
+This mod only uses vanilla legal mechanics, the only "cheating" is having a computer instead of a monkey at the controls (verified against [Grim](https://github.com/GrimAnticheat/Grim)).
 
 <p align="center">
 	<a href="https://github.com/rayrwang/kine/releases">Download the Mod</a>

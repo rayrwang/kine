@@ -185,12 +185,27 @@ public final class KillAura {
         if (appliedYaw == 0f && appliedPitch == 0f) { heldX = heldY = 0; return; }
         double deg = MouseTurn.sens(mc, p) * 0.15;
         MouseTurn.undo(p, new MouseTurn.Turn(0, 0, appliedYaw, appliedPitch));
-        // held for the next tick within half a turn of the view: whole turns round a crowd would otherwise pile up
-        // (the server wraps the yaw, so a turn of 360 is no turn to it)
-        heldX = (int) Math.round(Mth.wrapDegrees(appliedYaw) / deg);
+        // Held for the next tick within half a turn of the view, so whole turns round a crowd don't pile up. The whole
+        // turns taken off the offset go onto the view's own yaw (the same direction, so nothing on screen moves), so
+        // the yaw sent next tick goes on from this one's. Was: taken off the offset alone ("the server wraps the yaw,
+        // so a turn of 360 is no turn to it"), so the yaw sent jumped by 360 each time the offset passed half a turn;
+        // a vanilla client's yaw only moves by its mouse turns, and an anticheat reads the raw yaw: against Grim
+        // 2.3.74 on a local Paper 26.1.2 server (2026-10-12) each such jump was an AimModulo360 flag.
+        float whole = MouseTurn.wholeTurns(appliedYaw);
+        if (whole != 0f) shiftYaw(p, whole);
+        heldX = (int) Math.round((appliedYaw - whole) / deg);
         heldY = (int) Math.round(appliedPitch / deg);
         appliedYaw = appliedPitch = 0f;
         ((MinecraftInvoker) mc).invokePick(1.0F);
+    }
+
+    /** Every yaw the client keeps for the player moved by whole turns: the same direction, drawn the same. */
+    private static void shiftYaw(LocalPlayer p, float d) {
+        p.setYRot(p.getYRot() + d);
+        p.yRotO += d;
+        p.yHeadRot += d; p.yHeadRotO += d;
+        p.yBodyRot += d; p.yBodyRotO += d;
+        p.yBob += d; p.yBobO += d;
     }
 
     private static void apply(MouseTurn.Turn t) {

@@ -85,6 +85,11 @@ public final class MouseTurn {
         return new float[]{fromYaw + (float) (dy * f), fromPitch + (float) (dp * f)};
     }
 
+    /** The whole turns (a multiple of 360 degrees) that Mth.wrapDegrees takes off a yaw offset beyond half a turn. */
+    public static float wholeTurns(float yaw) {
+        return Math.round((yaw - Mth.wrapDegrees(yaw)) / 360.0F) * 360.0F;
+    }
+
     /** The whole counts nearest a yaw turn of dYaw degrees, at deg degrees a count. */
     static int yawCounts(double dYaw, double deg) {
         return (int) Math.round(dYaw / deg);
