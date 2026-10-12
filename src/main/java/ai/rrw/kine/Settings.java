@@ -39,9 +39,10 @@ public final class Settings {
         Section(String title) { this.title = title; }
     }
 
-    /** When a display shows: never, only while wearing an elytra (or gliding), or always. */
+    /** When a display shows: never, only in flight (gliding, or during a rocket takeoff), only while wearing an elytra
+     *  (or gliding), or always. Saved by key, so adding a mode doesn't change what a saved file means. */
     public enum Show {
-        OFF("OFF", "off"), ELYTRA("ELYTRA ONLY", "elytra"), ALWAYS("ALWAYS", "always");
+        OFF("OFF", "off"), FLIGHT("IN FLIGHT", "flight"), ELYTRA("ELYTRA ONLY", "elytra"), ALWAYS("ALWAYS", "always");
         public final String label;
         final String key;
         Show(String label, String key) { this.label = label; this.key = key; }
@@ -62,7 +63,13 @@ public final class Settings {
 
     /** Whether a display set to this choice shows now. */
     public static boolean shows(Show s) {
-        return s == Show.ALWAYS || s == Show.ELYTRA && wearingElytra();
+        return s == Show.ALWAYS || s == Show.ELYTRA && wearingElytra() || s == Show.FLIGHT && inFlight();
+    }
+
+    /** Gliding, or a rocket takeoff under way (its ground part included, so its bars show from the click). */
+    public static boolean inFlight() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        return p != null && (p.isFallFlying() || ai.rrw.kine.autoflight.Takeoff.active());
     }
 
     /** Wearing something to glide with (an elytra in the chest slot), or gliding now. */
@@ -93,7 +100,7 @@ public final class Settings {
 
         public int value() { return value; }
         public String label() { return labels == null ? String.valueOf(value) : labels[value]; }
-        public boolean isMode() { return labels != null && labels.length == 3; }
+        public boolean isMode() { return labels == MODES; }   // the display modes (not any 3 or 4 choices)
         public boolean isLevel() { return labels == null; }
         public int max() { return max; }
         /** Step to the next choice, apply and save. */
@@ -104,7 +111,7 @@ public final class Settings {
     }
 
     private static final String[] ON_OFF = {"OFF", "ON"};
-    private static final String[] MODES = {Show.OFF.label, Show.ELYTRA.label, Show.ALWAYS.label};
+    private static final String[] MODES = {Show.OFF.label, Show.FLIGHT.label, Show.ELYTRA.label, Show.ALWAYS.label};
 
     private static final List<Option> TABLE = new ArrayList<>();
     /** Every setting, in the order kine.json lists them. */
@@ -134,8 +141,8 @@ public final class Settings {
     public static final Option DISPLAY_MOB_HEALTHS        = toggle("displayMobHealths", HUD, true, v -> displayMobHealths = v);
     public static final Option DISPLAY_MOB_NAMES          = toggle("displayMobNames", HUD, false, v -> displayMobNames = v);
     public static final Option DISPLAY_MINING_PROGRESS    = toggle("displayMiningProgress", HUD, true, v -> displayMiningProgress = v);
-    public static final Option DISPLAY_SPEED              = mode("displaySpeed", HUD, ELYTRA, v -> displaySpeed = v);
-    public static final Option DISPLAY_GROUND_SPEED       = mode("displayGroundSpeed", HUD, ELYTRA, v -> displayGroundSpeed = v);
+    public static final Option DISPLAY_SPEED              = mode("displaySpeed", HUD, Show.FLIGHT, v -> displaySpeed = v);
+    public static final Option DISPLAY_GROUND_SPEED       = mode("displayGroundSpeed", HUD, Show.FLIGHT, v -> displayGroundSpeed = v);
 
     public static final Option FULLBRIGHT                 = toggle("fullbright", VISIBILITY, false, v -> fullbright = v);
     public static final Option NO_WATER_FOG               = toggle("noWaterFog", VISIBILITY, false, v -> noWaterFog = v);
@@ -153,16 +160,16 @@ public final class Settings {
     public static final Option NO_FROST_OVERLAY           = toggle("noFrostOverlay", VISIBILITY, false, v -> noFrostOverlay = v);
     public static final Option NO_PORTAL_OVERLAY          = toggle("noPortalOverlay", VISIBILITY, false, v -> noPortalOverlay = v);
 
-    public static final Option DISPLAY_HEADING_ARC        = mode("displayHeadingArc", FLIGHT, ELYTRA, v -> displayHeadingArc = v);
-    public static final Option DISPLAY_ALTITUDE           = mode("displayAltitude", FLIGHT, ELYTRA, v -> displayAltitude = v);
-    public static final Option DISPLAY_HEIGHT_ABOVE_GROUND = mode("displayHeightAboveGround", FLIGHT, ELYTRA, v -> displayHeightAboveGround = v);
-    public static final Option DISPLAY_NAV_READOUTS       = mode("displayNavReadouts", FLIGHT, ELYTRA, v -> displayNavReadouts = v);
-    public static final Option DISPLAY_FLIGHT_DIRECTORS   = mode("displayFlightDirectors", FLIGHT, ELYTRA, v -> displayFlightDirectors = v);
+    public static final Option DISPLAY_HEADING_ARC        = mode("displayHeadingArc", FLIGHT, Show.FLIGHT, v -> displayHeadingArc = v);
+    public static final Option DISPLAY_ALTITUDE           = mode("displayAltitude", FLIGHT, Show.FLIGHT, v -> displayAltitude = v);
+    public static final Option DISPLAY_HEIGHT_ABOVE_GROUND = mode("displayHeightAboveGround", FLIGHT, Show.FLIGHT, v -> displayHeightAboveGround = v);
+    public static final Option DISPLAY_NAV_READOUTS       = mode("displayNavReadouts", FLIGHT, Show.FLIGHT, v -> displayNavReadouts = v);
+    public static final Option DISPLAY_FLIGHT_DIRECTORS   = mode("displayFlightDirectors", FLIGHT, Show.FLIGHT, v -> displayFlightDirectors = v);
     public static final Option DISPLAY_FLIGHT_PATH_VECTOR = mode("displayFlightPathVector", FLIGHT, Show.OFF, v -> displayFlightPathVector = v);
-    public static final Option DISPLAY_FLIGHT_PROFILE     = mode("displayFlightProfile", FLIGHT, ELYTRA, v -> displayFlightProfile = v);
+    public static final Option DISPLAY_FLIGHT_PROFILE     = mode("displayFlightProfile", FLIGHT, Show.FLIGHT, v -> displayFlightProfile = v);
     public static final Option DISPLAY_RANGE_ENDURANCE    = mode("displayRangeEndurance", FLIGHT, ELYTRA, v -> displayRangeEndurance = v);
     public static final Option DISPLAY_FIREWORK_FUEL      = mode("displayFireworkFuel", FLIGHT, ELYTRA, v -> displayFireworkFuel = v);
-    public static final Option FLIGHT_PATH_RAILS          = mode("flightRibbon", FLIGHT, ELYTRA, v -> flightRibbon = v);
+    public static final Option FLIGHT_PATH_RAILS          = mode("flightRibbon", FLIGHT, Show.FLIGHT, v -> flightRibbon = v);
     public static final Option AUTOPILOT                  = toggle("autopilot", FLIGHT, true, v -> autopilot = v);
     public static final Option TAKEOFF                    = toggle("takeoff", FLIGHT, true, v -> takeoff = v);
     public static final Option LANDING                    = toggle("landing", FLIGHT, true, v -> landing = v);
@@ -209,7 +216,8 @@ public final class Settings {
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("kine.json");
 
     /** Read kine.json; a missing key keeps its default, and a malformed file changes nothing. A display saved
-     *  by an older version as true reads as its default, or elytra only if its default is off; false as off. */
+     *  by an older version as true reads as its default, or elytra only if its default is off; false as off. Modes
+     *  are read by key ("off", "flight", "elytra", "always"), so a mode added later leaves saved files' meaning. */
     public static void load() {
         try {
             if (!Files.exists(FILE)) { save(); return; }
@@ -222,7 +230,7 @@ public final class Settings {
                 if (opt.isLevel()) {
                     if (v.isNumber()) opt.set(v.getAsInt());
                 } else if (opt.isMode()) {
-                    if (v.isBoolean()) opt.set(v.getAsBoolean() ? Math.max(opt.defaultValue, Show.ELYTRA.ordinal()) : 0);
+                    if (v.isBoolean()) opt.set(!v.getAsBoolean() ? 0 : opt.defaultValue == 0 ? Show.ELYTRA.ordinal() : opt.defaultValue);
                     else for (Show s : Show.values()) if (s.key.equals(v.getAsString())) opt.set(s.ordinal());
                 } else if (v.isBoolean()) {
                     opt.set(v.getAsBoolean() ? 1 : 0);

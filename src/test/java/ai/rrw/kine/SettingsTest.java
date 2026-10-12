@@ -46,8 +46,26 @@ class SettingsTest {
         assertTrue(Files.exists(file));
         String saved = Files.readString(file);
         assertTrue(saved.contains("\"terrainAvoidance\": true"), saved);
-        assertTrue(saved.contains("\"displaySpeed\": \"elytra\""), saved);
+        assertTrue(saved.contains("\"displaySpeed\": \"flight\""), saved);
         assertTrue(saved.contains("\"autoAim\": false"), saved);
+    }
+
+    @Test
+    void inFlightMode() throws Exception {
+        // every display defaults to in flight but the firework count and range and endurance, elytra only (RW); the
+        // flight path vector stays off; a saved "flight" reads as in flight, an old true as the display's default
+        load("""
+            {"displayRangeEndurance": "flight", "displayFlightDirectors": true, "displayAltitude": "elytra"}
+            """);
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_RANGE_ENDURANCE.value());
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_FLIGHT_DIRECTORS.value());
+        assertEquals(Show.ELYTRA.ordinal(), Settings.DISPLAY_ALTITUDE.value());
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_HEADING_ARC.value());
+        assertEquals(Show.FLIGHT.ordinal(), Settings.FLIGHT_PATH_RAILS.value());
+        assertEquals(Show.OFF.ordinal(), Settings.DISPLAY_FLIGHT_PATH_VECTOR.value());
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_SPEED.value());
+        assertEquals(Show.ELYTRA.ordinal(), Settings.DISPLAY_FIREWORK_FUEL.value());
+        assertEquals(Show.FLIGHT, Settings.displayRangeEndurance);
     }
 
     @Test
@@ -57,13 +75,13 @@ class SettingsTest {
         load("""
             {"displaySpeed": true, "displayFlightPathVector": true, "displayAltitude": false, "displayHeadingArc": "always"}
             """);
-        assertEquals(Show.ELYTRA.ordinal(), Settings.DISPLAY_SPEED.value());               // default elytra only
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_SPEED.value());               // default in flight
         assertEquals(Show.ELYTRA.ordinal(), Settings.DISPLAY_FLIGHT_PATH_VECTOR.value());  // default off
         assertEquals(Show.OFF.ordinal(), Settings.DISPLAY_ALTITUDE.value());
         assertEquals(Show.ALWAYS.ordinal(), Settings.DISPLAY_HEADING_ARC.value());         // today's format
         assertEquals(Show.ALWAYS, Settings.displayHeadingArc);
         // keys the file doesn't have keep their defaults
-        assertEquals(Show.ELYTRA.ordinal(), Settings.DISPLAY_GROUND_SPEED.value());
+        assertEquals(Show.FLIGHT.ordinal(), Settings.DISPLAY_GROUND_SPEED.value());
         assertEquals(1, Settings.TERRAIN_AVOIDANCE.value());
     }
 

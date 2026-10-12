@@ -17,7 +17,7 @@ import java.util.function.IntFunction;
 
 /**
  * Kine's settings (K). A switch for the whole mod at the top, one on each section's header, and a button per
- * feature: on/off, or for the elytra, speed and altitude displays off, elytra only or always, or a slider. A feature
+ * feature: on/off, or for the elytra, speed and altitude displays off, in flight, elytra only or always, or a slider. A feature
  * whose section or the whole mod is switched off greys out and keeps its own setting, as does one that needs
  * another feature switched on. Hovering a row shows its description on the right. A folder row (the Visibility
  * section's) lists its settings in the right pane when clicked, and closes when clicked again.
@@ -221,8 +221,8 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_SECTION =
         "Switches every feature in this section off at once, and back on, keeping each one's own setting.";
     private static final String HINT =
-        "Hover an option for details. ELYTRA ONLY shows a display only while you wear an elytra; ALWAYS "
-        + "shows it everywhere.";
+        "Hover an option for details. IN FLIGHT shows a display only while you glide or take off; ELYTRA ONLY "
+        + "while you wear an elytra; ALWAYS everywhere.";
 
 
     private static final Section[] SECTIONS = {
