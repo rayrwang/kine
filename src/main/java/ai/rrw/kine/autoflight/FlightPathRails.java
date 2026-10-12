@@ -21,8 +21,8 @@ import org.joml.Matrix4f;
  * height), since the gliding pose lowers the eye. The path starts a few blocks behind the aircraft (a
  * straight extrapolation at the current slope, so the rails pass under you). Points are stored relative
  * to the aircraft and re-anchored to the interpolated position every frame, so they move smoothly
- * between ticks. Drawn while engaged, and for a rocket takeoff, offered or flying, along its planned path
- * (straight up from where you stand, then the lean and the cruise).
+ * between ticks. Drawn while engaged, and during a rocket takeoff (not while it is only offered on the ground, RW)
+ * along its planned path (straight up from where you stand, then the lean and the cruise).
  */
 public final class FlightPathRails {
     private FlightPathRails() {}
@@ -51,8 +51,9 @@ public final class FlightPathRails {
 
     private static void tick(Minecraft mc) {
         count = 0;
-        // a rocket takeoff, offered or flying: its planned path, which starts straight up
-        if (Settings.shows(Settings.flightRibbon) && Takeoff.pathCount() > 1) {
+        // a rocket takeoff in progress (not while only offered on the ground, RW): its planned path, which starts
+        // straight up
+        if (Settings.shows(Settings.flightRibbon) && Takeoff.active() && Takeoff.pathCount() > 1) {
             double yr = Math.toRadians(Takeoff.heading());
             headX = -Math.sin(yr); headZ = Math.cos(yr);
             int n = 0;
