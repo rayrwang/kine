@@ -330,6 +330,7 @@ public final class Walk {
     /** Whether you press a movement key yourself: W, A, S, D, jump as held; sneak and sprint as physical presses
      *  (with toggle sneak or toggle sprint the game's own state stays on after you let go). */
     static boolean yourMovement(Minecraft mc) {
+        if (ai.rrw.kine.view.Freecam.active()) return false;   // in freecam your keys move the camera
         var o = mc.options;
         if (o.keyUp.isDown() || o.keyDown.isDown() || o.keyLeft.isDown() || o.keyRight.isDown() || o.keyJump.isDown()) return true;
         return physical(mc, o.keyShift, o.toggleCrouch().get()) || physical(mc, o.keySprint, o.toggleSprint().get());

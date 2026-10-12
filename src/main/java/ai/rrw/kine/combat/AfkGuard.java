@@ -52,7 +52,8 @@ public class AfkGuard {
         // idle tracking: any sign of a person at the controls resets the clock
         // An open screen counts only while the window has focus: when it loses focus the game opens the pause
         // screen (Minecraft.pauseIfInactive), which would otherwise always count as someone being there.
-        boolean input = (mc.screen != null && mc.isWindowActive()) || keyHeld(mc.options);
+        boolean input = (mc.screen != null && mc.isWindowActive()) || keyHeld(mc.options)
+            || ai.rrw.kine.view.Freecam.inputThisTick();              // flying the freecam is you being there
         if (!Autopilot.isEngaged()                                   // the autopilot moving the view isn't you
             && (Math.abs(p.getXRot() - lastXRot) > LOOK_EPS
                 || Math.abs(Mth.wrapDegrees(p.getYRot() - lastYRot)) > LOOK_EPS)) {

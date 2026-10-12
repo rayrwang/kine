@@ -83,6 +83,7 @@ public class Kine implements ClientModInitializer {
         WalkTable.register();
         Walk.register();
         WalkRender.register();
+        ai.rrw.kine.view.Freecam.register();
         KineMenu.register();
     }
 }

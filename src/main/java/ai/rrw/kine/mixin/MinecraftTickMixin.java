@@ -21,7 +21,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MinecraftTickMixin {
     @Inject(method = "tick", at = @At("HEAD"))
     private void kine$tickStart(CallbackInfo ci) {
-        ai.rrw.kine.walk.Walk.onTickStart((Minecraft) (Object) this);   // first: your keys end a walk before anything turns
+        ai.rrw.kine.view.Freecam.onTickStart((Minecraft) (Object) this);   // first: in freecam your keys move the camera
+        ai.rrw.kine.walk.Walk.onTickStart((Minecraft) (Object) this);   // then your keys end a walk before anything turns
         Autopilot.onTickStart((Minecraft) (Object) this);
         WaterClutch.onTickStart((Minecraft) (Object) this);
         KillAura.onTickStart((Minecraft) (Object) this);

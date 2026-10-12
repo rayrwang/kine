@@ -231,6 +231,7 @@ public final class CombatMovement {
      *  physical presses (with toggle sneak or toggle sprint the game's state stays on after you let go). */
     static boolean yourMovement(Input keys) {
         if (keys.forward() || keys.backward() || keys.left() || keys.right() || keys.jump()) return true;
+        if (ai.rrw.kine.view.Freecam.active()) return false;   // in freecam your sneak and sprint move the camera
         Minecraft mc = Minecraft.getInstance();
         return physical(mc, mc.options.keyShift, mc.options.toggleCrouch().get())
             || physical(mc, mc.options.keySprint, mc.options.toggleSprint().get());

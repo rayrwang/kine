@@ -193,6 +193,10 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_FULLBRIGHT =
         "Lights everything at full brightness, as if every block had light level 15: see in caves and at night "
         + "without torches. Only your view changes; mobs still spawn in the dark.";
+    private static final String DESC_FREECAM =
+        "Press F4 to fly the camera on its own, through blocks, while your player stands still where it is. Your "
+        + "movement keys and mouse move the camera, not you; F4 again to come back. Kine's features keep acting on "
+        + "your player meanwhile. You can't attack or use items in it. Only your view changes.";
     private static final String DESC_FOG_FOLDER =
         "Fog you can switch off: under water, in lava and powder snow, in the Nether, in rain, in a boss fight, and "
         + "the fade at your render distance. Click to list them on the right.";
@@ -248,6 +252,7 @@ public class KineSettingsScreen extends Screen {
         }),
         new Section(Settings.Section.VISIBILITY, new Opt[]{
             Opt.of("Fullbright", DESC_FULLBRIGHT, Settings.FULLBRIGHT),
+            Opt.of("Freecam", DESC_FREECAM, Settings.FREECAM),
             Opt.folder("Fog", DESC_FOG_FOLDER,
                 Opt.of("No water fog", DESC_NO_WATER_FOG, Settings.NO_WATER_FOG),
                 Opt.of("No lava fog", DESC_NO_LAVA_FOG, Settings.NO_LAVA_FOG),

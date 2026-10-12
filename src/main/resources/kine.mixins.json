@@ -29,7 +29,11 @@
 		"MoveEntityAccessor",
 		"MoveLivingAccessor",
 		"MoveLocalPlayerAccessor",
-		"ClientLevelBlockMixin"
+		"ClientLevelBlockMixin",
+    "FreecamCameraMixin",
+    "FreecamMouseMixin",
+    "FreecamHandMixin",
+    "FreecamCullMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
