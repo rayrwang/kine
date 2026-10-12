@@ -28,6 +28,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Press `N` to enter a destination, with auto landing.
 	- Or look at a spot while gliding and left click to land there.
 	- Visualizations: flight director bars, path guiderails, flight path vector, and side profile map.
+- **Walking pathfinder.**
+	- Press `N` and enter a destination in the Walk tab; it walks you there while you look around freely.
+	- Plans a straight, taut route instead of grid zigzags, and replays its search in the world.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press `K` to open).
 	- Shows the chance the shot hits, and aims at the point on the target most likely to hit.
@@ -36,6 +39,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Auto totem**: keeps a totem of undying in your offhand.
 - **Kill aura.**
 	- Times each swing for the most damage by weapon and crowd, hits mobs about to reach you first, and leaves neutral mobs alone until they hit you.
+- **Combat movement** (zombies for now).
+	- Moves you around the fight between the kill aura's swings so you take less damage, only while you press no movement key.
+	- A slider from survive to kill fast.
 - **Dodge arrows and other projectiles.**
 - **AFK failsafes.**
 	- Logs you out if you take damage while AFK, if the autopilot disconnects and you don't take over, or if your elytra runs low while you fly by hand without input (on autopilot it lands instead).
@@ -48,6 +54,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Show health of mobs.
 - Projectiles red outline.
 - Fullbright, and switches for fog (water, lava, powder snow, Nether, rain, boss fight, render distance), Darkness, Blindness and screen overlays (fire, underwater, pumpkin, frost, portal).
+- Freecam (`F4`): fly the camera on its own while your player stays put.
 - Settings menu (press `K` to open); every feature can be switched off, by section, or all at once.
 
 ## Planned
@@ -85,7 +92,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Technical Details
 
-Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (`K`), one feature at a time, a section at a time, or all at once, and the elytra and speed displays can show always, only while you wear an elytra, or never. The choices are saved in `config/kine.json`.
+Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (`K`), one feature at a time, a section at a time, or all at once, and the elytra and speed displays can show always, only while you wear an elytra, only in flight (gliding or taking off), or never. The choices are saved in `config/kine.json`.
 
 ### Elytra autopilot
 
@@ -95,7 +102,7 @@ The flight path rails, drawn in the world, and the trace on the side-on profile 
 
 ### Rocket takeoff
 
-Standing with an elytra on and rockets in hand, the warning row offers a takeoff in green (LEFT CLICK TO TAKE OFF), or says in red why it can't (blocked above, not enough rockets, elytra too worn, rockets with firework stars, standing in water, autopilot switched off). A left click looks straight up, jumps, opens the elytra and fires a rocket. It climbs straight up until a leaning climb would clear the terrain, then leans to 70 degrees, which climbs about as fast and builds speed. As each rocket burns out it fires another unless the autopilot, taking over in altitude hold, would hold the cruise without it; then the autopilot engages. The rockets counted are all those you carry: when the stack in your hand runs out, another is selected from the hotbar, or moved into your hand from the inventory. Any mouse movement or movement key stops it.
+Standing with an elytra on and rockets in hand, the warning row offers a takeoff in green (LEFT CLICK TO TAKE OFF), or says in red why it can't (blocked above, not enough rockets, elytra too worn, rockets with firework stars, standing in water, autopilot switched off). A left click looks straight up, jumps, opens the elytra and fires a rocket. It climbs straight up until a leaning climb would clear the terrain, then leans to 70 degrees, which climbs about as fast and builds speed. As each rocket burns out it fires another unless the autopilot, taking over in altitude hold, would hold the cruise without it; then the autopilot engages. The rockets counted are all those you carry: when the stack in your hand runs out, another is selected from the hotbar, or moved into your hand from the inventory. Any mouse movement or movement key stops it. The rails show its climb once it starts.
 
 ### Terrain avoidance
 
@@ -103,7 +110,7 @@ On by default. While engaged, the autopilot rolls the flight model forward over 
 
 ### Navigation and landing
 
-`N` opens the nav screen: *Selected* holds a compass heading, *Managed* flies to an X/Z coordinate, *Off* does neither. A green beam rises from the ground at a managed target (drawn over terrain, like Baritone's), and the HUD shows distance and ETA. Within 24 blocks of the target the autopilot picks the nearest safe column (no lava, fire, cactus, magma, powder snow, berry bushes, campfires, wither roses or water) and lands on it.
+`N` opens the nav screen: *Selected* holds a compass heading, *Managed* flies to an X/Z coordinate, *Off* does neither. A green pillar rises from the ground at a managed target, drawn in the world so terrain hides it, with a faint copy through terrain; its top stays at least 45 degrees above your eye, so it looks as tall from far away as up close. The HUD shows distance and ETA. Within 24 blocks of the target the autopilot picks the nearest safe column (no lava, fire, cactus, magma, powder snow, berry bushes, campfires, wither roses or water) and lands on it.
 
 Aimed landing: while gliding by hand, a reticle marks a spot you could land on, the flat surface you look at, or for a wall or pole the nearer of its top and the ground at its foot. It shows only for a safe spot in a loaded chunk up to 1024 blocks away that the landing can reach within 1.5 blocks without damage. Left click (LEFT CLICK TO LAND) and the autopilot lands there, with the landing block's top face outlined in green; afterwards your trip's destination comes back.
 
@@ -119,13 +126,21 @@ Beside them, the firework count is the burn of every rocket you carry without fi
 
 An elytra counts as spent at 3 durability or less (the game itself stops gliding at 1). While you glide, by hand or on autopilot, a spent elytra is swapped for the spare with the most durability left, and after a swap onto the last usable one LAST ELYTRA shows for a few seconds. When endurance reaches 0, the autopilot lands near where you are with its landing law, on the nearest dry, safe column within 32 blocks, or on water only if there is none, under a red warning. Flying by hand you get a red warning instead, and if you give no input for 5 s (input as the AFK protection counts it) you are disconnected. Both warnings show the gliding time the reserve still holds, on average. A rocket takeoff is offered only if endurance would still be at least 60 s at the cruise. Swaps are inventory clicks made as a player makes them: one tick with the inventory opened (every key up), the clicks, then the close, only with no container open.
 
+### Walking pathfinder
+
+The nav screen's Walk tab (`N`) has its own destination, an X and Z for each dimension. Go plans a route on foot over a table of every loaded column's floors: A* with straight, diagonal and knight's moves (the knight's moves cut the worst detour against the straight line from 8.2% to 2.7%), costs in ticks, then the grid path pulled taut by straight-walk checks against the blocks' own shapes, keeping a set margin from walls, hazards and drops. It walks, sprints above 6 food, steps up slabs and stairs, jumps one block, drops up to 3 (any height into water), climbs ladders and vines and swims across water; it never breaks or places blocks, and treats doors and gates as walls. A destination beyond the loaded area is headed for through the loaded edge, replanning as chunks load. The search runs on a worker thread within a time budget set by this machine's measured speed: a quick pass first, so you start walking at once, then better passes while the time lasts.
+
+It walks by pressing your movement keys. The camera stays yours; only the server sees you face where you walk, turned at most 30 degrees a tick. Pressing a movement key, the tab's Pause or arriving pauses it and hands control back, with the route still drawn so you can walk back along it; Cancel clears it, and a new destination cancels the old route. Each search is replayed in the world over about two seconds, the paths it tried coloured by cost, then the grid path and the tightened route; the route draws as rails near you and a line further on, the destination as a green pillar. Fall prevention lets the walk's own steps into water through.
+
 ### Combat
 
 The targeting reticle simulates the readied projectile tick by tick (gravity, drag, your own motion) and rings where it lands, meeting moving mobs where they will be. Beside the crosshair it shows the chance the shot hits, from the game's own launch spread over a fixed set of rolls, with blocks in the way counted. Auto aim picks up the target the reticle covers or the one the view is nearest to aiming at, holds it, and steers for the bow's full draw: the pitch from secant steps with a bracketing fallback, the yaw allowing for your motion, at the point on the target with the best chance, led by the time until the shot reaches the server and the network delay, along the target's course (falling under gravity when it's off the ground). Targets projectiles can't hurt (endermen, breezes, a shut shulker, an armoured or spawning wither, a raised shield) are marked amber with the reason and never picked. The kill aura attacks hostile mobs, and neutral mobs such as endermen after they hit you (piglins also while you wear no gold, spiders where it is bright, never the warden unprovoked). It hits a mob about to reach you first, whatever the charge, since each hit knocks it back; otherwise it times its swings on the game's damage rules: one mob, a full charge each time; a crowd, a quick hit on every mob as soon as it can take one, then a charged hit, in cycles of at least the 10 ticks a struck mob ignores a second full hit (a dynamic program over the charge and each mob's 10 ticks found that shape best); a sword's full-charge sweep when it catches enough of the crowd to pay more; and a crit when a jump puts one a few ticks away. The rotation it sends the server is its own, turned from your view at most 30 degrees a tick (no faster than a quick flick) and undone before each frame, so your view doesn't move; while it is turned, your movement keys are swapped for the ones that walk where you meant, and your clicks wait for it to come back. Auto weapon holds the best sword or axe by damage per second. Projectile dodge presses movement keys, on foot, to step off the line of projectiles whose flight, with gravity and drag, passes close, never toward a drop of more than 3 blocks. Projectiles glow red through walls.
 
+Combat movement fights alongside the kill aura near zombies (the only mobs modelled so far; it stands down near any other hostile). Each tick a worker thread searches short plans of moves (sixteen compass headings, straight away from the nearest zombie or the crowd's middle, each walked, sprinted or sprint-jumped, or standing still) in an exact copy of the game's movement code, with a model of the zombies and the kill aura's own swing timing, and takes the first step of the best one by pressing movement keys. A slider weighs your health against a quick kill: 0 keeps out of reach of mobs about to attack and never takes a hit to end a fight sooner; 100 closes in to end fights fastest. It moves you only while you press no movement key, avoids drops and lava, and stands down while the pathfinder walks you. The kill aura, auto weapon, combat movement and projectile dodge act only in survival and adventure.
+
 ### Other features
 
-Water-bucket clutch (survival only; it turns toward where you will land through the fall, places the water in reach and scoops it back up), auto totem (when your offhand holds no totem and you carry one, it is swapped in through an inventory opening like a player's; whatever was in the offhand takes its slot), AFK damage protection (logs you out if you take damage after 15 s with no input, focused or not), fall prevention (sneaks at the edge of drops of more than 3 blocks; jumping gets past it), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names. The Visibility settings are drawing only: fullbright lights the lightmap from a white base, the fog switches clear each kind of fog the game draws (and draw the sky in lava and powder snow), and the effect and overlay switches remove Darkness, Blindness and the full-screen overlays; their switches open in two folders on the right of the settings screen.
+Water-bucket clutch (survival only; it turns toward where you will land through the fall, places the water in reach and scoops it back up), auto totem (when your offhand holds no totem and you carry one, it is swapped in through an inventory opening like a player's; whatever was in the offhand takes its slot), AFK damage protection (logs you out if you take damage after 15 s with no input, focused or not), fall prevention (sneaks at the edge of drops of more than 3 blocks; jumping gets past it; survival and adventure only), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names. The Visibility settings are drawing only: fullbright lights the lightmap from a white base, the fog switches clear each kind of fog the game draws (and draw the sky in lava and powder snow), and the effect and overlay switches remove Darkness, Blindness and the full-screen overlays; their switches open in two folders on the right of the settings screen. Freecam (`F4`, switched on in the Visibility settings) flies the camera through blocks while your player stands still: your movement keys and mouse move the camera, attacks and item uses are blocked, caves are drawn as in spectator mode, and kine's features keep acting on your player.
 
 ### A note on anti-cheat
 
