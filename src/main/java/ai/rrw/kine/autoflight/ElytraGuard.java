@@ -98,7 +98,8 @@ public class ElytraGuard {
         // END 0. In water (a landing on water: the glide goes on there, LivingEntity.canGlide doesn't check for it)
         // there is nothing to warn of.
         if (!(RangeEndurance.endurance() <= 0) || p.isInWater()) { calm(); return; }
-        if (Autopilot.isEngaged() && Nav.landing()) { warn = Warn.LANDING; warnTicks = 0; return; }
+        // on the autopilot, landing or about to (Nav waits for terrain below to land on)
+        if (Autopilot.isEngaged() && (Nav.landing() || Settings.navigation)) { warn = Warn.LANDING; warnTicks = 0; return; }
         // Flying by hand (or on an autopilot that can't land: navigation switched off in the settings)
         warn = Warn.MANUAL;
         warnTicks++;

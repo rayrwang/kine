@@ -142,7 +142,13 @@ public class Nav {
         int[] spot = nearestColumn(px, pz, EMERGENCY_REACH, (x, z) -> safeColumn(level, x, z));
         boolean water = spot == null;
         if (water) spot = nearestColumn(px, pz, EMERGENCY_REACH, (x, z) -> waterColumn(level, x, z));
-        if (spot == null) spot = new int[]{ px, pz };   // nothing dry or wet in reach: straight down, as a destination landing falls back
+        if (spot == null) {
+            // nothing dry or wet in reach: straight down, as a destination landing falls back. But only onto terrain the
+            // client has: a column not yet sent (just after a teleport or a join) reads as empty, its surface the world's
+            // bottom, and the law would brake far below the real ground. Then wait, flying on, until it arrives.
+            if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, px, pz) <= level.getMinY()) return;
+            spot = new int[]{ px, pz };
+        }
         int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, spot[0], spot[1]);   // fluids count: the water's surface
         landAt(spot[0], top, spot[1], p);
         emergency = true;
