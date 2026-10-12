@@ -2,6 +2,7 @@ package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.GameModes;
+import ai.rrw.kine.walk.Walk;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -17,7 +18,8 @@ import net.minecraft.world.phys.Vec3;
  * sneak only in a tick whose step would leave you over such a drop, and lets go once you turn away. Jumping
  * gets past it, as before: it never sneaks while you jump or are off the ground. Any drop of more than 3
  * blocks counts, water and hay included, except a shaft you can climb down: a ladder, vine or other climbable
- * block in the column you step into catches you (LivingEntity.onClimbable).
+ * block in the column you step into catches you (LivingEntity.onClimbable). The walking pathfinder's own planned step
+ * into water passes (Walk.steppingIntoWater): its drop is measured to the water, this one's to the ground under it.
  */
 public final class FallPrevention {
     private FallPrevention() {}
@@ -28,6 +30,7 @@ public final class FallPrevention {
     /** Press sneak when this tick's step, with these keys, would go over a dangerous drop. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
         if (!Settings.fallPrevention || keys.shift() || keys.jump()) return keys;
+        if (Walk.steppingIntoWater(p)) return keys;   // the walk's own step into water (RW)
         if (!GameModes.survivalLike(Minecraft.getInstance())) return keys;   // creative and spectator take no fall damage
         if (!p.onGround() || p.getAbilities().flying || p.isFallFlying() || p.isPassenger() || p.isInWater()) return keys;
         Vec3 step = predictedStep(p, keys);

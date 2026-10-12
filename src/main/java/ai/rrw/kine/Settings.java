@@ -34,7 +34,7 @@ public final class Settings {
 
     /** The settings screen's sections; each has an on/off switch over its features. */
     public enum Section {
-        HUD("Heads-up display"), VISIBILITY("Visibility"), FLIGHT("Elytra flight"), SAFETY("Safety"), COMBAT("Combat");
+        HUD("Heads-up display"), VISIBILITY("Visibility"), FLIGHT("Elytra flight"), WALK("Walking"), SAFETY("Safety"), COMBAT("Combat");
         public final String title;
         Section(String title) { this.title = title; }
     }
@@ -57,6 +57,9 @@ public final class Settings {
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
+    public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay;
+    /** The walking route's safety margin, hundredths of a block. */
+    public static int walkMargin;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
         displayFlightProfile, displayRangeEndurance, displayFireworkFuel, flightRibbon;
@@ -135,7 +138,8 @@ public final class Settings {
         return o;
     }
 
-    private static final Section HUD = Section.HUD, VISIBILITY = Section.VISIBILITY, FLIGHT = Section.FLIGHT, SAFETY = Section.SAFETY, COMBAT = Section.COMBAT;
+    private static final Section HUD = Section.HUD, VISIBILITY = Section.VISIBILITY, FLIGHT = Section.FLIGHT, WALK = Section.WALK,
+        SAFETY = Section.SAFETY, COMBAT = Section.COMBAT;
     private static final Show ELYTRA = Show.ELYTRA;
 
     public static final Option DISPLAY_MOB_HEALTHS        = toggle("displayMobHealths", HUD, true, v -> displayMobHealths = v);
@@ -175,6 +179,11 @@ public final class Settings {
     public static final Option LANDING                    = toggle("landing", FLIGHT, true, v -> landing = v);
     public static final Option NAVIGATION                 = toggle("navigation", FLIGHT, true, v -> navigation = v);
     public static final Option TERRAIN_AVOIDANCE          = toggle("terrainAvoidance", FLIGHT, true, v -> terrainAvoidance = v);
+
+    public static final Option WALK_PATHFINDER            = toggle("walkPathfinder", WALK, true, v -> walkPathfinder = v);
+    public static final Option WALK_PATH_DISPLAY          = toggle("walkPathDisplay", WALK, true, v -> walkPathDisplay = v);
+    public static final Option WALK_SEARCH_DISPLAY        = toggle("walkSearchDisplay", WALK, true, v -> walkSearchDisplay = v);
+    public static final Option WALK_MARGIN                = level("walkSafetyMargin", WALK, 20, 50, v -> walkMargin = v);
 
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);
     public static final Option FALL_PREVENTION            = toggle("fallPrevention", SAFETY, true, v -> fallPrevention = v);

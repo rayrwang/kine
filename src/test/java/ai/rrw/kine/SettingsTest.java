@@ -154,4 +154,41 @@ class SettingsTest {
             """);
         assertEquals(25, Settings.combatBias, "a value that isn't a number keeps the default");
     }
+
+    @Test
+    void walkingSectionDefaultsAndSwitches() throws Exception {
+        // Claude's defaults, RW's call: the pathfinder on (it acts only when started from the Walk tab), both displays on
+        assertTrue(Settings.walkPathfinder);
+        assertTrue(Settings.walkPathDisplay);
+        assertTrue(Settings.walkSearchDisplay);
+        assertEquals(20, Settings.walkMargin, "0.20 blocks");
+        assertTrue(Settings.WALK_MARGIN.isLevel());
+        for (Settings.Option o : new Settings.Option[]{Settings.WALK_PATHFINDER, Settings.WALK_PATH_DISPLAY,
+                Settings.WALK_SEARCH_DISPLAY, Settings.WALK_MARGIN})
+            assertEquals(Settings.Section.WALK, o.section);
+        // the section switch and the all-features switch reach every one, each keeping its own setting
+        Settings.setSectionOn(Settings.Section.WALK, false);
+        assertFalse(Settings.walkPathfinder);
+        assertFalse(Settings.walkPathDisplay);
+        assertFalse(Settings.walkSearchDisplay);
+        assertEquals(0, Settings.walkMargin);
+        assertEquals(1, Settings.WALK_PATHFINDER.value());
+        Settings.setSectionOn(Settings.Section.WALK, true);
+        assertTrue(Settings.walkPathfinder);
+        Settings.setEnabled(false);
+        assertFalse(Settings.walkPathfinder);
+        assertFalse(Settings.walkSearchDisplay);
+        Settings.setEnabled(true);
+        // saved and read back
+        Settings.WALK_MARGIN.setLevel(35);
+        Settings.WALK_SEARCH_DISPLAY.cycle();
+        String saved = Files.readString(file);
+        assertTrue(saved.contains("\"walkSafetyMargin\": 35"), saved);
+        assertTrue(saved.contains("\"walkSearchDisplay\": false"), saved);
+        assertTrue(saved.contains("\"sectionWalk\": true"), saved);
+        Settings.resetDefaults();
+        load(saved);
+        assertEquals(35, Settings.walkMargin);
+        assertFalse(Settings.walkSearchDisplay);
+    }
 }

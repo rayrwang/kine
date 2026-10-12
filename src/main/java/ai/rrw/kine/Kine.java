@@ -29,6 +29,9 @@ import ai.rrw.kine.hud.RangeEndurance;
 import ai.rrw.kine.hud.ThinOutlines;
 import ai.rrw.kine.hud.VelocityHud;
 import ai.rrw.kine.ui.KineMenu;
+import ai.rrw.kine.walk.Walk;
+import ai.rrw.kine.walk.WalkRender;
+import ai.rrw.kine.walk.WalkTable;
 import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
@@ -77,6 +80,9 @@ public class Kine implements ClientModInitializer {
         ProjectileTargeting.register();
         WeaponSelect.register();
         CombatMovement.register();
+        WalkTable.register();
+        Walk.register();
+        WalkRender.register();
         KineMenu.register();
     }
 }

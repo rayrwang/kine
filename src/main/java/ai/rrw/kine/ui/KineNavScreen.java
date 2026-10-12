@@ -1,10 +1,14 @@
 package ai.rrw.kine.ui;
 
+import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.util.Compass;
+import ai.rrw.kine.walk.Planner;
+import ai.rrw.kine.walk.Route;
+import ai.rrw.kine.walk.Walk;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -17,6 +21,11 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+/**
+ * The nav screen (N), two tabs: Elytra (the autopilot's altitude, Selected heading or Managed destination, what to do
+ * on arrival) and Walk (the walking pathfinder's own destination, one X and Z per dimension, with Go and Stop and the
+ * walk's state).
+ */
 public class KineNavScreen extends Screen {
 
     private static final int RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
@@ -37,6 +46,14 @@ public class KineNavScreen extends Screen {
 
     private int dialCx, dialCy, dialR;   // heading dial geometry
 
+    /** The tab shown; remembered while the game runs. */
+    private enum Tab { ELYTRA, WALK }
+    private static Tab tab = Tab.ELYTRA;
+    private Button elytraTab, walkTab;
+    private EditBox walkX, walkZ;
+    private Button walkHere, walkBtn;   // walkBtn: Go, Pause or Cancel, as the walk stands (RW)
+    private int walkTop;
+
     public KineNavScreen() {
         super(Component.literal("Kine nav"));
         this.mode = Nav.mode();
@@ -47,6 +64,11 @@ public class KineNavScreen extends Screen {
     @Override
     protected void init() {
         int cx = this.width / 2, top = 64;
+        if (!Settings.navigation) tab = Tab.WALK;
+        if (!Settings.walkPathfinder) tab = Tab.ELYTRA;
+        elytraTab = addRenderableWidget(Button.builder(Component.literal("Elytra"), b -> setTab(Tab.ELYTRA)).bounds(8, 8, 56, 18).build());
+        walkTab = addRenderableWidget(Button.builder(Component.literal("Walk"), b -> setTab(Tab.WALK)).bounds(68, 8, 56, 18).build());
+        initWalk(cx);
 
         // altitude selector, always active, above the mode buttons
         int abh = 20, abw = 20, ebw = 56, agap = 4;
@@ -170,7 +192,135 @@ public class KineNavScreen extends Screen {
         altBox.setValue(Integer.toString(FlightDirector.targetAltitude()));   // show the clamped value
     }
 
+    /** Open the nav screen on its Walk tab. */
+    public static KineNavScreen walkTab() {
+        tab = Tab.WALK;
+        return new KineNavScreen();
+    }
+
+    private void setTab(Tab t) {
+        if (t == tab) return;
+        if (tab == Tab.ELYTRA) { applyAlt(); if (mode == Nav.Mode.MANAGED) applyManaged(); }
+        else applyWalk();
+        tab = t;
+        updateVisibility();
+    }
+
+    // ---------------------------------------------------------------- the Walk tab
+
+    private void initWalk(int cx) {
+        walkTop = 46;
+        int fw = 92, fh = 20, fy = walkTop + 18;
+        walkX = new EditBox(this.font, cx - fw - 8, fy, fw, fh, Component.literal("Walk X"));
+        walkZ = new EditBox(this.font, cx + 8, fy, fw, fh, Component.literal("Walk Z"));
+        walkX.setMaxLength(9);
+        walkZ.setMaxLength(9);
+        int[] d = Walk.destination();
+        if (d != null) { walkX.setValue(Integer.toString(d[0])); walkZ.setValue(Integer.toString(d[1])); }
+        addRenderableWidget(walkX);
+        addRenderableWidget(walkZ);
+        walkHere = addRenderableWidget(Button.builder(Component.literal("Use current position"), b -> useCurrentPosition())
+            .bounds(cx - 75, fy + 28, 150, 20).build());
+        walkHere.setTooltip(Tooltip.create(Component.literal("Sets the destination to where you stand, to walk back here later.")));
+        walkBtn = addRenderableWidget(Button.builder(Component.literal("Go"), b -> walkPress()).bounds(cx - 40, fy + 56, 80, 20).build());
+        refreshWalkButton();
+    }
+
+    /** The one button: Go walks, Pause gives control back with the route still drawn, Cancel dismisses it. */
+    private void walkPress() {
+        switch (Walk.button()) {
+            case GO -> walkGo();
+            case PAUSE -> Walk.stop("");
+            case CANCEL -> Walk.cancel();
+        }
+        refreshWalkButton();
+    }
+
+    private Walk.Button shownButton = null;
+
+    private void refreshWalkButton() {
+        Walk.Button b = Walk.button();
+        if (b == shownButton) return;
+        shownButton = b;
+        walkBtn.setMessage(Component.literal(switch (b) { case GO -> "Go"; case PAUSE -> "Pause"; case CANCEL -> "Cancel"; }));
+        walkBtn.setTooltip(Tooltip.create(Component.literal(switch (b) {
+            case GO -> "Plans a route on foot and walks it. Any movement key pauses it.";
+            case PAUSE -> "Gives you control back. The route stays drawn until you cancel.";
+            case CANCEL -> "Clears the route, rails and destination pillar.";
+        })));
+    }
+
+    private void useCurrentPosition() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        walkX.setValue(Integer.toString(mc.player.getBlockX()));
+        walkZ.setValue(Integer.toString(mc.player.getBlockZ()));
+        applyWalk();
+    }
+
+    /** Keep the typed destination (both boxes must parse). */
+    private void applyWalk() {
+        Integer x = parseInt(walkX.getValue()), z = parseInt(walkZ.getValue());
+        if (x != null && z != null) Walk.setDestination(x, z);
+    }
+
+    private void walkGo() {
+        applyWalk();
+        if (Walk.destination() == null) return;
+        Walk.go();
+        this.onClose();   // walking needs the keys: with a screen open none are pressed
+    }
+
+    private void drawWalk(GuiGraphicsExtractor g) {
+        int cx = this.width / 2;
+        g.centeredText(this.font, Component.literal("Walk to (this dimension)"), cx, walkTop, LABEL);
+        g.text(this.font, "X", walkX.getX() - 10, walkX.getY() + 6, DIM, true);
+        g.text(this.font, "Z", walkZ.getX() - 10, walkZ.getY() + 6, DIM, true);
+        refreshWalkButton();   // the walk can pause or arrive while the screen is open
+        int y = walkBtn.getY() + 30;
+        String st = switch (Walk.state()) {
+            case IDLE -> "Not walking";
+            case PLANNING -> "Planning";
+            case WALKING, STOPPED, FAILED -> Walk.message();
+            case ARRIVED -> "Arrived";
+        };
+        int color = Walk.state() == Walk.State.FAILED ? 0xFFFF6060 : Walk.active() ? HudColors.GREEN : DIM;
+        g.centeredText(this.font, Component.literal(st), cx, y, color);
+        Planner.Plan p = Walk.plan();
+        Minecraft mc = Minecraft.getInstance();
+        int[] d = Walk.destination();
+        if (d != null && mc.player != null) {
+            double dist = Math.hypot(d[0] + 0.5 - mc.player.getX(), d[1] + 0.5 - mc.player.getZ());
+            g.centeredText(this.font, Component.literal(String.format(java.util.Locale.ROOT, "%.0f blocks away in a straight line", dist)), cx, y + 12, DIM);
+        }
+        if (p != null && (Walk.active() || Walk.showing())) {
+            Route r = p.route;
+            String a = String.format(java.util.Locale.ROOT, "Route %.1f blocks (grid %.1f)%s", r.length, r.gridLength,
+                r.viaExit ? ", then straight on past what's loaded" : "");
+            String b = String.format(java.util.Locale.ROOT, "Search %.0f ms, %,d places, weight %.2f", p.result.nanos / 1e6,
+                p.result.expanded, p.result.weight);
+            g.centeredText(this.font, Component.literal(a), cx, y + 24, DIM);
+            g.centeredText(this.font, Component.literal(b), cx, y + 36, DIM);
+        }
+        g.centeredText(this.font, Component.literal("Any movement key pauses the walk. Your view stays yours."), cx, y + 54, DIM);
+    }
+
     private void updateVisibility() {
+        boolean walk = tab == Tab.WALK;
+        elytraTab.active = walk && Settings.navigation;   // the tab shown is greyed out, like the mode buttons
+        walkTab.active = !walk && Settings.walkPathfinder;
+        walkX.visible = walkX.active = walk;
+        walkZ.visible = walkZ.active = walk;
+        walkHere.visible = walkHere.active = walk;
+        walkBtn.visible = walk; walkBtn.active = walk && Settings.walkPathfinder;
+        altBox.visible = !walk; altMinus.visible = !walk; altPlus.visible = !walk;
+        selBtn.visible = !walk; manBtn.visible = !walk; offBtn.visible = !walk;
+        if (walk) {
+            xBox.visible = false; xBox.active = false; zBox.visible = false; zBox.active = false;
+            holdBtn.visible = false; tillDayBtn.visible = false; landBtn.visible = false;
+            useCurrentBtn.visible = false; useCurrentBtn.active = false;
+            return;
+        }
         boolean man = mode == Nav.Mode.MANAGED;
         xBox.visible = man; xBox.active = man;
         zBox.visible = man; zBox.active = man;
@@ -186,8 +336,14 @@ public class KineNavScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        super.tick();
+        if (tab == Tab.WALK) refreshWalkButton();
+    }
+
+    @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (mode == Nav.Mode.SELECTED && inDial(event.x(), event.y())) {
+        if (tab == Tab.ELYTRA && mode == Nav.Mode.SELECTED && inDial(event.x(), event.y())) {
             draggingDial = true;
             setHeadingFromMouse(event.x(), event.y());
             return true;
@@ -234,6 +390,7 @@ public class KineNavScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
         super.extractRenderState(g, mouseX, mouseY, partial);
         g.centeredText(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
+        if (tab == Tab.WALK) { drawWalk(g); return; }
         g.centeredText(this.font, Component.literal("Target altitude"), this.width / 2, 30, LABEL);
 
         if (mode == Nav.Mode.SELECTED) {
@@ -289,9 +446,12 @@ public class KineNavScreen extends Screen {
 
     @Override
     public void onClose() {
-        applyAlt();
-        if (mode == Nav.Mode.MANAGED) applyManaged();
-        else if (mode == Nav.Mode.SELECTED && hasHeading) Nav.setHeading(heading);
+        applyWalk();
+        if (tab == Tab.ELYTRA) {
+            applyAlt();
+            if (mode == Nav.Mode.MANAGED) applyManaged();
+            else if (mode == Nav.Mode.SELECTED && hasHeading) Nav.setHeading(heading);
+        }
         super.onClose();
     }
 

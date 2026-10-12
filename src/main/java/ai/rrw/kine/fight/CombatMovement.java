@@ -111,9 +111,10 @@ public final class CombatMovement {
         tick++;
         FightSnapshot.follow(mc);
         LocalPlayer p = mc.player;
-        if (!Settings.combatMovement || p == null || mc.level == null || !onFoot(p) || !GameModes.survivalLike(mc)) {
+        if (!Settings.combatMovement || p == null || mc.level == null || !onFoot(p) || !GameModes.survivalLike(mc)
+            || ai.rrw.kine.walk.Walk.active()) {
             engaged = false;
-            standDownReason = "off or not on foot";
+            standDownReason = "off, not on foot, or the pathfinder walking";
             return;
         }
         if (job != null && !job.result().isDone()) return;   // still working on the last one: keep it
@@ -242,7 +243,8 @@ public final class CombatMovement {
         return km.isDown();
     }
 
-    /** The indicator: MOVE in green on the lower annunciator row, right of centre, while it moves you. */
+    /** The indicator: MOVE in green on the right, under AP, in the row WALK uses (the two never show together), while
+     *  it moves you. */
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (!controlling || mc.player == null || mc.options.hideGui) return;

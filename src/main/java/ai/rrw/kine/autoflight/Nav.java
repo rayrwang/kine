@@ -195,7 +195,7 @@ public class Nav {
         if (mc.isPaused()) return;   // singleplayer paused: the game's ticks still come, but the world stands still
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
-        while (navKey.consumeClick()) if (Settings.navigation) mc.setScreen(new KineNavScreen());
+        while (navKey.consumeClick()) if (Settings.navigation || Settings.walkPathfinder) mc.setScreen(new KineNavScreen());
         // END 0 on the autopilot: land near here, whatever nav was doing; a landing already under way goes on. Ahead of
         // the hold's own check below, so a hold ends in this landing too.
         if (!landing && Settings.navigation && Autopilot.isEngaged() && p.isFallFlying() && !p.isInWater()

@@ -28,7 +28,8 @@
 		"GuiOverlayMixin",
 		"MoveEntityAccessor",
 		"MoveLivingAccessor",
-		"MoveLocalPlayerAccessor"
+		"MoveLocalPlayerAccessor",
+		"ClientLevelBlockMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

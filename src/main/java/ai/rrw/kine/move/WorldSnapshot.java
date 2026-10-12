@@ -71,7 +71,8 @@ public final class WorldSnapshot {
         return blocks(level, player, bx - r, by - down, bz - r, 2 * r + 1, down + up + 1, 2 * r + 1);
     }
 
-    static BlockInfo info(BlockState st, VoxelShape vs) {
+    /** Synchronized: the pathfinder's table builder (walk/) calls it from its worker thread. */
+    public static synchronized BlockInfo info(BlockState st, VoxelShape vs) {
         Shape shape = shape(vs);
         return INFOS.computeIfAbsent(new Key(st, shape), k -> {
             Block b = st.getBlock();
@@ -97,7 +98,7 @@ public final class WorldSnapshot {
 
     /** The game's shape in the copy's form: its boundaries per axis and its full cells (a cell is full when its centre
      *  is inside one of the shape's boxes, which are unions of full cells). */
-    static Shape shape(VoxelShape vs) {
+    static synchronized Shape shape(VoxelShape vs) {
         if (vs == Shapes.block()) return Shape.BLOCK;
         if (vs.isEmpty()) return Shape.EMPTY;
         if (SHAPES.size() > 4096) { SHAPES.clear(); INFOS.clear(); }   // shapes made per call (offset plants) would pile up

@@ -159,9 +159,11 @@ public final class KillAura {
         boolean onFoot = onFoot(p);
 
         float viewYaw = p.getYRot() - appliedYaw, viewPitch = p.getXRot() - appliedPitch;
-        float[] want = {viewYaw, viewPitch};   // where the rotation sent should go: your view unless fighting
+        // where the rotation sent rests when not fighting: your view, or while the pathfinder walks you its facing
+        float[] rest = ai.rrw.kine.walk.Walk.restRotation(p, viewYaw, viewPitch);
+        float[] want = rest;   // where the rotation sent should go: the rest unless fighting
         if (on) {
-            float[] aim = fight(mc, p, onFoot, viewYaw, viewPitch);
+            float[] aim = fight(mc, p, onFoot, rest[0], rest[1]);
             if (aim == null) { holdClicks(mc); return; }   // it swung: the rotation is set for this tick
             if (onFoot) want = aim;
         }

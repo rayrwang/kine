@@ -105,7 +105,7 @@ public class KineSettingsScreen extends Screen {
         + "by hand, you're warned, and logged out if you don't respond.";
     private static final String DESC_FALL =
         "Sneaks for you at the edge of a drop of more than three blocks, so you stop there. Jump to get past "
-        + "it. Water or hay below still counts as a drop. Survival and adventure only.";
+        + "it. Water or hay below still counts as a drop, except a walk's own step into water. Survival and adventure only.";
     private static final String DESC_CLUTCH =
         "When you fall far enough to get hurt, sneaks, places water where you will land and scoops it back "
         + "up. Uses a bucket from your hotbar or offhand, or moves one up from your inventory. Survival mode only.";
@@ -132,7 +132,20 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_COMBAT_MOVE =
         "Near zombies, moves you with your movement keys so you take less damage, keeping them in front and out of "
         + "reach between the kill aura's swings. Only while you press no movement key; press any to take over. Avoids "
-        + "drops and lava. Survival and adventure only. Servers may ban it.";
+        + "drops and lava. Stands down while the pathfinder walks you. Survival and adventure only. Servers may ban it.";
+    private static final String DESC_WALK_PATHFINDER =
+        "Walks you to the destination in the nav screen's Walk tab (N), pressing your movement keys along a route it "
+        + "plans on foot. Your view stays yours; the server sees you face where you walk. Any movement key hands back "
+        + "control; the route stays drawn until you cancel it in the tab. Servers may ban it.";
+    private static final String DESC_WALK_PATH =
+        "Draws the walking route: rails on the ground near you, a thin line further on and past what's loaded, and the "
+        + "destination as a green pillar. Faint through terrain.";
+    private static final String DESC_WALK_SEARCH =
+        "Replays each search in the world over about two seconds: the paths it tried spreading out from you, coloured "
+        + "by cost so far, then the grid path and the tightened route.";
+    private static final String DESC_WALK_MARGIN =
+        "How far the route keeps from walls, hazards and big drops, in blocks. Wider is safer and a little longer; zero "
+        + "hugs corners.";
     private static final String DESC_COMBAT_BIAS =
         "How combat movement weighs your health against a quick kill. 0 keeps out of reach of mobs about to attack and "
         + "never takes a hit to end a fight sooner, more careful as your health drops; 100 closes in to end fights "
@@ -268,6 +281,13 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Aimed landing", DESC_LANDING, Settings.LANDING),
             Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),
             Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
+        }),
+        new Section(Settings.Section.WALK, new Opt[]{
+            Opt.of("Pathfinder", DESC_WALK_PATHFINDER, Settings.WALK_PATHFINDER),
+            Opt.of("Path display", DESC_WALK_PATH, Settings.WALK_PATH_DISPLAY),
+            Opt.of("Search display", DESC_WALK_SEARCH, Settings.WALK_SEARCH_DISPLAY),
+            Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,
+                   v -> String.format(java.util.Locale.ROOT, "%.2f", v / 100.0)),
         }),
         new Section(Settings.Section.SAFETY, new Opt[]{
             Opt.of("Elytra durability failsafe", DESC_ELYTRA, Settings.ELYTRA_DURA_FAILSAFE),

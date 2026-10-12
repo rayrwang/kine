@@ -55,6 +55,7 @@ public final class VanillaActions {
         if (Minecraft.getInstance().screen != null) { WaterClutch.sneakNotSent(); return keys; }
         keys = KillAura.adjustInput(p, keys);   // first: your keys, for the rotation the aura sends; the rest press theirs for it
         keys = CombatMovement.adjustInput(p, keys);   // while you press no movement key, near zombies
+        keys = ai.rrw.kine.walk.Walk.adjustInput(p, keys);   // the pathfinder's walk, and its hand-back to you
         keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);
