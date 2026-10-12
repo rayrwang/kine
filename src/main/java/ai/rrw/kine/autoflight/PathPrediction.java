@@ -16,6 +16,8 @@ import net.minecraft.util.Mth;
  * EMERGENCY_DELTA off the velocity until the course has come round; without it, the look turned
  * toward the nav heading at the autopilot's nav turn rate, or the current heading held. Pitch follows
  * the porpoise law. While landing, the landing law ({@link LandingModel}) is rolled out instead, down to the spot.
+ * On the way to a managed destination the rollout does, from where it comes within Nav's arrival radius, what Nav
+ * will do there: the hold's circle, or the landing law onto the spot Nav would pick.
  */
 public final class PathPrediction {
     private PathPrediction() {}
@@ -63,9 +65,30 @@ public final class PathPrediction {
         // circling over the destination: the circle, unless terrain avoidance is turning away from something
         boolean hold = Nav.holding() && !(avoidance && action != TurnPlanner.STRAIGHT);
         double fixX = Nav.targetX() + 0.5, fixZ = Nav.targetZ() + 0.5;
+        // on the way to a managed destination: on coming within Nav's arrival radius the rollout does what Nav will do
+        // there, the hold's circle or the landing law onto the spot Nav would pick, instead of looping round the point
+        boolean arriving = Nav.arriving();
+        boolean holdThere = arriving && Nav.holdNow(mc);
 
         xs[0] = 0; ys[0] = 0; zs[0] = 0;
         for (int k = 1; k <= TICKS; k++) {
+            if (arriving && Math.hypot(s.x - fixX, s.z - fixZ) < Nav.ARRIVAL_RADIUS) {
+                arriving = false;
+                if (holdThere) hold = true;
+                else {
+                    // points 0 to k-1 are drawn; the landing goes on from point k-1, its own point 0
+                    double[] spot = Nav.arrivalSpot(mc.level);
+                    double yaw = avoidance ? FlightModel3D.velYaw(s.vx, s.vz) : look;
+                    int left = TICKS - (k - 1);
+                    LandingModel.Result r = LandingModel.simulate(new LandingModel.Law(), s.x, s.y, s.z, s.vx, s.vy, s.vz,
+                        yaw, s.pitch, spot[0], spot[1], spot[2], left, left + 1);
+                    for (int j = 1; j < r.count(); j++) {
+                        xs[k - 1 + j] = r.xs()[j] - px; ys[k - 1 + j] = r.ys()[j] - py; zs[k - 1 + j] = r.zs()[j] - pz;
+                    }
+                    count = k - 1 + r.count();
+                    return;
+                }
+            }
             if (hold) {
                 FlightModel3D.stepLook(s, HoldModel.lookYaw(s.x, s.z, fixX, fixZ, FlightModel3D.velYaw(s.vx, s.vz), s.climbing));
             } else if (avoidance) {

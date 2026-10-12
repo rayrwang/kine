@@ -36,7 +36,7 @@ public class Nav {
 
     public enum Mode { OFF, SELECTED, MANAGED }
 
-    private static final double ARRIVAL_RADIUS = 24.0;   // begin the landing program within this of the target
+    static final double ARRIVAL_RADIUS = 24.0;           // begin the landing program within this of the target
     private static final double EXIT_RADIUS    = 36.0;   // cancel landing if the pilot takes over and flies past this
     private static final double HOLD_EXIT_RADIUS = 400.0; // end a hold if the pilot takes over and flies past this (the
                                                           // circle reaches about 240 from the fix before it centres)
@@ -241,7 +241,7 @@ public class Nav {
 
     // Whether to circle over the destination now rather than land: never once END has reached 0 (the durability
     // failsafe's land now), always for Hold, and for Hold till day while monsters can spawn there.
-    private static boolean holdNow(Minecraft mc) {
+    static boolean holdNow(Minecraft mc) {
         if (ElytraGuard.landNow()) return false;
         return switch (arrival()) {
             case HOLD -> true;
@@ -268,6 +268,32 @@ public class Nav {
         int[] spot = nearestColumn(targetX, targetZ, SCAN_RADIUS, (x, z) -> safeColumn(level, x, z));
         if (spot != null) { spotX = spot[0]; spotZ = spot[1]; haveSpot = true; return; }
         spotX = targetX; spotZ = targetZ; haveSpot = false;   // nothing safe found; aim at the target anyway
+    }
+
+    // The spot the destination would get on arrival, for the path prediction: the same search as findSafeSpot, redone
+    // at most once a second per destination (it reads up to 81 columns).
+    private static boolean previewValid = false;
+    private static Level previewLevel;
+    private static int previewX, previewZ, previewForX, previewForZ;
+    private static double previewTop;
+    private static long previewTime;
+
+    /** Flying to a managed destination and neither landing nor circling over it yet: coming within ARRIVAL_RADIUS
+     *  of it will start one or the other. */
+    static boolean arriving() { return mode() == Mode.MANAGED && hasTarget && !landing && !holding; }
+
+    /** The landing spot an arrival now would pick, as {x of its centre, its top, z of its centre}. */
+    static double[] arrivalSpot(Level level) {
+        long now = level.getGameTime();
+        if (!previewValid || previewLevel != level || previewForX != targetX || previewForZ != targetZ
+                || now - previewTime >= 20 || now < previewTime) {
+            int[] spot = nearestColumn(targetX, targetZ, SCAN_RADIUS, (x, z) -> safeColumn(level, x, z));
+            previewX = spot != null ? spot[0] : targetX;
+            previewZ = spot != null ? spot[1] : targetZ;
+            previewTop = level.getHeight(Heightmap.Types.MOTION_BLOCKING, previewX, previewZ);
+            previewValid = true; previewLevel = level; previewForX = targetX; previewForZ = targetZ; previewTime = now;
+        }
+        return new double[]{ previewX + 0.5, previewTop, previewZ + 0.5 };
     }
 
     private interface ColumnTest { boolean test(int x, int z); }
