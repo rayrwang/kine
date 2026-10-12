@@ -73,6 +73,7 @@ public class RangeEndurance {
 
     private static double endurance = Double.NaN;      // END now (s), unsmoothed: the failsafe's trigger; NaN with no elytra worn
     private static double enduranceShown = Double.NaN; // END as displayed (s)
+    private static double glideLeftShown = Double.NaN; // the gliding time on every usable point, the reserve included (s), as displayed
     private static boolean show = false;                // an estimate exists (an elytra is worn), whether or not it is displayed
     private static final double END_TC = 12.0;          // s; time constant of the displayed END's complementary filter
     private static final double RANGE_TC = 12.0;        // s; time constant of the displayed range's complementary filter
@@ -98,7 +99,7 @@ public class RangeEndurance {
 
         Durability.Wing worn = ElytraLife.wing(p.getItemBySlot(EquipmentSlot.CHEST));
         if (mc.level != lastLevel) { lastLevel = mc.level; lockedTop = Double.NaN; }
-        if (worn == null) { enduranceShown = Double.NaN; rangeShown = Double.NaN; endFlight(); return; }   // only while wearing an elytra
+        if (worn == null) { enduranceShown = Double.NaN; rangeShown = Double.NaN; glideLeftShown = Double.NaN; endFlight(); return; }   // only while wearing an elytra
 
         boolean gliding = p.isFallFlying();
         if (gliding) {
@@ -128,6 +129,7 @@ public class RangeEndurance {
         show = true;
 
         enduranceShown = nextEndurance(enduranceShown, endurance, gliding);
+        glideLeftShown = nextEndurance(glideLeftShown, Durability.endurance(order, 0), gliding);
         rangeShown = nextRange(rangeShown, endurance, speedEstimate(), gliding);
     }
 
@@ -253,4 +255,8 @@ public class RangeEndurance {
     /** END now (s), unsmoothed: 0 once only the landing reserve is left, infinite on a worn wing that can't take
      *  damage, NaN with no elytra worn (or not in a world). Computed each tick, before Nav and the failsafe tick. */
     public static double endurance() { return endurance; }
+
+    /** The expected gliding time left on every usable point, the landing reserve included (s), filtered as END is:
+     *  what is left once END has reached 0, for the land-now warning by hand (RW, 2026-10-11). NaN with no elytra worn. */
+    public static double glideLeft() { return glideLeftShown; }
 }

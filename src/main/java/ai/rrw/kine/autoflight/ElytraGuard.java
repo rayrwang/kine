@@ -45,6 +45,7 @@ public class ElytraGuard {
     private static final int SWAP_COOLDOWN   = 40;    // ticks between swap attempts
     private static final int LAST_WING_TICKS = 100;   // LAST ELYTRA shows this long after the swap onto the last wing
     static final int         NO_INPUT_TICKS  = 100;   // flying by hand at END 0: disconnect after 5 s with no input (RW)
+    private static final int CROSSHAIR_GAP   = 8;     // gui pixels kept clear above and below the crosshair by the warning
 
     private enum Warn { NONE, LANDING, MANUAL }
 
@@ -182,16 +183,24 @@ public class ElytraGuard {
             g.text(font, s, W / 2 - font.width(s) / 2, HudLayout.noticeRow(H, font.lineHeight), HudColors.AMBER, true);
         }
         if (warn == Warn.NONE) return;
-        int cy = HudLayout.bigWarningTop(H);
+        // the two big lines end a little above the crosshair and the small ones start a little below it, so the
+        // crosshair stays clear (RW, 2026-10-11)
         int big = (int) (font.lineHeight * 2.0f);
-        HudDraw.scaledText(g, font, "LOW DURABILITY", W / 2, cy, HudColors.RED, 2.0f, false);
-        if (warn == Warn.LANDING) {
-            HudDraw.scaledText(g, font, "LANDING", W / 2, cy + big + 4, HudColors.RED, 2.0f, false);
-            return;
+        int second = H / 2 - CROSSHAIR_GAP - big;
+        HudDraw.scaledText(g, font, "LOW DURABILITY", W / 2, second - big - 4, HudColors.RED, 2.0f, false);
+        HudDraw.scaledText(g, font, warn == Warn.LANDING ? "LANDING" : "LAND NOW", W / 2, second, HudColors.RED, 2.0f, false);
+        // what the reserve still holds, on average: END is 0 here, but there is gliding left (RW, 2026-10-11; under
+        // LANDING too, the emergency landing's margin)
+        double left = RangeEndurance.glideLeft();
+        int line = H / 2 + CROSSHAIR_GAP + 6;
+        if (left > 0 && Double.isFinite(left)) {
+            HudDraw.scaledText(g, font, "about " + KineTime.format(left) + " of gliding left",
+                W / 2, line, HudColors.WHITE, 1.0f, false);
+            line += font.lineHeight + 2;
         }
-        HudDraw.scaledText(g, font, "LAND NOW", W / 2, cy + big + 4, HudColors.RED, 2.0f, false);
+        if (warn == Warn.LANDING) return;
         int secs = Math.max(0, (NO_INPUT_TICKS - idle() + 19) / 20);
         HudDraw.scaledText(g, font, "disconnect in " + KineTime.format(secs) + " without input",
-            W / 2, cy + 2 * big + 14, HudColors.WHITE, 1.0f, false);
+            W / 2, line, HudColors.WHITE, 1.0f, false);
     }
 }
