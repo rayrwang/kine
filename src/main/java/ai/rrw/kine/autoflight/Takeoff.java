@@ -78,7 +78,7 @@ public final class Takeoff {
     private static Status status = Status.NONE;
     private static int needed = 0;                     // rockets needed if each burns its shortest
     private static int climbTicks = 0;                 // the planned takeoff's ticks to the hand-over
-    private static double cruiseAgl = 0;               // the planned cruise's height above the takeoff spot
+    private static double cruiseY = 0;                 // the planned cruise's height (y)
     private static float yaw, cmdPitch, setPitch, setYaw;
     private static long lastFrameNanos = 0L;
     private static int jumpTick, pending, failedUses, fired, stopTicks, armWait, emptyTicks;
@@ -175,26 +175,21 @@ public final class Takeoff {
                 (int) Math.round(RocketBurn.meanTicks(d)), terrain, top, PATH_TICKS);
             keepPath(mean, p);
             climbTicks = Math.max(worst.ticks(), mean.ticks());   // the slower of the two
-            cruiseAgl = target - p.getY();
+            cruiseY = target;
         }
-        if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p)) { status = Status.WORN_CRUISE; pathCount = 0; }
+        if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p, mc.level.getMinY())) { status = Status.WORN_CRUISE; pathCount = 0; }
         else if (heldRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
     }
 
-    // Whether the best elytra the takeoff could fly on lasts the climb and still has the durability failsafe's
-    // reserve at the cruise. Only an elytra that wears out is judged, as the failsafe judges only those; a spare
-    // counts when the failsafe is on, since it swaps one in when the worn one trips its warning.
-    private static boolean elytraLasts(LocalPlayer p) {
-        ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.is(Items.ELYTRA) || !chest.isDamageableItem()) return true;
-        double best = ElytraLife.flightSeconds(chest);
-        if (Settings.elytraDuraFailsafe) {
-            for (int i = 9; i < p.inventoryMenu.slots.size(); i++) {   // the slots the failsafe swaps from
-                ItemStack st = p.inventoryMenu.slots.get(i).getItem();
-                if (st.is(Items.ELYTRA) && st.isDamageableItem()) best = Math.max(best, ElytraLife.flightSeconds(st));
-            }
-        }
-        return TakeoffModel.elytraLasts(best, climbTicks, ElytraGuard.landingReserveSeconds(cruiseAgl));
+    // Whether END would still be at least a minute after the climb to the cruise (RW): END from the elytra carried,
+    // with the landing reserve of the cruise height, less the planned climb's time. Only an elytra that wears out is
+    // judged. Spares count when the failsafe is on, since it swaps them in; with it off, the worn wing alone, as before.
+    private static boolean elytraLasts(LocalPlayer p, int minY) {
+        Durability.Wing worn = ElytraLife.wing(p.getItemBySlot(EquipmentSlot.CHEST));
+        if (worn == null || worn.unbreakable()) return true;
+        List<Durability.Wing> spares = Settings.elytraDuraFailsafe ? ElytraLife.spares(p.inventoryMenu, null) : List.of();
+        int reserve = Durability.reservePoints(LandingTime.seconds(cruiseY - minY));
+        return TakeoffModel.elytraLasts(Durability.endurance(Durability.order(worn, spares), reserve), climbTicks);
     }
 
     /** What the row should say while standing or in water; NONE when nothing to offer (in the air, no elytra, no
@@ -506,7 +501,7 @@ public final class Takeoff {
                     color = HudColors.RED;
                 }
                 case WORN -> { s = "ELYTRA TOO WORN TO TAKE OFF"; color = HudColors.RED; }
-                case WORN_CRUISE -> { s = "ELYTRA TOO WORN TO REACH CRUISE"; color = HudColors.RED; }
+                case WORN_CRUISE -> { s = "NOT ENOUGH ELYTRA DURABILITY TO TAKE OFF"; color = HudColors.RED; }
                 case STARS -> { s = "ROCKETS WITH STARS WOULD HURT YOU"; color = HudColors.RED; }
                 case LAVA -> { s = "CAN'T TAKE OFF FROM LAVA"; color = HudColors.RED; }
                 case AUTOPILOT -> { s = "TURN ON THE AUTOPILOT TO TAKE OFF"; color = HudColors.RED; }

@@ -74,7 +74,7 @@ public class KineSettingsScreen extends Screen {
         + "render distance. With the autopilot engaged it follows and traces the path it predicts, turns included.";
     private static final String DESC_RANGE =
         "While wearing an elytra, shows how long and how far you can still glide on every elytra you carry, "
-        + "keeping a reserve for gliding down. Range uses your recent average speed.";
+        + "keeping back what a landing from your height needs. Range uses your recent average speed, less 10%.";
     private static final String DESC_RIBBON =
         "While the autopilot is engaged, draws the path it predicts as two rails in the world: blue seen "
         + "from above, orange from below.";
@@ -83,9 +83,9 @@ public class KineSettingsScreen extends Screen {
         + "from close walls, and hands back control if boxed in. It only arms when it finds a safe path.";
 
     private static final String DESC_ELYTRA =
-        "The only reason you should ever disable this is if you keep getting kicked due to a bug which is "
-        + "our fault. Warns when durability is too low to glide down safely and swaps in a fresher spare. "
-        + "On autopilot it logs you out before the wing breaks.";
+        "Leave this on; turn it off only if a bug of ours keeps getting in your way. Swaps in a fresh elytra "
+        + "when the worn one is down to 3 durability. When the last one runs low, the autopilot lands; flying "
+        + "by hand, you're warned, and logged out if you don't respond.";
     private static final String DESC_FALL =
         "Sneaks for you at the edge of a drop of more than three blocks, so you stop there. Jump to get past "
         + "it. Water or hay below still counts as a drop.";

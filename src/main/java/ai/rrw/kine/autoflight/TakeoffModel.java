@@ -99,14 +99,16 @@ public final class TakeoffModel {
      *  it gave up). */
     public record Plan(double[] xs, double[] ys, double[] zs, int count, int rockets, boolean reachesCruise, int ticks) {}
 
+    /** The least END a takeoff must leave at the cruise (RW: "takeoff limit maybe yeah 60 seems sensible?"). */
+    public static final double MIN_CRUISE_ENDURANCE = 60.0;
+
     /**
-     * Can an elytra with `flightSeconds` of gliding left fly a takeoff of `climbTicks` and still have
-     * `reserveSeconds` at the hand-over (the durability failsafe's reserve for gliding down from the cruise)?
-     * Below that the failsafe would disconnect the pilot soon after the hand-over, or the elytra would give out
-     * in the climb.
+     * Would END still be at least MIN_CRUISE_ENDURANCE after a takeoff of `climbTicks`? `endurance` is END from the
+     * elytra carried now with the landing reserve of the cruise height (Durability.endurance); the climb uses it up
+     * a second a second on average.
      */
-    public static boolean elytraLasts(double flightSeconds, int climbTicks, double reserveSeconds) {
-        return flightSeconds >= climbTicks / 20.0 + reserveSeconds;
+    public static boolean elytraLasts(double endurance, int climbTicks) {
+        return endurance - climbTicks / 20.0 >= MIN_CRUISE_ENDURANCE;
     }
 
     /** The state of a takeoff in flight: position, velocity (blocks per tick), pitch, whether the lean has begun,

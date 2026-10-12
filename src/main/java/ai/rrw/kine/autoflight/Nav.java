@@ -11,6 +11,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -26,7 +27,9 @@ import java.util.Set;
  * coordinate and, on arriving, lands there with the {@link LandingModel} law (a spiral plunge, a brake well
  * above the ground and a slow nose-up finish onto the spot), or first circles over it ({@link HoldModel}), as the
  * nav screen's At destination choice says: hold, hold till day (while monsters can spawn there), or land. An aimed
- * landing ({@link Landing}) starts the landing law at once on the spot picked with the reticle. The autopilot reads desiredYaw()/landing()/landingPitch() to steer;
+ * landing ({@link Landing}) starts the landing law at once on the spot picked with the reticle. When END reaches 0 on
+ * the autopilot (the durability failsafe, {@link ElytraGuard#landNow}) it lands near where you are, an emergency
+ * landing, on water only when nothing dry is in reach. The autopilot reads desiredYaw()/landing()/landingPitch() to steer;
  * this class only ever sets targets, never touches the player directly.
  */
 public class Nav {
@@ -39,6 +42,7 @@ public class Nav {
                                                           // circle reaches about 240 from the fix before it centres)
     private static final int    SCAN_RADIUS    = 16;     // search this far out for a safe landing column
     private static final int    SCAN_DEPTH     = 48;     // how far below the column's top to keep looking, if the heightmap is stale
+    private static final int    EMERGENCY_REACH = 32;    // an emergency landing looks this far around you for dry ground, then water
 
     // blocks we refuse to touch down on (lava is also caught as a fluid below)
     static final Set<Block> DANGER = Set.of(
@@ -56,7 +60,8 @@ public class Nav {
     private static boolean haveSpot = false;
     private static int     spotX, spotZ;           // chosen safe landing column
     private static double  spotTop;                // its top surface (the y you stand at on it)
-    private static boolean aimed = false;          // this landing was picked with the reticle
+    private static boolean aimed = false;          // this landing was picked with the reticle, or is an emergency landing
+    private static boolean emergency = false;      // this landing is the durability failsafe's (END 0): water allowed
     // the trip's mode and destination while an aimed landing borrows them, given back when it ends
     private static Mode    tripMode = Mode.OFF;
     private static int     tripX, tripZ;
@@ -93,6 +98,8 @@ public class Nav {
     public static boolean hasSpot()       { return landing() && haveSpot; }   // landing on a known spot (spotX, spotZ, spotTop)
     public static int     targetZ()       { return targetZ; }
     public static boolean holding()       { return Settings.navigation && holding; }
+    /** Landing because END reached 0 (the durability failsafe). */
+    public static boolean emergency()     { return landing() && emergency; }
     /** The At destination choice, saved in kine.json (Settings.navArrival); hold till day by default (RW), and for an
      *  unknown value. */
     public static Arrival arrival() {
@@ -108,7 +115,7 @@ public class Nav {
     public static void setHeading(float headingDeg) { clearLanding(); mode = Mode.SELECTED; selectedHeading = wrap360(headingDeg); hasHeading = true; }
     public static void setTarget(int x, int z)       { clearLanding(); mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta(); }
     public static void off()                         { clearLanding(); mode = Mode.OFF; }
-    private static void clearLanding()               { landing = false; haveSpot = false; holding = false; endAimed(); }
+    private static void clearLanding()               { landing = false; haveSpot = false; holding = false; emergency = false; endAimed(); }
 
     /** Land now on the column (x, z) whose top surface is at `top`: picked with the reticle and already checked
      *  safe and reachable by {@link Landing}. */
@@ -122,8 +129,25 @@ public class Nav {
         if (!aimed) { tripMode = mode; tripX = targetX; tripZ = targetZ; tripHasTarget = hasTarget; }   // a second aim keeps the trip
         mode = Mode.MANAGED; targetX = x; targetZ = z; hasTarget = true; NavHud.resetEta();
         spotX = x; spotZ = z; spotTop = top; haveSpot = true;
-        landing = true; aimed = true; holding = false; law = new LandingModel.Law();
+        landing = true; aimed = true; holding = false; emergency = false; law = new LandingModel.Law();
         law.update(px, py, pz, vy, spotX + 0.5, spotTop, spotZ + 0.5);   // steer from now
+    }
+
+    /** END has reached 0 on the autopilot: land near here now with the landing law (RW: "emergency landing prefer dry,
+     *  water only when nothing dry"). The spot borrows the destination as an aimed one does; the trip comes back at
+     *  touchdown. */
+    private static void emergencyLanding(Minecraft mc, LocalPlayer p) {
+        Level level = mc.level;
+        int px = p.getBlockX(), pz = p.getBlockZ();
+        int[] spot = nearestColumn(px, pz, EMERGENCY_REACH, (x, z) -> safeColumn(level, x, z));
+        boolean water = spot == null;
+        if (water) spot = nearestColumn(px, pz, EMERGENCY_REACH, (x, z) -> waterColumn(level, x, z));
+        if (spot == null) spot = new int[]{ px, pz };   // nothing dry or wet in reach: straight down, as a destination landing falls back
+        int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, spot[0], spot[1]);   // fluids count: the water's surface
+        landAt(spot[0], top, spot[1], p);
+        emergency = true;
+        Kine.LOGGER.info("Kine landing: END 0, emergency landing at {} {} {}{} from y {}", spot[0], top, spot[1],
+            water ? " (water, nothing dry in reach)" : "", String.format("%.1f", p.getY()));
     }
 
     // An aimed landing is over (touched down, abandoned, or ended from the nav screen or the settings): the trip's mode and
@@ -166,6 +190,10 @@ public class Nav {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         while (navKey.consumeClick()) if (Settings.navigation) mc.setScreen(new KineNavScreen());
+        // END 0 on the autopilot: land near here, whatever nav was doing; a landing already under way goes on. Ahead of
+        // the hold's own check below, so a hold ends in this landing too.
+        if (!landing && Settings.navigation && Autopilot.isEngaged() && p.isFallFlying() && !p.isInWater()
+                && ElytraGuard.landNow()) emergencyLanding(mc, p);
         if (mode() == Mode.OFF) { clearLanding(); return; }
 
         if (mode == Mode.MANAGED && hasTarget) {
@@ -186,6 +214,12 @@ public class Nav {
         if (landing && p.getAbilities().flying) clearLanding();   // creative or spectator flight: the landing lets go (RW)
         if (landing) {
             if (p.onGround() && !p.isFallFlying()) touchedDown();
+            else if (emergency && p.isInWater()) {
+                // on water: the glide goes on there (LivingEntity.canGlide doesn't check for water), so this is the
+                // touchdown, and the autopilot lets go as it does on the ground, without AUTOPILOT OFF
+                touchedDown();
+                Autopilot.releaseAfterLanding();
+            }
             else law.update(p.getX(), p.getY(), p.getZ(), p.getDeltaMovement().y, spotX + 0.5, spotTop, spotZ + 0.5);
         }
     }
@@ -199,11 +233,10 @@ public class Nav {
         law = new LandingModel.Law();
     }
 
-    // Whether to circle over the destination now rather than land: never once the elytra is short of durability
-    // (the failsafe's land-now warning; the landing then pauses its countdown), always for Hold, and for Hold till
-    // day while monsters can spawn there.
+    // Whether to circle over the destination now rather than land: never once END has reached 0 (the durability
+    // failsafe's land now), always for Hold, and for Hold till day while monsters can spawn there.
     private static boolean holdNow(Minecraft mc) {
-        if (ElytraGuard.warning()) return false;
+        if (ElytraGuard.landNow()) return false;
         return switch (arrival()) {
             case HOLD -> true;
             case LAND -> false;
@@ -220,25 +253,50 @@ public class Nav {
             level.dimensionType().monsterSpawnLightTest().maxInclusive());
     }
 
-    /** Touched down: the landing ends, and an aimed one gives the trip back. */
-    static void touchedDown() { landing = false; endAimed(); }
+    /** Touched down: the landing ends, and an aimed or emergency one gives the trip back. */
+    static void touchedDown() { landing = false; emergency = false; endAimed(); }
 
     /** Nearest non-dangerous solid column to the target, searched ring by ring; falls back to the target. */
     private static void findSafeSpot(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
-        for (int r = 0; r <= SCAN_RADIUS; r += 2) {
-            int best = Integer.MAX_VALUE, bx = targetX, bz = targetZ; boolean found = false;
+        int[] spot = nearestColumn(targetX, targetZ, SCAN_RADIUS, (x, z) -> safeColumn(level, x, z));
+        if (spot != null) { spotX = spot[0]; spotZ = spot[1]; haveSpot = true; return; }
+        spotX = targetX; spotZ = targetZ; haveSpot = false;   // nothing safe found; aim at the target anyway
+    }
+
+    private interface ColumnTest { boolean test(int x, int z); }
+
+    /** The nearest column around (cx, cz) that passes the test, searched in square rings 2 blocks apart out to
+     *  `radius`, nearest first within a ring; {x, z}, or null if none does. */
+    private static int[] nearestColumn(int cx, int cz, int radius, ColumnTest ok) {
+        for (int r = 0; r <= radius; r += 2) {
+            int best = Integer.MAX_VALUE, bx = cx, bz = cz; boolean found = false;
             for (int dx = -r; dx <= r; dx += 2) for (int dz = -r; dz <= r; dz += 2) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;   // current ring only
-                int x = targetX + dx, z = targetZ + dz;
-                if (safeColumn(level, x, z)) {
+                int x = cx + dx, z = cz + dz;
+                if (ok.test(x, z)) {
                     int d = dx * dx + dz * dz;
                     if (d < best) { best = d; bx = x; bz = z; found = true; }
                 }
             }
-            if (found) { spotX = bx; spotZ = bz; haveSpot = true; return; }
+            if (found) return new int[]{ bx, bz };
         }
-        spotX = targetX; spotZ = targetZ; haveSpot = false;   // nothing safe found; aim at the target anyway
+        return null;
+    }
+
+    /** Whether a column's surface is water, the emergency landing's fallback: the first block below the open sky
+     *  holds water (lava and every other surface no). */
+    static boolean waterColumn(Level level, int x, int z) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        int bottom = Math.max(level.getMinY(), top - SCAN_DEPTH);
+        for (int y = top; y >= bottom; y--) {
+            pos.set(x, y, z);
+            BlockState s = level.getBlockState(pos);
+            if (s.isAir()) continue;
+            return s.getFluidState().is(FluidTags.WATER);
+        }
+        return false;
     }
 
     /** Whether a column's top block is safe to land on: not a fluid and not a dangerous block. The scan

@@ -6,7 +6,7 @@ public final class HudColors {
 
     public static final int GREEN   = 0xFF44FF44;   // nav readouts, altitude, ALT, AP engaged
     public static final int RED     = 0xFFFF3030;   // warnings, AP disengaged
-    public static final int AMBER   = 0xFFFFC400;   // radio altimeter, range and endurance, CLB and DESC
+    public static final int AMBER   = 0xFFFFC400;   // radio altimeter, range, endurance in its last minute, LAST ELYTRA, CLB and DESC
     public static final int YELLOW  = 0xFFFFEE00;   // ALT* (capturing the target altitude)
     public static final int WHITE   = 0xFFFFFFFF;
     public static final int MAGENTA = 0xFFFF00FF;   // flight director bars

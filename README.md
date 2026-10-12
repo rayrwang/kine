@@ -61,7 +61,6 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Support fireworks?
 	- Warnings?
 - Fix:
-	- Elytra durability protection should be cumulative, not single
 	- Low altitude warning should count as autopilot disconnect
 	- Flight director turn even in manual flight?
 	- Takeoff rocket spam
@@ -111,13 +110,13 @@ The landing glides toward the spot at 5 degrees nose down, spirals down around i
 
 ### Range and endurance
 
-Endurance adds up the flight time of every elytra you carry (worn, inventory, offhand; not in shulker boxes), each scaled by Unbreaking, less a 5% contingency and a reserve for gliding down from your height; an Unbreakable elytra shows ∞. Range is endurance times your average ground speed over whole porpoise cycles, and starts afresh each flight. Range and ETA count down with the clock and drift toward the raw estimate, so they don't jump with each durability point.
+Endurance (END) is the expected gliding time on every elytra you carry (worn, inventory, offhand; not in shulker boxes): each one's durability above 3 points, one point a second times Unbreaking + 1 on average (elytra take the tool rule for Unbreaking). It holds back a landing reserve on the last elytra to be flown: one point for each second the autopilot's landing would take from your height down to the bottom of the world, at worst a point a second, read from a curve precomputed with the landing law. So END reaching 0 means the landing must start now. An Unbreakable elytra shows ∞. Range (RNG) is endurance times your average ground speed over whole porpoise cycles, less 10%, and starts afresh each flight; navigation's INSUFFICIENT DURABILITY compares it with the distance left. END, RNG and ETA count down with the clock and drift toward the raw estimate, so they don't jump with each durability point. END turns amber in its last minute and red in its last 20 s.
 
 Beside them, the firework count is the burn of every rocket you carry without firework stars (inventory and offhand), counted in flight-duration-1 rockets, with a rocket icon. While a rocket boosts you, a burn bar shows how far through it you are: bright up to the shortest burn the rocket can have, then fading with the chance it is still burning, since the server rolls each rocket's length and never sends it.
 
 ### Durability failsafe and auto-swap
 
-Below the reserve you get a land-now warning and a hot-swap to a spare that clears it; with 3 durability left, to any spare with more life. On autopilot it disconnects you after 5 s without input, or at once at 2 durability. Swaps are inventory clicks made as a player makes them: one tick with the inventory opened (every key up), the clicks, then the close, only with no container open.
+An elytra counts as spent at 3 durability or less (the game itself stops gliding at 1). While you glide, by hand or on autopilot, a spent elytra is swapped for the spare with the most durability left, and after a swap onto the last usable one LAST ELYTRA shows for a few seconds. When endurance reaches 0, the autopilot lands near where you are with its landing law, on the nearest dry, safe column within 32 blocks, or on water only if there is none, under a red warning. Flying by hand you get a red warning instead, and if you give no input for 5 s (input as the AFK protection counts it) you are disconnected. A rocket takeoff is offered only if endurance would still be at least 60 s at the cruise. Swaps are inventory clicks made as a player makes them: one tick with the inventory opened (every key up), the clicks, then the close, only with no container open.
 
 ### Combat
 

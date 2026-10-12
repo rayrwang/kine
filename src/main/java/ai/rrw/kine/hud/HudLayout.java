@@ -3,9 +3,10 @@ package ai.rrw.kine.hud;
 /**
  * Where the HUD's text goes, in one place. Around the crosshair: the flight director's bars travel a
  * quarter of the screen height either way; just above that travel is the warning row (TOO LOW,
- * INSUFFICIENT DURABILITY), and above it two annunciator rows: the nav block in the middle, the
- * vertical mode to its left and AP to its right. The big flashing warnings start a third of the way
- * down. Above the hotbar, from the top: speed lines, range and endurance, radio altimeter.
+ * INSUFFICIENT DURABILITY), a line below it a short notice (LAST ELYTRA), and above it two annunciator
+ * rows: the nav block in the middle, the vertical mode to its left and AP to its right. The big
+ * warnings start a third of the way down. Above the hotbar, from the top: speed lines, range and
+ * endurance, radio altimeter.
  */
 public final class HudLayout {
     private HudLayout() {}
@@ -15,6 +16,9 @@ public final class HudLayout {
 
     /** The warning row, just above the bars' travel. */
     public static int warningRow(int h, int lineHeight) { return h / 2 - directorTravel(h) - lineHeight - 6; }
+
+    /** A short notice in the warning row's style, a line below it so it never covers the row (LAST ELYTRA). */
+    public static int noticeRow(int h, int lineHeight) { return warningRow(h, lineHeight) + lineHeight + 2; }
 
     /** The lower annunciator row (DIST and ETA, the target altitude). */
     public static int annunciatorLower(int h, int lineHeight) { return warningRow(h, lineHeight) - lineHeight - 2; }
@@ -31,7 +35,7 @@ public final class HudLayout {
     /** Left edge of AP, mirroring the vertical mode block. */
     public static int apLeftEdge(int cx, int halfNav) { return Math.max(cx + SIDE_GAP, cx + halfNav + 12); }
 
-    /** Top of the big flashing warnings (AUTOPILOT OFF, LOW DURABILITY). */
+    /** Top of the big warnings (AUTOPILOT OFF, LOW DURABILITY). */
     public static int bigWarningTop(int h) { return h / 3; }
 
     /** The mining readout, just below the crosshair. */

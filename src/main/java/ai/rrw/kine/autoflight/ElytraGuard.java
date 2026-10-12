@@ -2,10 +2,11 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.combat.AfkGuard;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.hud.HudLayout;
-import ai.rrw.kine.hud.RadioAltimeter;
+import ai.rrw.kine.hud.RangeEndurance;
 import ai.rrw.kine.util.Disconnect;
 import ai.rrw.kine.util.ElytraLife;
 import ai.rrw.kine.util.InventoryClicks;
@@ -24,27 +25,43 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * The elytra durability failsafe (one switch, Safety section). While gliding, by hand or on the autopilot:
+ * <ul>
+ *   <li>when the worn elytra is down to the floor (3 points left, {@link Durability#FLOOR}), it swaps in the freshest
+ *       spare, the one with the most usable points; after a swap onto the last usable one, LAST ELYTRA shows for 5 s;</li>
+ *   <li>when END reaches 0 ({@link RangeEndurance#endurance}), only the landing reserve is left: on the autopilot, Nav
+ *       lands near here ({@link #landNow}) under a red warning; flying by hand, a red warning, and with no input for
+ *       5 s (input as {@link AfkGuard} counts it) a disconnect, the only durability disconnect.</li>
+ * </ul>
+ */
 public class ElytraGuard {
 
-    // tuning, with generous margins
-    private static final double DESCENT_RATE = 6.0;    // assumed safe descent rate (blocks/sec) when budgeting
-    private static final double BASE_MARGIN  = 15.0;   // flat reserve (sec) for approach / mistakes
-    static final int            GRACE_TICKS  = 100;    // 5 s for the pilot to take control before the failsafe fires
-    private static final int    ALMOST_BREAK_DUR = 3;  // at or under this, swap to any wing with more life
-    private static final int    CRITICAL_DUR = 2;      // disconnect at once at or under this durability (about to break)
-    private static final int    CHEST_SLOT   = 6;      // chestplate slot index in the player inventory menu
-    private static final int    SWAP_COOLDOWN = 40;    // ticks between auto-swap attempts
+    private static final int CHEST_SLOT      = 6;     // chestplate slot index in the player inventory menu
+    private static final int SWAP_COOLDOWN   = 40;    // ticks between swap attempts
+    private static final int LAST_WING_TICKS = 100;   // LAST ELYTRA shows this long after the swap onto the last wing
+    static final int         NO_INPUT_TICKS  = 100;   // flying by hand at END 0: disconnect after 5 s with no input (RW)
 
-    private static boolean warning = false;   // read by the HUD
-    private static int graceTicks = 0;
+    private enum Warn { NONE, LANDING, MANUAL }
+
+    private static Warn warn = Warn.NONE;     // read by the HUD
+    private static int warnTicks = 0;         // ticks the manual warning has been up
+    private static int lastWingTicks = 0;     // LAST ELYTRA's time left
     private static int swapCooldown = 0;
     private static boolean swapRequested = false;   // the next tick is the inventory's opening for a swap
-    private static double  swapMinSeconds;          // the flight time the swap's wing must clear (from the request)
 
-    /** The land-now warning is up: the worn elytra's flight time is below the reserve for gliding down. */
-    public static boolean warning() { return warning; }
+    /** END has reached 0 with the failsafe on: the landing must start now. Nav reads it to land on the autopilot and
+     *  to end a hold. */
+    public static boolean landNow() {
+        return Settings.elytraDuraFailsafe && RangeEndurance.endurance() <= 0;
+    }
+
+    /** LAST ELYTRA is showing (a swap onto the last usable wing within the last 5 s). */
+    public static boolean lastElytra() { return lastWingTicks > 0; }
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ElytraGuard::tick);
@@ -55,79 +72,52 @@ public class ElytraGuard {
     }
 
     private static void tick(Minecraft mc) {
-        if (mc.isPaused()) return;   // singleplayer paused: the elytra wears no further, so the grace waits too
+        if (mc.isPaused()) return;   // singleplayer paused: the elytra wears no further, so the countdowns wait too
+        if (lastWingTicks > 0) lastWingTicks--;
         // A swap was asked for last tick, so this is the tick the inventory "opened" in: its end is when the clicks go.
         if (swapRequested) {
             swapRequested = false;
-            if (InventoryClicks.isOpenTick() && finishSwap(mc)) {
-                graceTicks = 0;
-                return;   // fresh elytra equipped; re-evaluate next tick
-            }
+            if (InventoryClicks.isOpenTick() && finishSwap(mc)) return;   // fresh elytra on; re-evaluate next tick
         }
-        warning = false;
-        if (!Settings.elytraDuraFailsafe) { graceTicks = 0; return; }
-
+        if (!Settings.elytraDuraFailsafe) { calm(); swapCooldown = 0; lastWingTicks = 0; return; }
         LocalPlayer p = mc.player;
         // not gliding, or dead (a body keeps gliding until it lands): nothing to guard
-        if (p == null || mc.level == null || !p.isFallFlying() || p.isDeadOrDying()) { graceTicks = 0; swapCooldown = 0; return; }
+        if (p == null || mc.level == null || !p.isFallFlying() || p.isDeadOrDying()) { calm(); swapCooldown = 0; return; }
+        Durability.Wing worn = ElytraLife.wing(p.getItemBySlot(EquipmentSlot.CHEST));
+        if (worn == null) { calm(); return; }
 
-        ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.is(Items.ELYTRA) || !chest.isDamageableItem()) { graceTicks = 0; return; }
-
-        int remaining = chest.getMaxDamage() - chest.getDamageValue();   // raw durability points left
-        double secondsLeft = ElytraLife.flightSeconds(chest);
-        // Height above ground from the radio altimeter. Over the void it returns -1; the failsafe then uses
-        // the full height above the world floor, so it warns and disconnects early over a bottomless drop.
-        int rawAgl = RadioAltimeter.agl();
-        double agl = (rawAgl >= 0) ? rawAgl : Math.max(0, p.getY() - mc.level.getMinY());
-        double reserve = landingReserveSeconds(agl);
-        warning = secondsLeft < reserve;
-
-        // Two swap tiers with a gap between them:
-        //  - at the warning, only swap to a wing that clears it (otherwise keep the warning, so the pilot lands)
-        //  - once almost broken, swap to any wing with more flight time
-        if (warning) {
-            if (swapCooldown > 0) {
-                swapCooldown--;
-            } else {
-                double minTargetSeconds = (remaining <= ALMOST_BREAK_DUR)
-                    ? secondsLeft + 0.001                                 // any wing with strictly more flight time
-                    : reserve;                                            // must clear the warning
-                // a wing worth swapping to: the next tick plays the inventory's opening, and the swap goes at its end
-                if (mc.gameMode != null && InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick()
-                        && canTakeOff(p) && bestSpare(p.inventoryMenu, minTargetSeconds) >= 0) {
-                    InventoryClicks.requestOpen();
-                    swapRequested = true; swapMinSeconds = minTargetSeconds;
-                    return;   // the grace waits for the swap, as it did when the swap went at once
-                }
-            }
+        // the worn wing at its floor: swap in the freshest spare. The next tick plays the inventory's opening, and the
+        // swap goes at its end.
+        if (swapCooldown > 0) swapCooldown--;
+        else if (worn.spent() && mc.gameMode != null && InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick()
+                && canTakeOff(p) && freshestSlot(p.inventoryMenu) >= 0) {
+            InventoryClicks.requestOpen();
+            swapRequested = true;
         }
 
-        graceTicks = graceAfter(graceTicks, warning, Autopilot.isEngaged(), Nav.landing());
-        // CRITICAL_DUR counts raw points, since the wing breaks at the same point whatever its Unbreaking. It
-        // still fires during the autopilot's own landing.
-        if (warning && Autopilot.isEngaged() && (graceTicks >= GRACE_TICKS || remaining <= CRITICAL_DUR)) bailOut(mc);
+        // END 0. In water (a landing on water: the glide goes on there, LivingEntity.canGlide doesn't check for it)
+        // there is nothing to warn of.
+        if (!(RangeEndurance.endurance() <= 0) || p.isInWater()) { calm(); return; }
+        if (Autopilot.isEngaged() && Nav.landing()) { warn = Warn.LANDING; warnTicks = 0; return; }
+        // Flying by hand (or on an autopilot that can't land: navigation switched off in the settings)
+        warn = Warn.MANUAL;
+        warnTicks++;
+        if (idle() >= NO_INPUT_TICKS) disconnect(mc);
     }
 
-    /** The grace count after a tick: it counts while the warning is up and the autopilot flies, and starts over
-     *  once the pilot takes control or the warning clears. During the autopilot's own landing it holds: the
-     *  autopilot is doing what the warning asks. */
-    static int graceAfter(int graceTicks, boolean warning, boolean engaged, boolean landing) {
-        if (!warning || !engaged) return 0;   // pilot took control, or we're safe again
-        return landing ? graceTicks : graceTicks + 1;
-    }
+    private static void calm() { warn = Warn.NONE; warnTicks = 0; }
+
+    // Ticks without input while the manual warning has been up. AfkGuard counts at the end of each tick after this
+    // one, so its count is last tick's.
+    private static int idle() { return Math.min(warnTicks, AfkGuard.idleTicks()); }
 
     /**
-     * Hot-swap to the spare elytra with the most flight time left (ElytraLife.flightSeconds), but only if
-     * that best wing clears {@code swapMinSeconds} of flight. The request sets the bar: enough to clear
-     * the land-immediately warning in normal use, or just longer-lived than the current wing when almost
-     * broken. Swaps with three container clicks (pick up the spare, swap it into the chest slot, put the old
-     * wing in the spare's slot), only with no screen or container open and an empty cursor, so no item is
-     * stranded. As a vanilla client does it: the tick before plays the inventory's opening (every key up, no
-     * action), the clicks go at that tick's end, between ticks, and the close does what closing the inventory
-     * does. The close goes even when the swap is no longer wanted, since the inventory was "opened". Returns
-     * whether the spare is now worn: the clicks predict the server's result, and a swap that did nothing must not
-     * reset the failsafe's grace.
+     * Swap the freshest spare in with three container clicks (pick up the spare, swap it into the chest slot, put the
+     * spent wing in the spare's slot), only with no screen or container open and an empty cursor, so no item is
+     * stranded. As a vanilla client does it: the tick before plays the inventory's opening (every key up, no action),
+     * the clicks go at that tick's end, between ticks, and the close does what closing the inventory does. The close
+     * goes even when the swap is no longer wanted, since the inventory was "opened". Returns whether the spare is now
+     * worn (the clicks predict the server's result).
      */
     private static boolean finishSwap(Minecraft mc) {
         LocalPlayer p = mc.player;
@@ -136,17 +126,24 @@ public class ElytraGuard {
         if (!InventoryClicks.claimBatch()) return false;   // another feature clicked in this opening (and closed it)
         AbstractContainerMenu menu = p.inventoryMenu;
         boolean swapped = false;
-        int bestSlot = (p.isFallFlying() && canTakeOff(p)) ? bestSpare(menu, swapMinSeconds) : -1;
-        if (bestSlot >= 0) {
-            ItemStack spare = menu.slots.get(bestSlot).getItem().copy();
+        Durability.Wing worn = ElytraLife.wing(p.getItemBySlot(EquipmentSlot.CHEST));
+        int slot = (p.isFallFlying() && worn != null && worn.spent() && canTakeOff(p)) ? freshestSlot(menu) : -1;
+        if (slot >= 0) {
+            ItemStack spare = menu.slots.get(slot).getItem().copy();
             int cid = menu.containerId;
-            gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // cursor <- spare
+            gm.handleContainerInput(cid, slot,       0, ContainerInput.PICKUP, p);  // cursor <- spare
             gm.handleContainerInput(cid, CHEST_SLOT, 0, ContainerInput.PICKUP, p);  // chest <-> cursor (the cursor holds the worn wing)
-            gm.handleContainerInput(cid, bestSlot,   0, ContainerInput.PICKUP, p);  // worn wing -> the emptied slot
+            gm.handleContainerInput(cid, slot,       0, ContainerInput.PICKUP, p);  // worn wing -> the emptied slot
             swapCooldown = SWAP_COOLDOWN;   // taken or not, no retry at once
             swapped = ItemStack.matches(p.getItemBySlot(EquipmentSlot.CHEST), spare);
-            if (swapped) Kine.LOGGER.info("Kine: auto-swapped to a fresher elytra ({} s of flight)", (int) ElytraLife.flightSeconds(spare));
-            else Kine.LOGGER.warn("Kine: elytra auto-swap did not take");
+            if (swapped) {
+                boolean last = freshestSlot(menu) < 0;
+                if (last) lastWingTicks = LAST_WING_TICKS;   // never with one wing only: that takes no swap (RW)
+                Kine.LOGGER.info("Kine: swapped in a fresh elytra ({} durability left{})",
+                    spare.getMaxDamage() - spare.getDamageValue(), last ? ", the last one" : "");
+            } else {
+                Kine.LOGGER.warn("Kine: elytra swap did not take");
+            }
         }
         InventoryClicks.closeAsVanilla(mc, p);
         return swapped;
@@ -158,55 +155,42 @@ public class ElytraGuard {
         return p.inventoryMenu.slots.get(CHEST_SLOT).mayPickup(p);
     }
 
-    // The inventory menu slot of the spare elytra with the most flight time left, if it clears minSeconds; else -1.
-    private static int bestSpare(AbstractContainerMenu menu, double minSeconds) {
-        int bestSlot = -1;
-        double bestSeconds = -1.0;
-        for (int i = 9; i < menu.slots.size(); i++) {          // 9 to 45: main inventory, hotbar, offhand
-            ItemStack st = menu.slots.get(i).getItem();
-            if (st.is(Items.ELYTRA) && st.isDamageableItem()) {
-                double secs = ElytraLife.flightSeconds(st);
-                if (secs > bestSeconds) { bestSeconds = secs; bestSlot = i; }
-            }
-        }
-        return (bestSlot >= 0 && bestSeconds >= minSeconds) ? bestSlot : -1;   // nothing with enough flight time left
+    // The inventory menu slot of the freshest usable spare (Durability.freshest), or -1.
+    private static int freshestSlot(AbstractContainerMenu menu) {
+        List<Integer> slots = new ArrayList<>();
+        int i = Durability.freshest(ElytraLife.spares(menu, slots));
+        return i < 0 ? -1 : slots.get(i);
     }
 
-
-    /** Durability (about one second per point) to keep in reserve for gliding down from this height,
-     *  with a margin that grows with height. */
-    public static double landingReserveSeconds(double agl) {
-        double descentSeconds = agl / DESCENT_RATE;
-        double altitudeFactor = 1.5 + agl / 1000.0;
-        return descentSeconds * altitudeFactor + BASE_MARGIN;
-    }
-
-    private static void bailOut(Minecraft mc) {
-        graceTicks = 0;
-        Autopilot.disengage();
-        Kine.LOGGER.warn("Kine: elytra durability failsafe, disconnecting to avoid a fall death");
-        Disconnect.withMessage(mc, Component.literal("Kine: low elytra durability failsafe"));
+    private static void disconnect(Minecraft mc) {
+        warnTicks = 0;
+        Kine.LOGGER.warn("Kine: elytra durability failsafe, disconnecting (worn out in flight by hand, no input for {} s)",
+            NO_INPUT_TICKS / 20);
+        Disconnect.withMessage(mc, Component.literal("Kine: elytra durability failsafe\n\nYour elytra were down to the "
+            + "landing reserve while you flew by hand, and there was no input for " + NO_INPUT_TICKS / 20 + " seconds."));
     }
 
     private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
-        if (!warning) return;
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
 
-        int color = HudColors.warningFlash();
+        if (lastWingTicks > 0 && Settings.elytraDuraFailsafe) {
+            String s = "LAST ELYTRA";
+            g.text(font, s, W / 2 - font.width(s) / 2, HudLayout.noticeRow(H, font.lineHeight), HudColors.AMBER, true);
+        }
+        if (warn == Warn.NONE) return;
         int cy = HudLayout.bigWarningTop(H);
         int big = (int) (font.lineHeight * 2.0f);
-
-        HudDraw.scaledText(g, font, "LOW DURABILITY",   W / 2, cy,            color, 2.0f, false);
-        HudDraw.scaledText(g, font, "LAND IMMEDIATELY", W / 2, cy + big + 4,  color, 2.0f, false);
-
-        if (Autopilot.isEngaged() && !Nav.landing()) {   // during its own landing the grace holds: no countdown
-            int secs = Math.max(0, (GRACE_TICKS - graceTicks + 19) / 20);
-            HudDraw.scaledText(g, font, "autopilot disconnect in " + KineTime.format(secs) + ", take control",
-                W / 2, cy + 2 * big + 14, HudColors.WHITE, 1.0f, false);
+        HudDraw.scaledText(g, font, "LOW DURABILITY", W / 2, cy, HudColors.RED, 2.0f, false);
+        if (warn == Warn.LANDING) {
+            HudDraw.scaledText(g, font, "LANDING", W / 2, cy + big + 4, HudColors.RED, 2.0f, false);
+            return;
         }
+        HudDraw.scaledText(g, font, "LAND NOW", W / 2, cy + big + 4, HudColors.RED, 2.0f, false);
+        int secs = Math.max(0, (NO_INPUT_TICKS - idle() + 19) / 20);
+        HudDraw.scaledText(g, font, "disconnect in " + KineTime.format(secs) + " without input",
+            W / 2, cy + 2 * big + 14, HudColors.WHITE, 1.0f, false);
     }
-
 }

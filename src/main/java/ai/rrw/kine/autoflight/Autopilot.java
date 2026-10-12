@@ -210,6 +210,13 @@ public class Autopilot {
         lastFrameNanos = System.nanoTime();
     }
 
+    /** Let go after a landing ended on water, where the glide goes on (LivingEntity.canGlide doesn't check for
+     *  water): as after a touchdown on the ground, with no AUTOPILOT OFF warning or disconnect. */
+    public static void releaseAfterLanding() {
+        engaged = false; lastFrameNanos = 0L; tripTicks = 0;
+        resetWarn();
+    }
+
     public static void disengage() {
         if (engaged) {
             LocalPlayer p = Minecraft.getInstance().player;

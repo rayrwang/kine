@@ -40,10 +40,14 @@ public class AfkGuard {
         ClientTickEvents.END_CLIENT_TICK.register(AfkGuard::tick);
     }
 
+    /** Ticks since the pilot's last input, as this guard counts it, whether or not the protection is on: the
+     *  durability failsafe reads it for its no-input disconnect, so there is one definition of input. Counted at the
+     *  end of each tick. */
+    public static int idleTicks() { return idleTicks; }
+
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { reset(); return; }      // not in a world; never carry state across
-        if (!Settings.afkDamageProtection) { baseline(p); idleTicks = 0; return; }
 
         // idle tracking: any sign of a person at the controls resets the clock
         // An open screen counts only while the window has focus: when it loses focus the game opens the pause
@@ -57,6 +61,7 @@ public class AfkGuard {
         lastXRot = p.getXRot();
         lastYRot = p.getYRot();
         idleTicks = input ? 0 : idleTicks + 1;
+        if (!Settings.afkDamageProtection) { baseline(p); return; }   // the idle count goes on; no kick
 
         // damage: a fresh hit (hurtTime jumps) or any health loss this tick
         float hp = p.getHealth();
@@ -95,9 +100,8 @@ public class AfkGuard {
         return toggled ? down != wasDown : down;
     }
 
-    /** Snapshot current state without arming the trigger (used when disabled or re-entering a world). */
+    /** Snapshot the health without arming the trigger (while the protection is off). */
     private static void baseline(LocalPlayer p) {
-        lastXRot = p.getXRot(); lastYRot = p.getYRot();
         lastHealth = p.getHealth(); lastHurtTime = p.hurtTime; primed = true;
     }
 

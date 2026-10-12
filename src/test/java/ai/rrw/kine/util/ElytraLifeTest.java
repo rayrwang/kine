@@ -32,22 +32,32 @@ class ElytraLifeTest {
     }
 
     @Test
-    void secondsLeft() {
+    void anElytraAsAWing() {
+        var lookup = registries.lookupOrThrow(Registries.ENCHANTMENT);
         ItemStack wing = new ItemStack(Items.ELYTRA);
-        assertEquals(431.0, ElytraLife.flightSeconds(wing), 0.0);   // 432 points, the last one doesn't glide
+        assertEquals(432, ElytraLife.wing(wing).left());          // the tooltip's number
+        assertEquals(429, ElytraLife.wing(wing).usable());        // above the 3-point floor
         wing.setDamageValue(400);
-        assertEquals(31.0, ElytraLife.flightSeconds(wing), 0.0);
-        wing.enchant(registries.lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.UNBREAKING), 3);
-        assertEquals(124.0, ElytraLife.flightSeconds(wing), 0.0);   // the tool curve: (3 + 1) x
-        assertEquals(0.0, ElytraLife.flightSeconds(new ItemStack(Items.DIAMOND_CHESTPLATE)), 0.0);
+        assertEquals(32, ElytraLife.wing(wing).left());
+        assertEquals(29.0, ElytraLife.wing(wing).seconds(), 0.0);
+        wing.enchant(lookup.getOrThrow(Enchantments.UNBREAKING), 3);
+        assertEquals(3, ElytraLife.wing(wing).unbreaking());
+        assertEquals(116.0, ElytraLife.wing(wing).seconds(), 0.0);   // the tool curve: (3 + 1) x
+        wing.setDamageValue(429);
+        assertTrue(ElytraLife.wing(wing).spent());
+        assertNull(ElytraLife.wing(new ItemStack(Items.DIAMOND_CHESTPLATE)));
+        assertTrue(ElytraLife.isSpare(wing));
+        assertFalse(ElytraLife.isSpare(new ItemStack(Items.DIAMOND_CHESTPLATE)));
     }
 
     @Test
     void anUnbreakableElytraGlidesForEver() {
-        // it can't take damage, so the game never stops its glide (it read 0 s)
+        // it can't take damage, so the game never stops its glide; as a spare the swap never takes it
         ItemStack wing = new ItemStack(Items.ELYTRA);
         wing.set(DataComponents.UNBREAKABLE, Unit.INSTANCE);
         assertFalse(wing.nextDamageWillBreak());
-        assertEquals(Double.POSITIVE_INFINITY, ElytraLife.flightSeconds(wing), 0.0);
+        assertTrue(ElytraLife.wing(wing).unbreakable());
+        assertEquals(Double.POSITIVE_INFINITY, ElytraLife.wing(wing).seconds(), 0.0);
+        assertFalse(ElytraLife.isSpare(wing));
     }
 }

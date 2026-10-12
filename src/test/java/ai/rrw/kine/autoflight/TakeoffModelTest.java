@@ -82,21 +82,31 @@ class TakeoffModelTest {
     }
 
     @Test
-    void aWornElytraIsRefusedWhenItCantLastTheClimbAndTheReserveAtTheCruise() {
-        // the default cruise from y 64: about 11 s of climb, then the failsafe wants about 100 s at 286 up
+    void aWornElytraIsRefusedUnderAMinuteOfEnduranceAtTheCruise() {
+        // the default cruise from y 64: about 11 s of climb, then END must still be 60 s with the landing reserve of
+        // the cruise height (350 is 414 above the overworld's bottom: about 28 s of landing, 28 points)
         TakeoffModel.Plan p = TakeoffModel.fromGround(0.5, 64, 0.5, 0, 350, (int) Math.round(RocketBurn.meanTicks(1)), FLAT_64, TOP, 1);
         assertTrue(p.reachesCruise());
         assertTrue(p.ticks() > 150 && p.ticks() < 300, "climb ticks " + p.ticks());
-        double reserve = ElytraGuard.landingReserveSeconds(350 - 64);
-        double needs = p.ticks() / 20.0 + reserve;
-        assertTrue(needs > 105 && needs < 120, "needs " + needs);
-        // the audit's two cases: 7 s runs out about 200 blocks up, 60 s is disconnected 5 s after the hand-over
-        assertFalse(TakeoffModel.elytraLasts(7, p.ticks(), reserve));
-        assertFalse(TakeoffModel.elytraLasts(60, p.ticks(), reserve));
-        assertFalse(TakeoffModel.elytraLasts(Math.nextDown(needs), p.ticks(), reserve));
-        assertTrue(TakeoffModel.elytraLasts(needs, p.ticks(), reserve));
-        assertTrue(TakeoffModel.elytraLasts(431, p.ticks(), reserve));   // a new elytra, unenchanted
-        assertTrue(TakeoffModel.elytraLasts(Double.POSITIVE_INFINITY, p.ticks(), reserve));   // one that can't wear out
+        int reserve = Durability.reservePoints(LandingTime.seconds(350 - (-64)));
+        assertEquals(28, reserve);
+        double climb = p.ticks() / 20.0;
+        // unenchanted: the points needed are the floor, the reserve, the climb and the minute
+        int needs = Durability.FLOOR + reserve + (int) Math.ceil(climb + TakeoffModel.MIN_CRUISE_ENDURANCE);
+        java.util.function.IntPredicate lasts = left ->
+            TakeoffModel.elytraLasts(Durability.endurance(java.util.List.of(new Durability.Wing(left, 0, false)), reserve), p.ticks());
+        assertFalse(lasts.test(needs - 1));
+        assertTrue(lasts.test(needs));
+        assertTrue(lasts.test(432));                                          // a new elytra
+        // Unbreaking III: a quarter of the points above the reserve
+        int needs3 = Durability.FLOOR + reserve + (int) Math.ceil((climb + TakeoffModel.MIN_CRUISE_ENDURANCE) / 4.0);
+        assertTrue(TakeoffModel.elytraLasts(Durability.endurance(java.util.List.of(new Durability.Wing(needs3, 3, false)), reserve), p.ticks()));
+        assertFalse(TakeoffModel.elytraLasts(Durability.endurance(java.util.List.of(new Durability.Wing(needs3 - 1, 3, false)), reserve), p.ticks()));
+        // one that can't wear out
+        assertTrue(TakeoffModel.elytraLasts(Double.POSITIVE_INFINITY, p.ticks()));
+        // the line itself, at a climb of 200 ticks (10 s)
+        assertTrue(TakeoffModel.elytraLasts(70.0, 200));
+        assertFalse(TakeoffModel.elytraLasts(69.95, 200));
     }
 
     @Test
