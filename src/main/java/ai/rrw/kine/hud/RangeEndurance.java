@@ -108,7 +108,9 @@ public class RangeEndurance {
             // brake and slow finish (about a quarter off the mean speed from cruise); nor in water, where the glide
             // goes on after a landing there (LivingEntity.canGlide doesn't check for water).
             if (!(Autopilot.isEngaged() && Nav.landing()) && !p.isInWater()) {
-                if (!Takeoff.active()) {   // nor the rocket climb, for the speed (RW): the cruise's speed is what counts
+                // nor the rocket climb or the autopilot's hold over a destination, for the speed (RW): the cruise's
+                // speed is what counts (the hold circles about 11% slower, and a long one would fill the window)
+                if (!Takeoff.active() && !(Autopilot.isEngaged() && Nav.holding())) {
                     speedBuf[speedIdx] = Motion.groundSpeed(p);
                     speedIdx = (speedIdx + 1) % SPEED_WINDOW;
                     if (speedCount < SPEED_WINDOW) speedCount++;
