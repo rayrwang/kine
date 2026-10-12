@@ -52,9 +52,9 @@ public class RangeEndurance {
 
     // Ground speed (m/s) sampled each tick while gliding. The mean is taken over whole porpoise cycles so
     // the fast dive and slow climb cancel; the cycle length is FlightDirector.periodTicks(), measured live
-    // (about 245 ticks climbing, 325 holding). Until a cycle of samples exists, range and ETA use
+    // (about 254 ticks climbing, 360 holding). Until a cycle of samples exists, range and ETA use
     // FlightDirector.expectedGroundSpeed(), the active profile's modelled speed.
-    private static final int SPEED_WINDOW = 1400;       // ring buffer: four of the longest (hold) cycles, 70 s
+    private static final int SPEED_WINDOW = 1500;       // ring buffer: four of the longest (hold) cycles (4 x 360 = 1440), 75 s
     private static final double[] speedBuf = new double[SPEED_WINDOW];
     private static int speedIdx = 0, speedCount = 0;
     // The mean speed of the last flight long enough to have one (a whole porpoise cycle of samples), kept through

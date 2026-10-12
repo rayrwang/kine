@@ -9,11 +9,11 @@ public final class AltitudeLaw {
     /** Vertical modes for the annunciator: CLB and DESC amber, ALT* (capture) yellow, ALT (hold) green. */
     public static final int VM_CLB = 0, VM_ALT_STAR = 1, VM_ALT = 2, VM_DESC = 3;
 
-    static final float  CLIMB_SPEED = 21.9f;        // climb profile's model ground speed (m/s)
-    static final float  HOLD_SPEED = 30.1f;        // hold profile's closed-loop average (m/s)
+    static final float  CLIMB_SPEED = 22.5f;        // climb profile's model ground speed (m/s)
+    static final float  HOLD_SPEED = 32.4f;        // hold profile's closed-loop average (m/s)
     static final int    ALT_MIN      = -60;
     static final int    ALT_MAX      = 2000;
-    static final int    DESC_LIVE    = 150;     // while diving above target + this, show DESC (above the steady peak of about +109)
+    static final int    DESC_LIVE    = 150;     // while diving above target + this, show DESC (above the steady peak of about +137)
     static final double ALT_HOLD_BAND = 10.0;   // |trough - target| within this: ALT (settled hold)
     static final double ALT_CAP_BAND  = 40.0;   // within this: ALT* (capturing); beyond: CLB or DESC
     static final int PERIOD_MIN = 160, PERIOD_MAX = 420;
@@ -38,10 +38,10 @@ public final class AltitudeLaw {
     double commandedPitchOld;           // last tick's command, for per-frame interpolation
 
     // Porpoise period measured live (ticks between pull-ups). The range readout averages speed over whole
-    // cycles of this length (about 245 ticks climbing, 325 holding). Periods outside [PERIOD_MIN, PERIOD_MAX]
+    // cycles of this length (about 254 ticks climbing, 360 holding). Periods outside [PERIOD_MIN, PERIOD_MAX]
     // are ignored, so a long descent's single dive leaves the last value in place.
     int cycleTicks = 0;                 // ticks since the last pull-up
-    int measuredPeriod = 320;           // near the hold cruise period until measured
+    int measuredPeriod = 360;           // the hold cruise period until measured
 
     boolean active = false;
     boolean tooLow = false;             // gliding, but no flyable path to arm on

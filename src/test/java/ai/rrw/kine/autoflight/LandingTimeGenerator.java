@@ -27,7 +27,7 @@ public final class LandingTimeGenerator {
         return hs.stream().mapToDouble(Double::doubleValue).toArray();
     }
 
-    /** One cycle of steady altitude-hold cruise, from one pull-up to the tick before the next, after six cycles in a
+    /** One cycle of steady altitude-hold cruise, from one pull-up trigger to the tick before the next, after six cycles in a
      *  row in altitude hold. Heights are relative: only the velocity, the pitch and the height above the cycle's
      *  lowest point are used. */
     static List<FlightModel3D.State> steadyCycle() {
@@ -39,7 +39,7 @@ public final class LandingTimeGenerator {
         for (int t = 0; t < 200000 && holds < 7; t++) {
             int phase = s.phase;
             FlightModel3D.stepLook(s, 0.0);
-            if (phase == PorpoiseLaw.DIVE && s.phase == PorpoiseLaw.PULL_UP) holds = s.climbing ? 0 : holds + 1;
+            if (phase == PorpoiseLaw.DIVE && s.phase != PorpoiseLaw.DIVE) holds = s.climbing ? 0 : holds + 1;   // the pull-up's program starts
             if (holds == 6) out.add(s.copy());
         }
         if (out.isEmpty()) throw new IllegalStateException("the porpoise never settled into altitude hold");

@@ -27,8 +27,9 @@ import org.lwjgl.glfw.GLFW;
 
 public class Autopilot {
 
-    // Turn rates, per second. The steering is planned once a tick (pitch eased by FlightModel3D.ease, 0.15 of the gap
-    // capped at 7 deg, the lag the planner's rollouts fly), and each frame turns the view its share of the way there.
+    // Turn rates, per second. The steering is planned once a tick (pitch by FlightModel3D.ease, up to 15 deg a tick for
+    // the porpoise law, or easeLanding, 0.15 of the gap capped at 7 deg, for the landing law: what the rollouts fly), and
+    // each frame turns the view its share of the way there.
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D is held (deg)
     static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
     private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
@@ -169,7 +170,8 @@ public class Autopilot {
     // first frame after it (the targets are set at the end of the tick) or at the next tick's start.
     private static void plan(Minecraft mc, LocalPlayer p) {
         float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
-        cmdPitch = Mth.clamp((float) FlightModel3D.ease(cmdPitch, target), -90f, 90f);
+        cmdPitch = Mth.clamp((float) (Nav.landing() ? FlightModel3D.easeLanding(cmdPitch, target)
+                                                    : FlightModel3D.ease(cmdPitch, target)), -90f, 90f);
 
         if (Nav.landing()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);

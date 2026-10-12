@@ -84,12 +84,12 @@ class TakeoffModelTest {
     @Test
     void aWornElytraIsRefusedUnderAMinuteOfEnduranceAtTheCruise() {
         // the default cruise from y 64: about 11 s of climb, then END must still be 60 s with the landing reserve of
-        // the cruise height (350 is 414 above the overworld's bottom: about 28 s of landing, 28 points)
+        // the cruise height (350 is 414 above the overworld's bottom: about 28.1 s of landing, 29 points)
         TakeoffModel.Plan p = TakeoffModel.fromGround(0.5, 64, 0.5, 0, 350, (int) Math.round(RocketBurn.meanTicks(1)), FLAT_64, TOP, 1);
         assertTrue(p.reachesCruise());
         assertTrue(p.ticks() > 150 && p.ticks() < 300, "climb ticks " + p.ticks());
         int reserve = Durability.reservePoints(LandingTime.seconds(350 - (-64)));
-        assertEquals(28, reserve);
+        assertEquals(29, reserve);
         double climb = p.ticks() / 20.0;
         // unenchanted: the points needed are the floor, the reserve, the climb and the minute
         int needs = Durability.FLOOR + reserve + (int) Math.ceil(climb + TakeoffModel.MIN_CRUISE_ENDURANCE);

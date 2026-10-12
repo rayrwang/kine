@@ -75,6 +75,6 @@ class AltitudeLawTest {
         assertFalse(a.law.climbing);
         assertTrue(min > 300 && min < 300 + PorpoiseLaw.DESC_MARGIN, "troughs settle just above the target: " + min);
         assertEquals(AltitudeLaw.VM_ALT, a.vmode);
-        assertTrue(a.measuredPeriod > 300 && a.measuredPeriod < 350, "hold period about 325 ticks: " + a.measuredPeriod);
+        assertTrue(a.measuredPeriod > 330 && a.measuredPeriod < 380, "hold period about 356 ticks: " + a.measuredPeriod);
     }
 }

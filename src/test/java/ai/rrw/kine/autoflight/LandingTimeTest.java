@@ -25,10 +25,10 @@ class LandingTimeTest {
         for (int i = 0; i < LandingTime.HEIGHT.length; i++)
             assertEquals(LandingTime.SECONDS[i], LandingTime.seconds(LandingTime.HEIGHT[i]), 1e-12, "at " + LandingTime.HEIGHT[i]);
         // halfway between 384 and 416
-        assertEquals((26.55 + 27.65) / 2, LandingTime.seconds(400), 1e-9);
+        assertEquals((27.00 + 28.15) / 2, LandingTime.seconds(400), 1e-9);
         // cruising at 350 in the overworld is 414 above its bottom
         double t = LandingTime.seconds(350 - (-64));
-        assertTrue(t > 27.5 && t < 27.65, "414 up: " + t);
+        assertTrue(t > 28.0 && t < 28.15, "414 up: " + t);
         // above the table, the last slope carried on
         int n = LandingTime.HEIGHT.length;
         double slope = (LandingTime.SECONDS[n - 1] - LandingTime.SECONDS[n - 2]) / (LandingTime.HEIGHT[n - 1] - LandingTime.HEIGHT[n - 2]);

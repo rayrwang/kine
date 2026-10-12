@@ -2,14 +2,20 @@ package ai.rrw.kine.autoflight;
 
 /**
  * 3-D forward simulator: LivingEntity.updateFallFlyingMovement in full, the {@link PorpoiseLaw} and
- * the Autopilot's pitch lag. Horizontal velocity turns 10% per tick toward the look heading at
+ * the Autopilot's pitch response. Horizontal velocity turns 10% per tick toward the look heading at
  * the same horizontal speed, so pointing the look off the velocity turns the aircraft, and the turn
  * costs climb as the physics dictates.
  */
 public final class FlightModel3D {
     private FlightModel3D() {}
 
-    public static final double GRAV = 0.08, SMOOTH = 0.15, CAP = 7.0;
+    /** The autopilot's pitch response while the porpoise law flies: straight toward the command at up to CAP degrees a
+     *  tick (300 deg/s), within a fast human mouse flick (~/_/kine_fastpitch_2026-10-11/REPORT.md, RW 2026-10-11 "try
+     *  2"). Was 0.15 of the gap, capped at 7 deg a tick. */
+    public static final double GRAV = 0.08, SMOOTH = 1.0, CAP = 15.0;
+    /** The landing law's pitch response, kept as it was tuned (~/_/kine_landing_2026-10-11/): 0.15 of the gap, at most
+     *  7 deg a tick. */
+    public static final double LANDING_SMOOTH = 0.15, LANDING_CAP = 7.0;
 
     /** Max look-offset (deg) the steering will command in one tick: caps turn aggressiveness. */
     public static final double DELTA_MAX = 20.0;
@@ -75,9 +81,16 @@ public final class FlightModel3D {
         }
     }
 
-    /** The Autopilot's pitch lag, per tick: ease toward the command, capped at CAP degrees. */
+    /** The Autopilot's pitch response to the porpoise law, per tick: SMOOTH of the way toward the command, capped at
+     *  CAP degrees. */
     static double ease(double pitch, double cmd) {
         pitch += Math.max(-CAP, Math.min(CAP, (cmd - pitch) * SMOOTH));
+        return Math.max(-90.0, Math.min(90.0, pitch));
+    }
+
+    /** The same for the landing law's pitch, with the landing's own response. */
+    static double easeLanding(double pitch, double cmd) {
+        pitch += Math.max(-LANDING_CAP, Math.min(LANDING_CAP, (cmd - pitch) * LANDING_SMOOTH));
         return Math.max(-90.0, Math.min(90.0, pitch));
     }
 

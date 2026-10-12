@@ -79,7 +79,7 @@ public final class LandingModel {
     /**
      * Roll a landing out from the given state (velocity in blocks a tick; the look's yaw and pitch) to the spot's
      * height, as the autopilot flies it: the look turns at most YAW_RATE a tick toward the command and the pitch eases
-     * as {@link FlightModel3D#ease}. The ground is taken as level with the spot. Positions are kept for at most
+     * as {@link FlightModel3D#easeLanding}. The ground is taken as level with the spot. Positions are kept for at most
      * `keep` ticks.
      */
     public static Result simulate(Law law, double x, double y, double z, double vx, double vy, double vz,
@@ -92,7 +92,7 @@ public final class LandingModel {
         for (int t = 1; t <= maxTicks; t++) {
             law.update(x, y, z, v[1], cx, top, cz);
             yaw += Math.max(-YAW_RATE, Math.min(YAW_RATE, FlightModel3D.wrap180(law.yaw - yaw)));
-            pitch = FlightModel3D.ease(pitch, law.pitch);
+            pitch = FlightModel3D.easeLanding(pitch, law.pitch);
             FlightModel3D.physicsStep(yaw, pitch, v);
             x += v[0]; y += v[1]; z += v[2];
             if (v[1] < 0) fall -= v[1];

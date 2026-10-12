@@ -48,7 +48,7 @@ class HoldModelTest {
         for (int t = 0; t < 20000 && pulls < 12; t++) {   // straight flight until the cycle is steady
             int ph = s.phase;
             FlightModel3D.step(s, 0.0);
-            if (ph == PorpoiseLaw.DIVE && s.phase == PorpoiseLaw.PULL_UP) pulls++;
+            if (ph == PorpoiseLaw.DIVE && s.phase != PorpoiseLaw.DIVE) pulls++;
         }
         assertEquals(12, pulls);
         s.x = 0; s.z = 0;
@@ -61,11 +61,11 @@ class HoldModelTest {
             lowest = Math.min(lowest, s.y);
             if (t < 7200) continue;   // the circle centres over its first laps
             farthest = Math.max(farthest, Math.hypot(s.x, s.z));
-            if (ph == PorpoiseLaw.DIVE && s.phase == PorpoiseLaw.PULL_UP) { lowestTrough = Math.min(lowestTrough, s.trough); troughs++; }
+            if (ph == PorpoiseLaw.DIVE && s.phase != PorpoiseLaw.DIVE) { lowestTrough = Math.min(lowestTrough, s.trough); troughs++; }
         }
         assertTrue(troughs > 20, "the porpoise kept cycling: " + troughs);
         assertTrue(lowestTrough >= target, "lowest trough " + lowestTrough);
         assertTrue(lowest >= target, "lowest point " + lowest);
-        assertTrue(farthest < 130, "farthest from the fix " + farthest);
+        assertTrue(farthest < 160, "farthest from the fix " + farthest);   // 121 with the a1b6901 law; about 150 with the level-off law at 15 deg a tick (its faster cruise widens the circle)
     }
 }
