@@ -105,7 +105,7 @@ public class KineSettingsScreen extends Screen {
         + "by hand, you're warned, and logged out if you don't respond.";
     private static final String DESC_FALL =
         "Sneaks for you at the edge of a drop of more than three blocks, so you stop there. Jump to get past "
-        + "it. Water or hay below still counts as a drop.";
+        + "it. Water or hay below still counts as a drop. Survival and adventure only.";
     private static final String DESC_CLUTCH =
         "When you fall far enough to get hurt, sneaks, places water where you will land and scoops it back "
         + "up. Uses a bucket from your hotbar or offhand, or moves one up from your inventory. Survival mode only.";
@@ -124,15 +124,15 @@ public class KineSettingsScreen extends Screen {
         + "as it moves, leading it. Move the mouse to break the lock. An aimbot: servers may ban it.";
     private static final String DESC_DODGE =
         "Presses movement keys to step you off a projectile's line when it is about to hit you. On foot only; "
-        + "can't dodge point-blank or very fast shots. Lower ban risk than the aimbot.";
+        + "can't dodge point-blank or very fast shots. Survival and adventure only. Lower ban risk than the aimbot.";
     private static final String DESC_AURA =
         "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
         + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
-        + "stays put; the server sees turns no faster than a quick flick. Servers may ban it.";
+        + "stays put; the server sees turns no faster than a quick flick. Survival and adventure only. Servers may ban it.";
     private static final String DESC_COMBAT_MOVE =
         "Near zombies, moves you with your movement keys so you take less damage, keeping them in front and out of "
         + "reach between the kill aura's swings. Only while you press no movement key; press any to take over. Avoids "
-        + "drops and lava. Servers may ban it.";
+        + "drops and lava. Survival and adventure only. Servers may ban it.";
     private static final String DESC_COMBAT_BIAS =
         "How combat movement weighs your health against a quick kill. 0 keeps out of reach of mobs about to attack and "
         + "never takes a hit to end a fight sooner, more careful as your health drops; 100 closes in to end fights "

@@ -9,6 +9,7 @@ import ai.rrw.kine.move.GroundPhysics;
 import ai.rrw.kine.move.WorldSnapshot;
 import ai.rrw.kine.search.EffortTuner;
 import ai.rrw.kine.search.RecedingSearch;
+import ai.rrw.kine.util.GameModes;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -110,7 +111,7 @@ public final class CombatMovement {
         tick++;
         FightSnapshot.follow(mc);
         LocalPlayer p = mc.player;
-        if (!Settings.combatMovement || p == null || mc.level == null || !onFoot(p)) {
+        if (!Settings.combatMovement || p == null || mc.level == null || !onFoot(p) || !GameModes.survivalLike(mc)) {
             engaged = false;
             standDownReason = "off or not on foot";
             return;
@@ -193,7 +194,7 @@ public final class CombatMovement {
      */
     public static Input adjustInput(LocalPlayer p, Input keys) {
         controlling = false;
-        if (!Settings.combatMovement || !engaged || !onFoot(p)) return keys;
+        if (!Settings.combatMovement || !engaged || !onFoot(p) || !GameModes.survivalLike(Minecraft.getInstance())) return keys;
         if (yourMovement(keys)) { standDownReason = "your keys"; return keys; }
         // the replan from the end of the last tick: wait for it a little if it isn't done (in real play it has had
         // the whole time between ticks; in a lockstep test this keeps every run the same)

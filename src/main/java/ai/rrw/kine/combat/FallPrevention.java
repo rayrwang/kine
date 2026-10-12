@@ -1,6 +1,8 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.util.GameModes;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
@@ -26,6 +28,7 @@ public final class FallPrevention {
     /** Press sneak when this tick's step, with these keys, would go over a dangerous drop. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
         if (!Settings.fallPrevention || keys.shift() || keys.jump()) return keys;
+        if (!GameModes.survivalLike(Minecraft.getInstance())) return keys;   // creative and spectator take no fall damage
         if (!p.onGround() || p.getAbilities().flying || p.isFallFlying() || p.isPassenger() || p.isInWater()) return keys;
         Vec3 step = predictedStep(p, keys);
         if (step.horizontalDistanceSqr() < 1.0e-8) return keys;

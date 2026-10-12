@@ -2,6 +2,7 @@ package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.fight.CombatMovement;
+import ai.rrw.kine.util.GameModes;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -71,7 +72,8 @@ public class ProjectileDodge {
 
     /** The keys to hold this tick: the dodge's movement keys while a projectile is about to hit, else as given. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
-        if (!Settings.projectileDodge || p.isSpectator() || p.isFallFlying() || p.isPassenger() || p.getAbilities().flying) return keys;
+        if (!Settings.projectileDodge || !GameModes.survivalLike(Minecraft.getInstance()) || p.isFallFlying() || p.isPassenger()
+            || p.getAbilities().flying) return keys;   // not in creative or spectator: nothing can hurt you
         if (CombatMovement.controlling()) return keys;   // combat movement has the keys
         ClientLevel level = Minecraft.getInstance().level;
         if (level == null) return keys;

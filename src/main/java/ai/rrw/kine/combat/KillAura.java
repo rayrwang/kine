@@ -4,6 +4,7 @@ import ai.rrw.kine.Settings;
 import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.mixin.PlayerAccessor;
+import ai.rrw.kine.util.GameModes;
 import ai.rrw.kine.util.MouseTurn;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -154,7 +155,7 @@ public final class KillAura {
         if (p == null || mc.level == null || mc.gameMode == null) return;
         if (!sentKnown) { sentYaw = p.getYRot(); sentPitch = p.getXRot(); sentKnown = true; }
         boolean you = yourInput(mc, p);
-        boolean on = Settings.killAura && p.isAlive() && !p.isSpectator() && !you;
+        boolean on = Settings.killAura && p.isAlive() && GameModes.survivalLike(mc) && !you;   // not in creative or spectator
         boolean onFoot = onFoot(p);
 
         float viewYaw = p.getYRot() - appliedYaw, viewPitch = p.getXRot() - appliedPitch;
