@@ -33,8 +33,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Shows the chance the shot hits, and aims at the point on the target most likely to hit.
 	- Marks targets projectiles can't hurt (endermen, breezes, raised shields, etc.).
 - **Water bucket clutch automatically** (survival only).
+- **Auto totem**: keeps a totem of undying in your offhand.
 - **Kill aura.**
-	- Takes into account number of enemies (spam for more, cooldown for fewer).
+	- Times each swing for the most damage by weapon and crowd, hits mobs about to reach you first, and leaves neutral mobs alone until they hit you.
 - **Dodge arrows and other projectiles.**
 - **AFK failsafes.**
 	- Logs you out if you take damage while AFK, if the autopilot disconnects and you don't take over, or if your elytra runs low while you fly by hand without input (on autopilot it lands instead).
@@ -46,6 +47,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Display player speed and altitude.
 - Show health of mobs.
 - Projectiles red outline.
+- Fullbright, and switches for fog (water, lava, powder snow, Nether, rain, boss fight, render distance), Darkness, Blindness and screen overlays (fire, underwater, pumpkin, frost, portal).
 - Settings menu (press `K` to open); every feature can be switched off, by section, or all at once.
 
 ## Planned
@@ -63,12 +65,11 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Fix:
 	- Low altitude warning should count as autopilot disconnect
 	- Flight director turn even in manual flight?
-	- Takeoff rocket spam
 - Update pictures, add logo
 - Vertical speed indicator? Move speed to left?
 - Spear elytra
 - Mace fall
-- Auto eat & totem
+- Auto eat
 - Activate elytra if fall (could be annoying)
 - Creeper explosion avoidance
 - Warning sounds
@@ -124,7 +125,7 @@ The targeting reticle simulates the readied projectile tick by tick (gravity, dr
 
 ### Other features
 
-Water-bucket clutch (survival only; it turns toward where you will land through the fall, places the water in reach and scoops it back up), AFK damage protection (logs you out if you take damage after 15 s with no input, focused or not), fall prevention (sneaks at the edge of drops of more than 3 blocks; jumping gets past it), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names.
+Water-bucket clutch (survival only; it turns toward where you will land through the fall, places the water in reach and scoops it back up), auto totem (when your offhand holds no totem and you carry one, it is swapped in through an inventory opening like a player's; whatever was in the offhand takes its slot), AFK damage protection (logs you out if you take damage after 15 s with no input, focused or not), fall prevention (sneaks at the edge of drops of more than 3 blocks; jumping gets past it), block-breaking progress, speed readouts, the radio altimeter, the flight path vector, and mob health and names. The Visibility settings are drawing only: fullbright lights the lightmap from a white base, the fog switches clear each kind of fog the game draws (and draw the sky in lava and powder snow), and the effect and overlay switches remove Darkness, Blindness and the full-screen overlays; their switches open in two folders on the right of the settings screen.
 
 ### A note on anti-cheat
 
