@@ -6,6 +6,7 @@ import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.util.InventoryClicks;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -53,6 +54,7 @@ public final class VanillaActions {
     public static Input adjustInput(LocalPlayer p, Input keys) {
         if (Minecraft.getInstance().screen != null) { WaterClutch.sneakNotSent(); return keys; }
         keys = KillAura.adjustInput(p, keys);   // first: your keys, for the rotation the aura sends; the rest press theirs for it
+        keys = CombatMovement.adjustInput(p, keys);   // while you press no movement key, near zombies
         keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);

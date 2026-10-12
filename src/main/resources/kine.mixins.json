@@ -25,7 +25,10 @@
 		"FogRendererMixin",
 		"LevelRendererSkyMixin",
 		"ScreenEffectMixin",
-		"GuiOverlayMixin"
+		"GuiOverlayMixin",
+		"MoveEntityAccessor",
+		"MoveLivingAccessor",
+		"MoveLocalPlayerAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1

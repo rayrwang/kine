@@ -116,4 +116,24 @@ class SettingsTest {
         assertArrayEquals(before, Settings.ALL.stream().mapToInt(Settings.Option::value).toArray());
         assertFalse(Settings.sectionOn(Settings.Section.HUD));
     }
+    @Test
+    void combatMovementIsOffByDefaultAndItsSliderSavesAsANumber() throws Exception {
+        assertFalse(Settings.combatMovement, "a cheat: off by default");
+        assertEquals(25, Settings.COMBAT_BIAS.value(), "leaning to survive");
+        assertTrue(Settings.COMBAT_BIAS.isLevel());
+        Settings.COMBAT_BIAS.setLevel(70);
+        String saved = Files.readString(file);
+        assertTrue(saved.contains("\"combatMovementBias\": 70"), saved);
+        assertTrue(saved.contains("\"combatMovement\": false"), saved);
+        load("""
+            {"combatMovement": true, "combatMovementBias": 140}
+            """);
+        assertTrue(Settings.combatMovement);
+        assertEquals(100, Settings.combatBias, "clamped to the slider's range");
+        Settings.resetDefaults();
+        load("""
+            {"combatMovementBias": "lots"}
+            """);
+        assertEquals(25, Settings.combatBias, "a value that isn't a number keeps the default");
+    }
 }

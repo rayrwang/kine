@@ -3,6 +3,8 @@ package ai.rrw.kine.ui;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.ThinOutlines;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -10,13 +12,15 @@ import net.minecraft.util.FormattedCharSequence;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
+import java.util.function.IntFunction;
 
 /**
  * Kine's settings (K). A switch for the whole mod at the top, one on each section's header, and a button per
- * feature: on/off, or for the elytra, speed and altitude displays off, elytra only or always. A feature
- * whose section or the whole mod is switched off greys out and keeps its own setting. Hovering a row shows
- * its description on the right. A folder row (the Visibility section's) lists its settings in the right pane
- * when clicked, and closes when clicked again.
+ * feature: on/off, or for the elytra, speed and altitude displays off, elytra only or always, or a slider. A feature
+ * whose section or the whole mod is switched off greys out and keeps its own setting, as does one that needs
+ * another feature switched on. Hovering a row shows its description on the right. A folder row (the Visibility
+ * section's) lists its settings in the right pane when clicked, and closes when clicked again.
  */
 public class KineSettingsScreen extends Screen {
 
@@ -32,7 +36,7 @@ public class KineSettingsScreen extends Screen {
 
     // layout: every scrolling widget with its content-space y and the text shown when it's hovered
     private static final int ALL = -2, OPTION = -1;   // Row.switchOf: the whole mod, a feature, else a section's index
-    private record Row(Button button, int baseY, String desc, Opt opt, int switchOf) {}
+    private record Row(AbstractWidget button, int baseY, String desc, Opt opt, int switchOf) {}
     private final List<Row> rows = new ArrayList<>();
     private final List<Row> paneRows = new ArrayList<>();   // the open folder's settings, in the right pane (not scrolled)
     private Opt openFolder;                                  // the folder whose settings the right pane shows, or null
@@ -47,10 +51,15 @@ public class KineSettingsScreen extends Screen {
         this.parent = parent;
     }
 
-    /** A setting's row, or a folder of them (option null, children set) shown in the right pane when opened. */
-    private record Opt(String name, String desc, Settings.Option option, Opt[] children) {
-        static Opt of(String n, String d, Settings.Option o) { return new Opt(n, d, o, null); }
-        static Opt folder(String n, String d, Opt... children) { return new Opt(n, d, null, children); }
+    /** A setting's row, or a folder of them (option null, children set) shown in the right pane when opened; when it
+     *  can be used (besides its section being on); for a level, the text for its value. */
+    private record Opt(String name, String desc, Settings.Option option, Opt[] children, BooleanSupplier needs,
+                       IntFunction<String> levelText) {
+        static Opt of(String n, String d, Settings.Option o) { return new Opt(n, d, o, null, () -> true, null); }
+        static Opt of(String n, String d, Settings.Option o, BooleanSupplier needs, IntFunction<String> levelText) {
+            return new Opt(n, d, o, null, needs, levelText);
+        }
+        static Opt folder(String n, String d, Opt... children) { return new Opt(n, d, null, children, () -> true, null); }
         boolean isFolder() { return children != null; }
         Settings.Section section() { return isFolder() ? children[0].option().section : option().section; }
     }
@@ -120,6 +129,13 @@ public class KineSettingsScreen extends Screen {
         "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
         + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
         + "stays put; the server sees turns no faster than a quick flick. Servers may ban it.";
+    private static final String DESC_COMBAT_MOVE =
+        "Near zombies, moves you with your movement keys so you take less damage, keeping them in front and out of "
+        + "reach between the kill aura's swings. Only while you press no movement key; press any to take over. Avoids "
+        + "drops and lava. Servers may ban it.";
+    private static final String DESC_COMBAT_BIAS =
+        "How combat movement weighs your health against a quick kill: 0 keeps you safest, 100 closes in to end fights "
+        + "fastest. Needs the kill aura on, since only it attacks; greyed out otherwise.";
     private static final String DESC_WEAPON =
         "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
         + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";
@@ -268,6 +284,9 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Auto weapon", DESC_WEAPON, Settings.AUTO_WEAPON),
             Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
             Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
+            Opt.of("Combat movement", DESC_COMBAT_MOVE, Settings.COMBAT_MOVEMENT),
+            Opt.of("Survive or kill fast", DESC_COMBAT_BIAS, Settings.COMBAT_BIAS,
+                   () -> Settings.killAura && Settings.combatMovement, KineSettingsScreen::biasText),
         }),
     };
 
@@ -300,11 +319,13 @@ public class KineSettingsScreen extends Screen {
             rows.add(new Row(addRenderableWidget(sw), cY, DESC_SECTION, null, s));
             cY += headH;
             for (Opt opt : SECTIONS[s].opts()) {
-                Button b = Button.builder(label(opt), btn -> {
-                        if (opt.isFolder()) { openFolder = openFolder == opt ? null : opt; rebuildWidgets(); }
-                        else { opt.option().cycle(); changed(); }
-                    })
-                    .bounds(rowX, viewTop + cY, colW, ROW_H).build();
+                AbstractWidget b = !opt.isFolder() && opt.option().isLevel()
+                    ? new LevelSlider(rowX, viewTop + cY, colW, ROW_H, opt)
+                    : Button.builder(label(opt), btn -> {
+                            if (opt.isFolder()) { openFolder = openFolder == opt ? null : opt; rebuildWidgets(); }
+                            else { opt.option().cycle(); changed(); }
+                        })
+                        .bounds(rowX, viewTop + cY, colW, ROW_H).build();
                 rows.add(new Row(addRenderableWidget(b), cY, opt.desc(), opt, OPTION));
                 cY += ROW_STEP;
             }
@@ -358,7 +379,7 @@ public class KineSettingsScreen extends Screen {
     private void refresh() {
         for (Row r : paneRows) {
             r.button().setMessage(label(r.opt()));
-            r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section());
+            r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section()) && r.opt().needs().getAsBoolean();
         }
         for (Row r : rows) {
             if (r.switchOf() == ALL) {
@@ -368,7 +389,7 @@ public class KineSettingsScreen extends Screen {
                 r.button().active = Settings.enabled();
             } else {
                 r.button().setMessage(label(r.opt()));
-                r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section());
+                r.button().active = Settings.enabled() && Settings.sectionOn(r.opt().section()) && r.opt().needs().getAsBoolean();
             }
         }
     }
@@ -396,7 +417,34 @@ public class KineSettingsScreen extends Screen {
             for (Opt c : opt.children()) if (c.option().value() != 0) on++;
             return Component.literal(opt.name() + ": " + on + " of " + opt.children().length + " on  " + (openFolder == opt ? "<" : ">"));
         }
+        if (opt.levelText() != null) return Component.literal(opt.name() + ": " + opt.levelText().apply(opt.option().value()));
         return Component.literal(opt.name() + ": " + opt.option().label());
+    }
+
+    /** The survive or kill fast slider's value (the description says which end is which; words don't fit the row). */
+    private static String biasText(int v) {
+        return String.valueOf(v);
+    }
+
+    /** A slider for a level setting: drags from 0 to its maximum, saved as it moves. */
+    private final class LevelSlider extends AbstractSliderButton {
+        private final Opt opt;
+
+        LevelSlider(int x, int y, int w, int h, Opt opt) {
+            super(x, y, w, h, label(opt), (double) opt.option().value() / opt.option().max());
+            this.opt = opt;
+        }
+
+        @Override
+        protected void updateMessage() {
+            setMessage(label(opt));
+        }
+
+        @Override
+        protected void applyValue() {
+            opt.option().setLevel((int) Math.round(this.value * opt.option().max()));
+            updateMessage();
+        }
     }
 
     @Override
@@ -449,7 +497,7 @@ public class KineSettingsScreen extends Screen {
         String hovered = null;
         for (List<Row> list : List.of(paneRows, rows)) {
             for (Row r : list) {
-                Button b = r.button();
+                AbstractWidget b = r.button();
                 if (b.visible && mouseX >= b.getX() && mouseX <= b.getX() + b.getWidth()
                     && mouseY >= b.getY() && mouseY <= b.getY() + b.getHeight()) { hovered = r.desc(); break; }
             }

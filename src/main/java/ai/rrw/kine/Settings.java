@@ -23,7 +23,8 @@ import java.util.function.Consumer;
 
 /**
  * The settings, saved in config/kine.json. Every feature has one: an on/off toggle, or for the elytra, speed
- * and altitude displays a three-way choice of off, only while wearing an elytra, or always. Above them sit a
+ * and altitude displays a three-way choice of off, only while wearing an elytra, or always, or a level (a slider,
+ * 0 to its maximum, saved as a number). Above them sit a
  * switch for each section and one for the whole mod. A feature reads only its field below, which holds the
  * effective value: its own setting when its section and the mod are on, else off. Adding a setting: a field,
  * a table line, and a row in KineSettingsScreen.
@@ -52,7 +53,9 @@ public final class Settings {
         noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
         autopilot, takeoff, landing, navigation, terrainAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, autoTotem, afkDamageProtection,
-        projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura;
+        projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
+    /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
+    public static int combatBias;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
         displayFlightProfile, displayRangeEndurance, displayFireworkFuel, flightRibbon;
@@ -73,22 +76,31 @@ public final class Settings {
     public static final class Option {
         public final String key;
         public final Section section;
-        private final String[] labels;
+        private final String[] labels;   // null for a level
+        private final int max;           // a level's maximum
         private final int defaultValue;
         private final Consumer<Integer> field;   // writes the effective value
         private int value;
 
         Option(String key, Section section, String[] labels, int defaultValue, Consumer<Integer> field) {
-            this.key = key; this.section = section; this.labels = labels;
+            this(key, section, labels, labels.length - 1, defaultValue, field);
+        }
+
+        Option(String key, Section section, String[] labels, int max, int defaultValue, Consumer<Integer> field) {
+            this.key = key; this.section = section; this.labels = labels; this.max = max;
             this.defaultValue = defaultValue; this.field = field; this.value = defaultValue;
         }
 
         public int value() { return value; }
-        public String label() { return labels[value]; }
-        public boolean isMode() { return labels.length == 3; }
+        public String label() { return labels == null ? String.valueOf(value) : labels[value]; }
+        public boolean isMode() { return labels != null && labels.length == 3; }
+        public boolean isLevel() { return labels == null; }
+        public int max() { return max; }
         /** Step to the next choice, apply and save. */
-        public void cycle() { value = (value + 1) % labels.length; apply(); save(); }
-        void set(int v) { value = Math.max(0, Math.min(labels.length - 1, v)); }
+        public void cycle() { value = (value + 1) % (max + 1); apply(); save(); }
+        /** Set a level, apply and save. */
+        public void setLevel(int v) { set(v); apply(); save(); }
+        void set(int v) { value = Math.max(0, Math.min(max, v)); }
     }
 
     private static final String[] ON_OFF = {"OFF", "ON"};
@@ -106,6 +118,12 @@ public final class Settings {
 
     private static Option mode(String key, Section s, Show def, Consumer<Show> field) {
         Option o = new Option(key, s, MODES, def.ordinal(), v -> field.accept(Show.values()[v]));
+        TABLE.add(o);
+        return o;
+    }
+
+    private static Option level(String key, Section s, int def, int max, Consumer<Integer> field) {
+        Option o = new Option(key, s, null, max, def, field);
         TABLE.add(o);
         return o;
     }
@@ -164,6 +182,8 @@ public final class Settings {
     public static final Option AUTO_WEAPON                = toggle("autoWeapon", COMBAT, false, v -> autoWeapon = v);
     public static final Option AUTO_AIM                   = toggle("autoAim", COMBAT, false, v -> autoAim = v);
     public static final Option KILL_AURA                  = toggle("killAura", COMBAT, false, v -> killAura = v);
+    public static final Option COMBAT_MOVEMENT            = toggle("combatMovement", COMBAT, false, v -> combatMovement = v);
+    public static final Option COMBAT_BIAS                = level("combatMovementBias", COMBAT, 25, 100, v -> combatBias = v);
 
     /** The nav screen's At destination choice (Nav.Arrival's key), kept here so it is saved with the rest. */
     public static String navArrival = "holdTillDay";
@@ -199,7 +219,9 @@ public final class Settings {
                 JsonElement e = o.get(opt.key);
                 if (e == null || !e.isJsonPrimitive()) continue;
                 JsonPrimitive v = e.getAsJsonPrimitive();
-                if (opt.isMode()) {
+                if (opt.isLevel()) {
+                    if (v.isNumber()) opt.set(v.getAsInt());
+                } else if (opt.isMode()) {
                     if (v.isBoolean()) opt.set(v.getAsBoolean() ? Math.max(opt.defaultValue, Show.ELYTRA.ordinal()) : 0);
                     else for (Show s : Show.values()) if (s.key.equals(v.getAsString())) opt.set(s.ordinal());
                 } else if (v.isBoolean()) {
@@ -233,7 +255,8 @@ public final class Settings {
         for (Section s : Section.values()) o.addProperty(sectionKey(s), SECTION_ON.get(s));
         o.addProperty("navArrival", navArrival);
         for (Option opt : ALL) {
-            if (opt.isMode()) o.addProperty(opt.key, Show.values()[opt.value].key);
+            if (opt.isLevel()) o.addProperty(opt.key, opt.value);
+            else if (opt.isMode()) o.addProperty(opt.key, Show.values()[opt.value].key);
             else o.addProperty(opt.key, opt.value != 0);
         }
         try {

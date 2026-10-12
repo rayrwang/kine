@@ -622,4 +622,23 @@ public final class KillAura {
         double dz = Math.max(Math.max(bb.minZ - eye.z, 0.0), eye.z - bb.maxZ);
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
+
+    // ---------------------------------------------------------------- read by the combat movement's simulation (fight/)
+
+    /** The yaw the server got last, or the view's before the first. */
+    public static float lastSentYaw(LocalPlayer p) {
+        return sentKnown ? sentYaw : p.getYRot();
+    }
+
+    /** Whether the aura counts this entity as a target (hostile, or neutral and angry at you). */
+    public static boolean targets(Entity e, LivingEntity player) {
+        return isTarget(e, player);
+    }
+
+    /** Ticks until a mob takes a full hit from us again and the biggest hit of ours in its window, {0, 0} if none. */
+    public static double[] window(LivingEntity e) {
+        Hit h = hits.get(e.getId());
+        if (h == null || tick - h.tick() >= SwingPlan.WINDOW) return new double[]{0, 0};
+        return new double[]{SwingPlan.WINDOW - (tick - h.tick()), h.damage()};
+    }
 }

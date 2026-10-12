@@ -1,5 +1,6 @@
 package ai.rrw.kine.mixin;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -13,4 +14,8 @@ public interface KeyMappingAccessor {
 
     @Accessor("clickCount")
     void kine$setClickCount(int count);
+
+    /** The key it is bound to (combat movement reads sneak and sprint as physical presses). */
+    @Accessor("key")
+    InputConstants.Key kine$getKey();
 }
