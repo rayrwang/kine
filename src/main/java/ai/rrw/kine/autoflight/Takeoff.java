@@ -4,6 +4,7 @@ import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.fireworks.FireworkFuel;
 import ai.rrw.kine.fireworks.RocketBurn;
+import ai.rrw.kine.fireworks.RocketHit;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.mixin.MinecraftInvoker;
@@ -23,6 +24,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
@@ -79,7 +81,7 @@ public final class Takeoff {
     private static int needed = 0;                     // rockets needed if each burns its shortest
     private static int climbTicks = 0;                 // the planned takeoff's ticks to the hand-over
     private static double cruiseY = 0;                 // the planned cruise's height (y)
-    private static float yaw, cmdPitch, setPitch, setYaw;
+    private static float yaw, cmdYaw, cmdPitch, setPitch, setYaw;
     private static long lastFrameNanos = 0L;
     private static int jumpTick, pending, failedUses, fired, stopTicks, armWait, emptyTicks;
     private static int swimTick, swimStep;   // SWIM: ticks so far; 0 swimming up, 1 letting go of jump, 2 pressing it again
@@ -92,6 +94,13 @@ public final class Takeoff {
     private static int planAge = 0;
     private static double planX = Double.NaN, planY, planZ;
     private static float planYaw;
+
+    // A rocket used while already fast can hit you on the server and burst a few ticks into its burn, at some headings
+    // for the arm holding it (fireworks/RocketHit; RW's takeoff spam of 2026-10-11, 30 and more rockets a climb), so
+    // the climb leans along the nearest heading where it doesn't, at the pitches the climb fires at.
+    private static final double[] CLIMB_PITCHES = { -85.0, -80.0, -75.0, TakeoffModel.CLIMB_PITCH, TakeoffModel.CLIMB_PITCH + 5.0 };
+    private static float safeFor = Float.NaN, safeYaw;
+    private static boolean safeRight;
 
     // the planned path for the rails, relative to the player
     private static final double[] px = new double[PATH_TICKS], py = new double[PATH_TICKS], pz = new double[PATH_TICKS];
@@ -163,7 +172,7 @@ public final class Takeoff {
         // READY or not enough rockets: plan, at once the first time, then every PLAN_EVERY ticks (a plan is about 1 ms)
         if (Double.isNaN(planX) || ++planAge >= PLAN_EVERY) {
             planAge = 0;
-            planX = p.getX(); planY = p.getY(); planZ = p.getZ(); planYaw = p.getYRot();
+            planX = p.getX(); planY = p.getY(); planZ = p.getZ(); planYaw = climbYaw(p);
             double target = cruiseFor(p.getY());
             int d = heldDuration(p);
             Terrain2D terrain = TurnGuard.terrainOf(mc.level);
@@ -384,7 +393,8 @@ public final class Takeoff {
         float target = -90f, rate = LOOK_DPS;
         if (phase == Phase.CLIMB && lean) { target = (float) TakeoffModel.CLIMB_PITCH; rate = LEAN_DPS; }
         cmdPitch += Mth.clamp(target - cmdPitch, -rate * dt, rate * dt);
-        MouseTurn.toward(p, yaw, cmdPitch);
+        cmdYaw += Mth.clamp(Mth.wrapDegrees(yaw - cmdYaw), -LOOK_DPS * dt, LOOK_DPS * dt);   // onto the climb's heading
+        MouseTurn.toward(p, cmdYaw, cmdPitch);
         setPitch = p.getXRot();
         setYaw = p.getYRot();
     }
@@ -393,7 +403,8 @@ public final class Takeoff {
 
     private static void start(LocalPlayer p) {
         phase = Phase.LOOK_UP;
-        yaw = p.getYRot();
+        yaw = climbYaw(p);
+        cmdYaw = p.getYRot();
         cmdPitch = setPitch = p.getXRot();
         setYaw = yaw;
         lastFrameNanos = 0L;
@@ -422,6 +433,23 @@ public final class Takeoff {
         lastFrameNanos = 0L;
         pathCount = 0;
         planX = Double.NaN;
+    }
+
+    /** The heading to climb along: the nearest to where you face at which the rockets can't hit you (RocketHit). */
+    private static float climbYaw(LocalPlayer p) {
+        float wanted = p.getYRot();
+        boolean right = rocketArm(p) == HumanoidArm.RIGHT;
+        if (wanted != safeFor || right != safeRight) {
+            safeFor = wanted; safeRight = right;
+            safeYaw = RocketHit.safeYaw(wanted, CLIMB_PITCHES, right);
+        }
+        return safeYaw;
+    }
+
+    // The arm the server puts a used rocket in, as Entity.getHandHoldingItemAngle picks it.
+    private static HumanoidArm rocketArm(LocalPlayer p) {
+        boolean onlyOffhand = p.getOffhandItem().is(Items.FIREWORK_ROCKET) && !p.getMainHandItem().is(Items.FIREWORK_ROCKET);
+        return onlyOffhand ? p.getMainArm().getOpposite() : p.getMainArm();
     }
 
     private static boolean pilotKeys(Minecraft mc) {
