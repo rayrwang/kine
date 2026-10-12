@@ -5,6 +5,7 @@ import ai.rrw.kine.Settings;
 import ai.rrw.kine.fireworks.FireworkFuel;
 import ai.rrw.kine.fireworks.RocketBurn;
 import ai.rrw.kine.fireworks.RocketHit;
+import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.mixin.MinecraftInvoker;
@@ -28,6 +29,8 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
@@ -44,7 +47,8 @@ import java.util.List;
  * straight up, jumps, opens the elytra on the third tick (jump, release, press, as a player opens it), fires a
  * rocket the next tick, climbs straight up until a leaning climb would clear the terrain, leans to 70 degrees,
  * and at the end of each rocket fires another unless the autopilot, taking over now in altitude hold, would hold
- * the cruise; then it engages the autopilot. {@link TakeoffModel} holds the physics and the rules.
+ * the cruise; then it engages the autopilot. The rockets counted are all those carried, and when the hand's stack runs
+ * out mid-climb the hand is refilled from another (refill). {@link TakeoffModel} holds the physics and the rules.
  *
  * <p>The server sees only what a vanilla client sends: the jump through the keys ({@link #adjustInput}), turns by
  * whole mouse counts, and rockets used through the game's own startUseItem just before handleKeybinds, so each
@@ -88,6 +92,7 @@ public final class Takeoff {
     private static int sinceUse, shortestBurn, seenId = -1, seenTicks;   // the rocket last seen pushing, for the log
     private static boolean loggedDetached = false;
     private static boolean lean;
+    private static boolean refilling = false;          // an inventory opening asked for, to bring rockets into the hand
     private static double groundY, cruise;
 
     // planning while standing: re-planned every PLAN_EVERY ticks (planX is NaN until the first plan)
@@ -158,7 +163,10 @@ public final class Takeoff {
                     else stop();
                 }
             }
-            case CLIMB -> climbTick(mc, p);
+            case CLIMB -> {
+                climbTick(mc, p);
+                if (phase == Phase.CLIMB) refill(mc, p);
+            }
         }
     }
 
@@ -174,7 +182,7 @@ public final class Takeoff {
             planAge = 0;
             planX = p.getX(); planY = p.getY(); planZ = p.getZ(); planYaw = climbYaw(p);
             double target = cruiseFor(p.getY());
-            int d = heldDuration(p);
+            int d = carriedDuration(p);
             Terrain2D terrain = TurnGuard.terrainOf(mc.level);
             double top = mc.level.getMaxY();
             TakeoffModel.Plan worst = TakeoffModel.fromGround(p.getX(), p.getY(), p.getZ(), planYaw, target,
@@ -187,7 +195,7 @@ public final class Takeoff {
             cruiseY = target;
         }
         if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p, mc.level.getMinY())) { status = Status.WORN_CRUISE; pathCount = 0; }
-        else if (heldRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
+        else if (carriedRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
     }
 
     // Whether END would still be at least a minute after the climb to the cruise (RW): END from the elytra carried,
@@ -341,19 +349,20 @@ public final class Takeoff {
                 return true;  // no more rockets: they would only climb past the cruise
             }
         }
-        if (heldRockets(p) == 0 || fired >= TakeoffModel.MAX_ROCKETS) {
+        if (carriedRockets(p) == 0 || fired >= TakeoffModel.MAX_ROCKETS) {
             // out of rockets: the autopilot climbs the rest of the way on its own, if it can arm
             if (FlightDirector.isActive()) handOver(p);
             else stop();
             return true;
         }
+        if (heldRockets(p) == 0) return true;   // the hand is being refilled from another stack (refill), a tick or two
         if (!p.isFallFlying()) { stop(); return true; }   // used on the ground it would launch the rocket off a block
         ((MinecraftInvoker) mc).invokeStartUseItem();
         fired++;
         pending = USE_WAIT;
         sinceUse = 0; shortestBurn = 10 * (1 + heldDuration(p)); seenId = -1;
-        Kine.LOGGER.info("Kine takeoff: rocket {} at y {} (rockets in hand {}, failed uses {})",
-            fired, String.format("%.1f", p.getY()), heldRockets(p), failedUses);
+        Kine.LOGGER.info("Kine takeoff: rocket {} at y {} (rockets in hand {}, carried {}, failed uses {})",
+            fired, String.format("%.1f", p.getY()), heldRockets(p), carriedRockets(p), failedUses);
         return true;
     }
 
@@ -430,6 +439,7 @@ public final class Takeoff {
 
     private static void reset() {
         phase = Phase.IDLE;
+        refilling = false;
         lastFrameNanos = 0L;
         pathCount = 0;
         planX = Double.NaN;
@@ -473,6 +483,57 @@ public final class Takeoff {
         else if (!main.isEmpty()) return 0;
         if (off.is(Items.FIREWORK_ROCKET) && !hasStars(off)) n += off.getCount();
         return n;
+    }
+
+    // Every rocket without stars carried (the hotbar, the main inventory, the offhand): the count a takeoff may plan on,
+    // since the hand is refilled from the other stacks as it runs out (refill). Offered only with rockets in hand.
+    private static int carriedRockets(LocalPlayer p) {
+        int n = 0;
+        for (ItemStack s : p.getInventory().getNonEquipmentItems()) if (usable(s)) n += s.getCount();
+        if (usable(p.getOffhandItem())) n += p.getOffhandItem().getCount();
+        return n;
+    }
+
+    // the shortest flight duration among the rockets carried, for the rocket count
+    private static int carriedDuration(LocalPlayer p) {
+        int d = Integer.MAX_VALUE;
+        for (ItemStack s : p.getInventory().getNonEquipmentItems()) if (usable(s)) d = Math.min(d, duration(s));
+        if (usable(p.getOffhandItem())) d = Math.min(d, duration(p.getOffhandItem()));
+        return d == Integer.MAX_VALUE ? heldDuration(p) : d;
+    }
+
+    private static boolean usable(ItemStack s) {
+        return s.is(Items.FIREWORK_ROCKET) && !hasStars(s);
+    }
+
+    // When the hand's rockets run out mid-climb and more are carried, as a player would: a hotbar stack is selected
+    // (a number key: the game sends the change before the next use); else a main-inventory stack is swapped into the
+    // selected hotbar slot in an inventory opening (InventoryClicks: the open tick, the click at its end, the close).
+    // Run at the end of each climb tick, so a stack used up by the last rocket is refilled while that rocket burns.
+    private static void refill(Minecraft mc, LocalPlayer p) {
+        if (refilling) {
+            if (InventoryClicks.isOpenTick()) { refilling = false; swapIntoHand(mc, p); }
+            return;
+        }
+        if (heldRockets(p) > 0 || carriedRockets(p) == 0) return;
+        var items = p.getInventory().getNonEquipmentItems();
+        for (int i = 0; i < 9; i++) {
+            if (usable(items.get(i))) { p.getInventory().setSelectedSlot(i); return; }
+        }
+        if (InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick()) { InventoryClicks.requestOpen(); refilling = true; }
+    }
+
+    // At the end of the open tick: the first main-inventory stack of rockets into the selected hotbar slot, which the
+    // last rocket left empty (a number-key swap), then the close a vanilla client sends.
+    private static void swapIntoHand(Minecraft mc, LocalPlayer p) {
+        AbstractContainerMenu menu = p.inventoryMenu;
+        if (mc.gameMode == null || !InventoryClicks.available(mc, p)) return;   // a screen or container is open, or the cursor is busy
+        int src = -1;                                          // inventory menu slots 9 to 35: the main inventory
+        for (int i = 9; i <= 35; i++) if (usable(menu.slots.get(i).getItem())) { src = i; break; }
+        if (src < 0 || !InventoryClicks.claimBatch()) return;  // none left, or another feature clicked in this opening
+        mc.gameMode.handleContainerInput(menu.containerId, src, p.getInventory().getSelectedSlot(), ContainerInput.SWAP, p);
+        InventoryClicks.closeAsVanilla(mc, p);
+        Kine.LOGGER.info("Kine takeoff: rockets from the inventory into the hand ({} now)", heldRockets(p));
     }
 
     private static boolean heldHasStars(LocalPlayer p) {

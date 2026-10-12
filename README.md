@@ -94,7 +94,7 @@ The flight path rails, drawn in the world, and the trace on the side-on profile 
 
 ### Rocket takeoff
 
-Standing with an elytra on and rockets in hand, the warning row offers a takeoff in green (LEFT CLICK TO TAKE OFF), or says in red why it can't (blocked above, not enough rockets, elytra too worn, rockets with firework stars, standing in water, autopilot switched off). A left click looks straight up, jumps, opens the elytra and fires a rocket. It climbs straight up until a leaning climb would clear the terrain, then leans to 70 degrees, which climbs about as fast and builds speed. As each rocket burns out it fires another unless the autopilot, taking over in altitude hold, would hold the cruise without it; then the autopilot engages. Any mouse movement or movement key stops it.
+Standing with an elytra on and rockets in hand, the warning row offers a takeoff in green (LEFT CLICK TO TAKE OFF), or says in red why it can't (blocked above, not enough rockets, elytra too worn, rockets with firework stars, standing in water, autopilot switched off). A left click looks straight up, jumps, opens the elytra and fires a rocket. It climbs straight up until a leaning climb would clear the terrain, then leans to 70 degrees, which climbs about as fast and builds speed. As each rocket burns out it fires another unless the autopilot, taking over in altitude hold, would hold the cruise without it; then the autopilot engages. The rockets counted are all those you carry: when the stack in your hand runs out, another is selected from the hotbar, or moved into your hand from the inventory. Any mouse movement or movement key stops it.
 
 ### Terrain avoidance
 

@@ -135,7 +135,8 @@ public class KineSettingsScreen extends Screen {
         + "cruise for you. Off: J does nothing.";
     private static final String DESC_TAKEOFF =
         "Standing with an elytra on and rockets in hand, left click to take off: straight up, a 70 degree rocket "
-        + "climb, then the autopilot at its cruise level, using the fewest rockets. Needs open sky above you.";
+        + "climb, then the autopilot at its cruise level, using the fewest rockets. Counts every rocket you carry and "
+        + "refills your hand from them. Needs open sky above you.";
     private static final String DESC_LANDING =
         "Gliding by hand, a green square marks a safe spot you look at; left click and the autopilot lands there: "
         + "a fast spiral down, a brake well above the ground, a slow finish. Walls give their top or their foot.";
