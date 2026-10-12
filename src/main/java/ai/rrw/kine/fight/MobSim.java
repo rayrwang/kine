@@ -13,10 +13,11 @@ import java.util.SplittableRandom;
  *       (GroundPathNavigation) and the goal stops (canContinueToUse with followingTargetEvenIfNotSeen false); it starts
  *       again at its next check, at most every 20 ticks (canUse), with its attack ready (start). That is the real
  *       11-tick second hit on a player standing still.</li>
- *   <li>Walking: Mob.setSpeed sets zza to the speed (0.23, babies 0.345), scaled by 0.98 (LivingEntity.applyInput),
+ *   <li>Walking: MoveControl calls Mob.setSpeed, which sets zza to the speed (0.23, babies 0.345) after
+ *       LivingEntity.aiStep's applyInput has scaled the last tick's by 0.98, so the 0.98 never reaches the move;
  *       pushed by zza * speed * 0.216 / f^3 on the ground (f = 0.6), 0.02 * zza in the air; drag f * 0.91 after a move
  *       that started on the ground, 0.91 in the air, (vy - 0.08) * 0.98 vertically (LivingEntity.travelInAir). About
- *       0.114 blocks a tick.</li>
+ *       0.1165 blocks a tick (real zombies in the recorded traces: 0.1165; version 1 had the 0.98 and 0.1142).</li>
  *   <li>Attack: when its cooldown is out and the player's box meets its own box grown by sqrt(2.04) - 0.6 sideways
  *       (Mob.isWithinMeleeAttackRange), it hits and waits 20 ticks (MeleeAttackGoal.checkAndPerformAttack). The
  *       cooldown is read from the swing the client sees (the server sends the swing), else assumed ready.</li>
@@ -36,7 +37,7 @@ public final class MobSim {
     public double width = 0.6, height = 1.95;
     /** Movement speed attribute (0.23 adult, 0.345 baby). */
     public double speed = 0.23;
-    public double health = 20, armour = 2, toughness = 0;
+    public double health = 20, maxHealth = 20, armour = 2, toughness = 0;
     /** The held weapon's bonus damage against it (Smite on undead and the like), at full charge. */
     public double bonus = 0;
     /** Damage of its hit before the player's armour, difficulty applied. */
@@ -79,7 +80,7 @@ public final class MobSim {
     public MobSim copy() {
         MobSim m = new MobSim();
         m.x = x; m.y = y; m.z = z; m.vx = vx; m.vy = vy; m.vz = vz; m.onGround = onGround; m.floorY = floorY;
-        m.width = width; m.height = height; m.speed = speed; m.health = health; m.armour = armour; m.toughness = toughness;
+        m.width = width; m.height = height; m.speed = speed; m.health = health; m.maxHealth = maxHealth; m.armour = armour; m.toughness = toughness;
         m.bonus = bonus; m.attackDamage = attackDamage; m.knockbackResistance = knockbackResistance;
         m.attackCooldown = attackCooldown; m.active = active; m.sinceCheck = sinceCheck; m.pathIn = pathIn; m.pathX = pathX; m.pathZ = pathZ; m.pathTargetX = pathTargetX; m.pathTargetY = pathTargetY; m.pathTargetZ = pathTargetZ; m.hasPath = hasPath;
         m.freshIn = freshIn; m.lastHurt = lastHurt; m.alive = alive; m.id = id; m.lastDx = lastDx; m.lastDz = lastDz;
@@ -159,7 +160,7 @@ public final class MobSim {
                 active = false;                // the path is done: the goal stops (it starts again on its next check)
             } else {
                 double d = Math.sqrt(dx * dx + dz * dz);
-                zza = speed * 0.98F;
+                zza = speed;   // Mob.setSpeed sets zza after applyInput's 0.98 (LivingEntity.aiStep runs applyInput first)
                 dirX = dx / d; dirZ = dz / d;
             }
         }

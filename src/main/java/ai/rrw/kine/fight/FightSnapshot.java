@@ -109,6 +109,7 @@ public final class FightSnapshot {
         FightWorld w = new FightWorld();
         w.player = WorldSnapshot.state(p);
         w.health = p.getHealth();
+        w.maxHealth = p.getMaxHealth();
         w.absorption = p.getAbsorptionAmount();
         w.armour = p.getArmorValue();
         w.toughness = p.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
@@ -177,6 +178,7 @@ public final class FightSnapshot {
         m.width = e.getBbWidth(); m.height = e.getBbHeight();
         m.speed = e.getAttributeValue(Attributes.MOVEMENT_SPEED);
         m.health = e.getHealth();
+        m.maxHealth = Math.max(1.0, e.getMaxHealth());
         m.armour = e.getArmorValue();
         m.toughness = e.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
         m.bonus = AuraState.bonus(p.getMainHandItem(), e);

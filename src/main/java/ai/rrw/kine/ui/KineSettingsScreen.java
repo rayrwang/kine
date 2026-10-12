@@ -134,8 +134,9 @@ public class KineSettingsScreen extends Screen {
         + "reach between the kill aura's swings. Only while you press no movement key; press any to take over. Avoids "
         + "drops and lava. Servers may ban it.";
     private static final String DESC_COMBAT_BIAS =
-        "How combat movement weighs your health against a quick kill: 0 keeps you safest, 100 closes in to end fights "
-        + "fastest. Needs the kill aura on, since only it attacks; greyed out otherwise.";
+        "How combat movement weighs your health against a quick kill. 0 keeps out of reach of mobs about to attack and "
+        + "never takes a hit to end a fight sooner, more careful as your health drops; 100 closes in to end fights "
+        + "fastest. Needs the kill aura on; greyed out otherwise.";
     private static final String DESC_WEAPON =
         "While the kill aura fights, holds the best sword or axe for the target, moving one up from your "
         + "inventory if needed (into an empty hotbar slot, else in place of the largest stack).";

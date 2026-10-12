@@ -22,6 +22,8 @@ import java.util.SplittableRandom;
 public final class FightWorld {
     public MoveState player;
     public double health = 20, absorption = 0;
+    /** The player's max health (the health weight grows as health drops toward 0). */
+    public double maxHealth = 20;
     public double armour = 0, toughness = 0;
     /** Damage taken is multiplied by this after armour (Resistance: 1 - 0.2 per level). */
     public double resistance = 1.0;
@@ -47,7 +49,7 @@ public final class FightWorld {
     public FightWorld copy() {
         FightWorld w = new FightWorld();
         w.player = player.copy();
-        w.health = health; w.absorption = absorption; w.armour = armour; w.toughness = toughness; w.resistance = resistance;
+        w.health = health; w.maxHealth = maxHealth; w.absorption = absorption; w.armour = armour; w.toughness = toughness; w.resistance = resistance;
         w.invulnerable = invulnerable; w.lastHurt = lastHurt;
         w.kbx = kbx; w.kby = kby; w.kbz = kbz; w.kbIn = kbIn; w.pdx = pdx; w.pdz = pdz;
         w.mobs = new MobSim[mobs.length];
