@@ -282,8 +282,10 @@ public class Nav {
      *  of it will start one or the other. */
     static boolean arriving() { return mode() == Mode.MANAGED && hasTarget && !landing && !holding; }
 
-    /** The landing spot an arrival now would pick, as {x of its centre, its top, z of its centre}. */
+    /** The landing spot an arrival now would pick, as {x of its centre, its top, z of its centre}; null while the client
+     *  has no terrain at the destination yet (an unsent column reads as empty, its surface the world's bottom). */
     static double[] arrivalSpot(Level level) {
+        if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, targetX, targetZ) <= level.getMinY()) return null;
         long now = level.getGameTime();
         if (!previewValid || previewLevel != level || previewForX != targetX || previewForZ != targetZ
                 || now - previewTime >= 20 || now < previewTime) {

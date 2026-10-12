@@ -76,8 +76,10 @@ public final class PathPrediction {
                 arriving = false;
                 if (holdThere) hold = true;
                 else {
-                    // points 0 to k-1 are drawn; the landing goes on from point k-1, its own point 0
+                    // points 0 to k-1 are drawn; the landing goes on from point k-1, its own point 0. With no terrain at
+                    // the destination yet, the path ends where the landing would begin.
                     double[] spot = Nav.arrivalSpot(mc.level);
+                    if (spot == null) { count = k; return; }
                     double yaw = avoidance ? FlightModel3D.velYaw(s.vx, s.vz) : look;
                     int left = TICKS - (k - 1);
                     LandingModel.Result r = LandingModel.simulate(new LandingModel.Law(), s.x, s.y, s.z, s.vx, s.vy, s.vz,
