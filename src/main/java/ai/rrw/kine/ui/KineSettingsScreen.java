@@ -190,6 +190,14 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_TOTEM =
         "Keeps a totem of undying in your offhand: when it holds none, one moves there from your inventory, through "
         + "the inventory as a player would (your keys let go for a tick). Whatever was in the offhand takes its place.";
+    private static final String DESC_EAT =
+        "Eats for you: the best food you carry as soon as all its hunger and saturation fit, and whenever it can while "
+        + "hearts are missing, picking what fills you most; a golden apple only when hearts are missing. Bad food (raw "
+        + "chicken, rotten flesh) only when nothing else is left and you are too hungry to sprint, or hurt below 18 "
+        + "hunger, where healing stops; several in a row so their effect runs once. Poison food and suspicious stew only at "
+        + "0 hunger. Never pufferfish, chorus fruit or enchanted golden apples. Waits while you fight, and backs off when "
+        + "you click. "
+        + "Survival and adventure only.";
     private static final String DESC_FULLBRIGHT =
         "Lights everything at full brightness, as if every block had light level 15: see in caves and at night "
         + "without torches. Only your view changes; mobs still spawn in the dark.";
@@ -299,6 +307,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Fall prevention", DESC_FALL, Settings.FALL_PREVENTION),
             Opt.of("Water bucket clutch", DESC_CLUTCH, Settings.WATER_BUCKET_CLUTCH),
             Opt.of("Auto totem", DESC_TOTEM, Settings.AUTO_TOTEM),
+            Opt.of("Auto eat", DESC_EAT, Settings.AUTO_EAT),
             Opt.of("AFK damage protection", DESC_AFK, Settings.AFK_DAMAGE_PROTECTION),
         }),
         // ordered by ban risk, the riskiest last: client-side only, then movement keys, then fighting

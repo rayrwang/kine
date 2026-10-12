@@ -76,6 +76,7 @@ public class Kine implements ClientModInitializer {
         InventoryClicks.register();
         WaterClutch.register();
         AutoTotem.register();             // after the clutch: each asks for the inventory at the end of a tick, in this order
+        ai.rrw.kine.combat.AutoEat.register();   // after the totem
         AfkGuard.register();
         ProjectileTargeting.register();
         WeaponSelect.register();

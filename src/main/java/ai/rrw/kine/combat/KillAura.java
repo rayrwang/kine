@@ -248,7 +248,8 @@ public final class KillAura {
                 }
             }
             MinecraftInvoker game = (MinecraftInvoker) mc;
-            if (mc.options.keyUse.isDown() && game.kine$getRightClickDelay() == 0) game.kine$setRightClickDelay(1);
+            if (mc.options.keyUse.isDown() && game.kine$getRightClickDelay() == 0 && !AutoEat.holdingUse())
+                game.kine$setRightClickDelay(1);   // auto eat's use isn't aimed: let it go at the rotation sent
             if (tick - heldClicksSince > CLICK_HOLD_TICKS) java.util.Arrays.fill(heldClicks, 0);
         } else if (heldClicks[0] + heldClicks[1] + heldClicks[2] > 0) {
             for (int i = 0; i < 3; i++) {

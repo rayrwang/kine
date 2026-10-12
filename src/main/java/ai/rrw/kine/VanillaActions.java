@@ -41,6 +41,7 @@ public final class VanillaActions {
         if (Landing.beforeKeybinds(mc)) return;
         if (WaterClutch.beforeKeybinds(mc)) return;
         KillAura.beforeKeybinds(mc);
+        ai.rrw.kine.combat.AutoEat.beforeKeybinds(mc);   // after the aura's turn and pick: hold use to eat
     }
 
     /** After the entities tick: this tick's rotation has gone out. */
@@ -59,6 +60,7 @@ public final class VanillaActions {
         keys = Takeoff.adjustInput(p, keys);
         keys = ProjectileDodge.adjustInput(p, keys);
         keys = WaterClutch.adjustInput(p, keys);
+        keys = ai.rrw.kine.combat.AutoEat.adjustInput(p, keys);   // sneak as the eating starts, so no block is used
         keys = FallPrevention.adjustInput(p, keys);   // last, so a dodge never steps off a cliff
         if (InventoryClicks.isOpenTick()) keys = Input.EMPTY;   // the tick the inventory "opens" in: every key up
         return keys;
