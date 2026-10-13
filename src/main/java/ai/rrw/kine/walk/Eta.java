@@ -33,6 +33,8 @@ public final class Eta {
      *  routes have shown theirs; worth this many blocks of route. Measured 2026-10-13: 1.15 with weight 64 put the
      *  part past the edge on open ground 10% high early on (the routes' own factor there 1.0 to 1.05). */
     public static double DETOUR_PRIOR = 1.05, DETOUR_WEIGHT = 24.0;
+    /** What each new route keeps of the routes before it in the detour factor. */
+    public static double DETOUR_KEEP = 0.7;
     /** The shown ETA's time constant: a share of the time left, between DISPLAY_TC_MIN and DISPLAY_TC_MAX seconds;
      *  DISPLAY_TC_UP when the estimate is above the figure (it would count up: what reads as an instrument that
      *  fluctuates), DISPLAY_TC_DOWN when below (a quicker countdown). Chosen 2026-10-13 on nine lockstep walks: error
@@ -84,8 +86,10 @@ public final class Eta {
         if (p != null && p.straight > 16 && p.lineRate > 0) {
             // how much longer this route takes than its straight line at the line's own rate, for the part past the
             // loaded edge
-            detourBlocks += p.straight;
-            detourTicks += p.total / p.lineRate;
+            // the newest routes count most: they cover the ground nearest the edge (measured 2026-10-13: a maze
+            // near the start held the factor at 1.08 for the open ground past the edge)
+            detourBlocks = detourBlocks * DETOUR_KEEP + p.straight;
+            detourTicks = detourTicks * DETOUR_KEEP + p.total / p.lineRate;
         }
     }
 
@@ -95,12 +99,19 @@ public final class Eta {
 
     /** One tick of the walk: where the player is, and whether it walked this tick (not paused, no screen open). */
     public void tick(double px, double pz, boolean walking) {
+        tick(px, pz, walking, true);
+    }
+
+    /** One tick, with whether sprinting is possible now (food above 6): a route planned sprinting is then walked, and
+     *  its planned time used up counts as that much longer, so the ratio doesn't learn hunger as a slow walk. */
+    public void tick(double px, double pz, boolean walking, boolean canSprint) {
         if (profile == null) return;
         at = profile.locate(px, pz, at);
         double left = profile.ticksLeft(at);
         walkingRun = walking ? walkingRun + 1 : 0;
         if (walking && !Double.isNaN(prevLeft) && walkingRun > WARMUP) {
             double used = Math.max(-5.0, Math.min(10.0, prevLeft - left));   // a jump along the path isn't progress
+            if (profile.sprinted && !canSprint) used *= profile.noSprintFactor;
             double decay = Math.exp(-1.0 / RECENT_TC);
             elapsed += 1; consumed += used;
             recentE = recentE * decay + 1; recentC = recentC * decay + used;
@@ -154,10 +165,15 @@ public final class Eta {
      * at the walking rate. canSprint: sprinting now (food above 6); peaceful: food doesn't drop.
      */
     public double hungerTicks(int food, float saturation, boolean canSprint, boolean peaceful) {
-        if (profile == null || !canSprint || peaceful) return 0;
+        if (profile == null || !profile.sprinted) return 0;   // planned walking: hunger can't slow it more
+        double foot = footLeft + profile.beyondBlocks;
+        // sprinting stopped (food at 6 or less) on a route planned sprinting: all of it on foot at the walking rate,
+        // until a replan costs it so (measured 2026-10-13: the estimate had dropped by a third when the sprint
+        // stopped, and the figure shown 20% low halfway)
+        if (!canSprint) return foot * profile.flatRate * (profile.noSprintFactor - 1);
+        if (peaceful) return 0;
         double points = Math.max(0, food - 6) + Math.max(0, saturation);
         double sprintBlocks = points * blocksPerPoint;
-        double foot = footLeft + profile.beyondBlocks;
         if (foot <= sprintBlocks) return 0;
         return (foot - sprintBlocks) * profile.flatRate * (profile.noSprintFactor - 1);
     }

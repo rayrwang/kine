@@ -553,10 +553,11 @@ public final class Walk {
     private static void tickEta(Minecraft mc, LocalPlayer p) {
         boolean walking = steering && !mc.isPaused();   // it walks on under a screen, unless the game pauses
         eta.blocksPerPoint = Settings.walkLayer2 ? 60.0 : 40.0;   // layer 2 sprint-jumps (the air costs no food)
-        eta.tick(p.getX(), p.getZ(), walking);
         net.minecraft.world.food.FoodData food = p.getFoodData();
+        boolean canSprint = food.getFoodLevel() > 6;   // as the plans are made (replan)
+        eta.tick(p.getX(), p.getZ(), walking, canSprint);
         boolean peaceful = mc.level != null && mc.level.getDifficulty() == net.minecraft.world.Difficulty.PEACEFUL;
-        etaRaw = eta.rawSeconds(food.getFoodLevel(), food.getSaturationLevel(), food.getFoodLevel() > 6, peaceful);
+        etaRaw = eta.rawSeconds(food.getFoodLevel(), food.getSaturationLevel(), canSprint, peaceful);
         etaShown = eta.shown(etaRaw, walking, System.nanoTime());
         etaDist = eta.distanceLeft(p.getX(), p.getZ());
     }

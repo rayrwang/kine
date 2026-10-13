@@ -26,10 +26,13 @@ public final class TimeProfile {
     public final double straight, total;
     /** How much slower without sprinting. */
     public final double noSprintFactor;
+    /** Planned with sprinting (food above 6 then). */
+    public final boolean sprinted;
 
     private TimeProfile(double[] x, double[] z, double[] ticks, double[] footBlocks, double beyondBlocks, double flatRate,
-                        double lineRate, double noSprintFactor) {
+                        double lineRate, double noSprintFactor, boolean sprinted) {
         this.lineRate = lineRate;
+        this.sprinted = sprinted;
         this.x = x; this.z = z; this.ticks = ticks; this.footBlocks = footBlocks; this.n = x.length;
         this.beyondBlocks = beyondBlocks; this.flatRate = flatRate; this.noSprintFactor = noSprintFactor;
         this.straight = n == 0 ? 0 : Math.hypot(x[n - 1] - x[0], z[n - 1] - z[0]);
@@ -53,6 +56,7 @@ public final class TimeProfile {
         // the walk follows the tightened route, shorter than the grid path's steps: its walking legs scaled by the two
         // lengths' ratio
         double straighten = route != null && route.gridLength > 1e-6 ? Math.min(1.0, route.length / route.gridLength) : 1.0;
+        double[] swimStraighten = swimStraighten(r, x, z);
         for (int i = n - 2; i >= 0; i--) {
             g.expand(r.path[i]);
             double best = Double.NaN;
@@ -61,6 +65,7 @@ public final class TimeProfile {
             if (Double.isNaN(best)) best = len * (canSprint ? t.sprint : t.noSprint);
             int mv = r.moves[i + 1];
             if (mv == Graph.WALK || mv == Graph.WADE) best *= straighten;
+            else if (mv == Graph.SWIM) best *= swimStraighten[i];
             ticks[i] = ticks[i + 1] + best;
             boolean onFoot = mv == Graph.WALK || mv == Graph.JUMP || mv == Graph.DROP || mv == Graph.GAP
                 || mv == Graph.CLIMB_OFF;
@@ -90,12 +95,69 @@ public final class TimeProfile {
             double run = 0;
             for (int i = n - 1; i >= 0; i--) { run += add[i]; ticks[i] += run; }   // the corners at or past each floor
         }
+        // where the walk is along the path, measured on the way it walks: the grid floors between two of the route's
+        // waypoints, and those of a swim run timed on its straight line, are placed along the straight line between its
+        // ends at their share of the grid's length, so progress on the straight line counts in full (measured
+        // 2026-10-13: projected on the grid's way, a sea's progress counted 6 to 9% short and the learned ratio rose
+        // to 1.08, 6 to 7 s high on a two-minute swim)
+        int[] at = route == null ? null : Replay.waypointsOnPath(route, x, z, n);
+        int i0 = 0;
+        while (i0 < n - 1) {
+            if (r.moves[i0 + 1] != Graph.SWIM || swimStraighten[i0] >= 1.0) { i0++; continue; }
+            int j0 = i0;
+            while (j0 < n - 1 && r.moves[j0 + 1] == Graph.SWIM && swimStraighten[j0] < 1.0) j0++;
+            alongChord(x, z, i0, j0);
+            i0 = j0;
+        }
+        if (at != null) for (int k = 1; k < at.length; k++) if (at[k] - at[k - 1] > 1) alongChord(x, z, at[k - 1], at[k]);
         double beyond = 0;
         // a route that stops short (at the loaded edge, or a search out of time): the straight line on from its end
         if ((r.viaExit || r.partial) && n > 0) beyond = Math.hypot(goalX + 0.5 - x[n - 1], goalZ + 0.5 - z[n - 1]);
         double flat = canSprint ? t.sprint : t.noSprint;
         double line = Double.isFinite(r.lineRate) && r.lineRate > 0 ? r.lineRate : flat;
-        return new TimeProfile(x, z, ticks, foot, beyond, flat, line, t.noSprintFactor);
+        return new TimeProfile(x, z, ticks, foot, beyond, flat, line, t.noSprintFactor, canSprint);
+    }
+
+    /** Place the points strictly between a and b on the straight line from a to b, each at its share of the way's
+     *  length. */
+    static void alongChord(double[] x, double[] z, int a, int b) {
+        if (b - a < 2) return;
+        double[] cum = new double[b - a + 1];
+        double total = 0;
+        for (int k = a + 1; k <= b; k++) { total += Math.hypot(x[k] - x[k - 1], z[k] - z[k - 1]); cum[k - a] = total; }
+        if (total < 1e-9) return;
+        double ax = x[a], az = z[a], bx = x[b], bz = z[b];
+        for (int k = a + 1; k < b; k++) {
+            double f = cum[k - a] / total;
+            x[k] = ax + (bx - ax) * f;
+            z[k] = az + (bz - az) * f;
+        }
+    }
+
+    /**
+     * For each step of the grid path that swims, how much shorter the straight line is than the grid's way across
+     * open water: the tightened route keeps swims step by step on the eight-neighbour grid (up to 8.3% longer than the
+     * straight line), while layer 2 swims the straight line. A run of swimming steps that is a shortest way on the grid
+     * between its ends (open water) is scaled by the straight line over the grid's length; a run that bends (a
+     * channel) is left as it is. Measured 2026-10-13: the sea's planned time and its detour factor ran 5 to 20% high.
+     */
+    static double[] swimStraighten(PathSearch.Result r, double[] x, double[] z) {
+        int n = r.path.length;
+        double[] f = new double[Math.max(0, n - 1)];
+        java.util.Arrays.fill(f, 1.0);
+        int i = 0;
+        while (i < n - 1) {
+            if (r.moves[i + 1] != Graph.SWIM) { i++; continue; }
+            int j = i;
+            double len = 0;
+            while (j < n - 1 && r.moves[j + 1] == Graph.SWIM) { len += Math.hypot(x[j + 1] - x[j], z[j + 1] - z[j]); j++; }
+            double dx = x[j] - x[i], dz = z[j] - z[i];
+            double grid = PathSearch.octileLength((int) Math.round(dx), (int) Math.round(dz)), straight = Math.hypot(dx, dz);
+            if (grid > 1e-6 && Math.abs(len - grid) <= 0.01 * grid + 1e-6)
+                for (int k = i; k < j; k++) f[k] = straight / grid;
+            i = j;
+        }
+        return f;
     }
 
     /** Where the player at (px, pz) is along the path: the segment nearest it (searched round `hint`) and the share of
