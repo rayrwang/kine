@@ -207,7 +207,7 @@ public final class Settings {
     public static final Option AUTO_AIM                   = toggle("autoAim", COMBAT, false, v -> autoAim = v);
     public static final Option KILL_AURA                  = toggle("killAura", COMBAT, false, v -> killAura = v);
     public static final Option COMBAT_MOVEMENT            = toggle("combatMovement", COMBAT, false, v -> combatMovement = v);
-    public static final Option COMBAT_BIAS                = level("combatMovementBias", COMBAT, 25, 100, v -> combatBias = v);
+    public static final Option COMBAT_BIAS                = level("combatMovementBias", COMBAT, 0, 100, v -> combatBias = v);
 
     /** The nav screen's At destination choice (Nav.Arrival's key), kept here so it is saved with the rest. */
     public static String navArrival = "holdTillDay";

@@ -137,7 +137,7 @@ class SettingsTest {
     @Test
     void combatMovementIsOffByDefaultAndItsSliderSavesAsANumber() throws Exception {
         assertFalse(Settings.combatMovement, "a cheat: off by default");
-        assertEquals(25, Settings.COMBAT_BIAS.value(), "leaning to survive");
+        assertEquals(0, Settings.COMBAT_BIAS.value(), "survive");
         assertTrue(Settings.COMBAT_BIAS.isLevel());
         Settings.COMBAT_BIAS.setLevel(70);
         String saved = Files.readString(file);
@@ -152,7 +152,7 @@ class SettingsTest {
         load("""
             {"combatMovementBias": "lots"}
             """);
-        assertEquals(25, Settings.combatBias, "a value that isn't a number keeps the default");
+        assertEquals(0, Settings.combatBias, "a value that isn't a number keeps the default");
     }
 
     @Test
