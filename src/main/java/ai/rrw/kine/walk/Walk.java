@@ -294,7 +294,8 @@ public final class Walk {
         return Settings.walkMargin / 100.0;
     }
 
-    /** The floor the player is on: its column, else a neighbour its box overlaps. */
+    /** The floor the player is on: its column, else a neighbour its box overlaps, else, deep in water, the water's top
+     *  above. */
     static long startNode(View v, LocalPlayer p) {
         int bx = Mth.floor(p.getX()), bz = Mth.floor(p.getZ());
         long n = v.nodeAt(bx, p.getY(), bz);
@@ -307,6 +308,15 @@ public final class Walk {
                 if (m == View.NONE) continue;
                 double d = Math.hypot(bx + dx + 0.5 - p.getX(), bz + dz + 0.5 - p.getZ());
                 if (d < best) { best = d; bestN = m; }
+            }
+        // deep under water: the water's top above (a swim floor) is where the walk starts from
+        if (bestN == View.NONE && p.isInWater())
+            for (int dy = 1; dy <= 24 && bestN == View.NONE; dy++) {
+                long m = v.nodeAt(bx, p.getY() + dy, bz);
+                if (m != View.NONE) {
+                    ChunkFloors c = v.chunk(bx, bz);
+                    if (c != null && c.type(v.index(m)) == ChunkFloors.SWIM) bestN = m;
+                }
             }
         return bestN;
     }

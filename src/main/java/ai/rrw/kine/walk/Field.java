@@ -22,6 +22,9 @@ import java.util.Arrays;
  * safe).
  */
 public final class Field {
+    /** A swim floor serves the feet up to this far under the water's top (deeper than 3 at DEEP_TICKS a block more,
+     *  the time to come up). */
+    static final double DEEP = 12.0, DEEP_TICKS = 2.0;
     /** Columns within this many blocks (square) of the route's grid path are in the corridor. */
     public static final int RADIUS = 6;
     /** The corridor runs this far along the route past the player (blocks, horizontal), then the route's cost on. */
@@ -215,7 +218,7 @@ public final class Field {
     }
 
     /** The floor of column (bx, bz) the feet at height y belong to: standing on it (from a block below to a jump up),
-     *  or in its water (a swim floor's height is the water's top, the feet up to 3 below it); -1 if none. */
+     *  or in its water (a swim floor's height is the water's top, the feet up to DEEP below it); -1 if none. */
     int floorAt(int bx, int bz, double y, double above) {
         ChunkFloors ch = v.chunk(bx, bz);
         if (ch == null) return -1;
@@ -227,7 +230,7 @@ public final class Field {
             float h = ch.h(idx);
             double s;
             if (ch.type(idx) == ChunkFloors.SWIM) {
-                if (h < y - 1.0 || h > y + 3.0) continue;
+                if (h < y - 1.0 || h > y + DEEP) continue;
                 s = Math.max(0, y - h) + Math.max(0, (h - 1.0) - y) * 0.5;
             } else {
                 if (h < y - 1.0 || h > y + above) continue;
@@ -271,6 +274,7 @@ public final class Field {
         if (own < 0) return Double.NaN;
         double f0 = value[own];
         if (f0 == Double.POSITIVE_INFINITY) return Double.NaN;
+        if (type[own] == ChunkFloors.SWIM && py[own] - y > 3.0) f0 += (py[own] - y - 3.0) * DEEP_TICKS;
         if (type[own] == ChunkFloors.CLIMB) {
             // on a ladder the floors are a block apart: slope the time between this rung and the next one up, so a
             // climb shows progress within the block
