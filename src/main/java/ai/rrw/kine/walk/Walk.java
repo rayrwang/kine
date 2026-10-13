@@ -119,6 +119,28 @@ public final class Walk {
     private static Planner.Plan firstPlan = null;
     public static int replans() { return replans; }
 
+    // the arrival time
+    private static final Eta eta = new Eta();
+    private static double etaShown = Double.NaN, etaRaw = Double.NaN, etaDist = Double.NaN;
+    private static int[] etaFor = null;   // the destination the ETA learned toward
+
+    /** Whether the walk's distance and ETA are on show: while it walks you or plans, and paused with its route. */
+    public static boolean etaShowing() {
+        return plan != null && (active() || state == State.STOPPED) && !Double.isNaN(etaShown);
+    }
+
+    /** The ETA to show, seconds (smoothed: counts down a second a second, stands while paused); NaN if none. */
+    public static double etaSeconds() { return etaShown; }
+
+    /** The ETA's estimate before smoothing, seconds (tests). */
+    public static double etaRawSeconds() { return etaRaw; }
+
+    /** The blocks left along the route, and straight on past where it stops short; NaN if none. */
+    public static double distanceLeft() { return etaDist; }
+
+    /** The ETA's model (tests read its parts). */
+    public static Eta eta() { return eta; }
+
     /** Whether the walk is in control (planning or walking). */
     public static boolean active() {
         return state == State.PLANNING || state == State.WALKING;
@@ -206,6 +228,11 @@ public final class Walk {
         firstPlan = null;
         bestLeft = Double.MAX_VALUE;
         bestLeftTick = tick;
+        // what the ETA learned on the way (its ratio, the detour past the loaded edge) carries over a pause to the same
+        // destination; a new destination starts afresh
+        if (etaFor == null || etaFor[0] != d[0] || etaFor[1] != d[1]) eta.reset(); else eta.resume();
+        etaFor = d.clone();
+        etaShown = etaRaw = etaDist = Double.NaN;
         Layer2.reset();
         replayNext = true;
         replan(mc, FIRST_BUDGET);
@@ -460,6 +487,7 @@ public final class Walk {
                 // a new route, or a finer pass of the same one: its length left is not comparable with the old mark
                 bestLeft = Double.MAX_VALUE;
                 bestLeftTick = tick;
+                eta.onPlan(np.time, np.route);
                 state = State.WALKING;
                 message = np.route.viaExit ? "Walking toward the edge of what's loaded" : "Walking";
                 WalkRender.newPlan(np, jobReplay);
@@ -514,8 +542,23 @@ public final class Walk {
             lastCheckTick = tick;
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
-        if (state == State.WALKING) Layer2.endTick(mc, plan, d);
+        if (state == State.WALKING) {
+            Layer2.endTick(mc, plan, d);
+            tickEta(mc, p);
+        }
         measure(t0);
+    }
+
+    /** The ETA's tick: where the player is along the route, the estimate, and the figure shown. */
+    private static void tickEta(Minecraft mc, LocalPlayer p) {
+        boolean walking = steering && !mc.isPaused();   // it walks on under a screen, unless the game pauses
+        eta.blocksPerPoint = Settings.walkLayer2 ? 60.0 : 40.0;   // layer 2 sprint-jumps (the air costs no food)
+        eta.tick(p.getX(), p.getZ(), walking);
+        net.minecraft.world.food.FoodData food = p.getFoodData();
+        boolean peaceful = mc.level != null && mc.level.getDifficulty() == net.minecraft.world.Difficulty.PEACEFUL;
+        etaRaw = eta.rawSeconds(food.getFoodLevel(), food.getSaturationLevel(), food.getFoodLevel() > 6, peaceful);
+        etaShown = eta.shown(etaRaw, walking, System.nanoTime());
+        etaDist = eta.distanceLeft(p.getX(), p.getZ());
     }
 
     /** Replans that only refresh the route toward a far goal (no replay): the reasons below. */
@@ -737,6 +780,7 @@ public final class Walk {
         if (!active() || mc.player == null || mc.options.hideGui) return;
         int w = mc.getWindow().getGuiScaledWidth(), h = mc.getWindow().getGuiScaledHeight();
         String s = state == State.PLANNING ? "WALK ..." : "WALK";
-        g.text(mc.font, s, HudLayout.apLeftEdge(w / 2, 0), HudLayout.annunciatorLower(h, mc.font.lineHeight), 0xFF3CE6FF, true);
+        g.text(mc.font, s, HudLayout.apLeftEdge(w / 2, ai.rrw.kine.hud.NavHud.lastHalfCenter()),
+            HudLayout.annunciatorLower(h, mc.font.lineHeight), ai.rrw.kine.hud.HudColors.CYAN, true);
     }
 }

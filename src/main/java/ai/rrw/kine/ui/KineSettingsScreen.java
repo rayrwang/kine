@@ -157,6 +157,11 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_WALK_ELYTRA_HOPS =
         "With an elytra worn, the movement search may open it in the air to glide short hops, off ledges and over gaps "
         + "where that is faster. Off by default: gliding wears the elytra (a point of durability a second).";
+    private static final String DESC_WALK_READOUTS =
+        "While the walk takes you (or is paused with its route), the HUD's nav block gives the walk's destination, the "
+        + "distance left along the route and the arrival time, in cyan. On the ground it takes the place of the "
+        + "flight's readout; in the air the flight's shows. The arrival time counts the ground ahead, what the walk has "
+        + "learned on the way and hunger. It is also on the Walk tab.";
     private static final String DESC_WALK_MARGIN =
         "How far the route keeps from walls, hazards and big drops, in blocks. Wider is safer and a little longer; zero "
         + "hugs corners.";
@@ -317,6 +322,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Movement search", DESC_WALK_LAYER2, Settings.WALK_LAYER2),
             Opt.of("Movement search display", DESC_WALK_LAYER2_DISPLAY, Settings.WALK_LAYER2_DISPLAY),
             Opt.of("Elytra hops", DESC_WALK_ELYTRA_HOPS, Settings.WALK_ELYTRA_HOPS),
+            Opt.of("Distance and ETA", DESC_WALK_READOUTS, Settings.WALK_READOUTS),
             Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,
                    v -> String.format(java.util.Locale.ROOT, "%.2f", v / 100.0)),
         }),

@@ -15,6 +15,11 @@ package ai.rrw.kine.walk;
  */
 public final class Costs {
     public double walk = 20 / 4.317;            // 4.633
+    /** A block on foot without sprinting (food at 6 or less): Baritone's walk; layer 2 measured 4.63 on the copy. */
+    public double noSprint = 20 / 4.317;
+    /** How much slower everything is without sprinting, for the ETA's look at hunger ahead: Baritone's walk against
+     *  its sprint; layer 2 on the copy: open ground 4.63 against 2.80 a block, a swim 8.5 against 5.1. */
+    public double noSprintFactor = 5.612 / 4.317;
     public double sprint = 20 / 5.612;          // 3.564
     public double water = 20 / 2.2;             // 9.091
     /** Wading (feet in water one deep, standing on the bottom): Baritone has one water cost for both. */
@@ -72,6 +77,8 @@ public final class Costs {
         Costs c = new Costs();
         c.sprint = c.fastest;           // 2.806
         c.walk = c.fastest;             // layer 2 runs wherever it can; walk-offs and climbs off at the same rate
+        c.noSprint = 4.63;              // without sprinting (food at 6 or less): measured on the copy
+        c.noSprintFactor = 4.63 / 2.80;
         c.water = 5.10;
         c.wade = 8.2;
         c.slowFactor = 6.13 / 2.806;
@@ -87,6 +94,21 @@ public final class Costs {
     }
 
     public static final Costs LAYER2 = layer2();
+
+    /** The same costs as time alone (ticks), for the arrival time: no penalty for a hazard next to the way, for
+     *  getting into water or for the elytra's wear. */
+    public Costs timeOnly() {
+        Costs t = new Costs();
+        t.walk = walk; t.noSprint = noSprint; t.noSprintFactor = noSprintFactor; t.sprint = sprint; t.water = water;
+        t.wade = wade; t.ladderUp = ladderUp; t.ladderDown = ladderDown; t.slowFactor = slowFactor;
+        t.jumpPenalty = jumpPenalty; t.gapPenalty = gapPenalty; t.fallHidden = fallHidden; t.turn = turn;
+        t.glideStart = glideStart; t.glidePerBlock = glidePerBlock; t.glideWear = 0.0;
+        t.walkOffFraction = walkOffFraction; t.jumpOne = jumpOne; t.fastest = fastest; t.fastestClimb = fastestClimb;
+        t.maxFall = maxFall;
+        t.waterPenalty = 0.0;
+        t.hazardNear = 0.0;
+        return t;
+    }
 
     /** Gravity's ticks to fall this far from rest (Baritone's distanceToTicks). */
     public static double fallTicks(double distance) {
@@ -112,7 +134,7 @@ public final class Costs {
     /** The rate a block for walking on this floor: sprint where allowed, twice for slow blocks, water when wading. */
     double rate(boolean canSprint, boolean slow, boolean wade) {
         if (wade) return this.wade;
-        double r = canSprint ? sprint : walk;
+        double r = canSprint ? sprint : noSprint;
         return slow ? r * slowFactor : r;
     }
 

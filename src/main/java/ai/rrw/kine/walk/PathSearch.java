@@ -28,6 +28,9 @@ public final class PathSearch {
         public float[] pathY = new float[0];
         public double cost;          // of the path, ticks (to the edge for viaExit; plus the straight line in total)
         public double totalCost;
+        /** The mean rate (ticks a block) of the floors on the straight line from the start toward the goal, as far as
+         *  it is loaded: what the way past the loaded edge is charged at, and the ETA's rate for it. */
+        public double lineRate = Double.NaN;
         public int expanded, generated;
         public long nanos;
         public double weight;
@@ -139,7 +142,8 @@ public final class PathSearch {
         r.weight = w;
         graph.goalX = gx; graph.goalZ = gz;
         graph.goalUnknown = exitAlways || !v.known(gx, gz);
-        if (graph.goalUnknown) graph.beyondRate = beyondRate(start, gx, gz);
+        r.lineRate = beyondRate(start, gx, gz);
+        if (graph.goalUnknown) graph.beyondRate = r.lineRate;
         goalMinH = Double.NaN;
         if (v.known(gx, gz)) {
             ChunkFloors gc = v.chunk(gx, gz);

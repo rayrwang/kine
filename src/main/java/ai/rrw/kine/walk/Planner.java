@@ -49,9 +49,12 @@ public final class Planner {
         final Replay replay;
         /** The rails' shape along the route, prepared here on the worker. */
         final RailPath rails;
-        Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails) {
+        /** The planned time left from each place along the route, for the ETA; null if it couldn't be made. */
+        public final TimeProfile time;
+        Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails,
+             TimeProfile time) {
             this.route = route; this.result = result; this.pass = pass; this.id = id; this.stamps = stamps; this.replay = replay;
-            this.rails = rails;
+            this.rails = rails; this.time = time;
         }
     }
 
@@ -143,7 +146,13 @@ public final class Planner {
                 RailPath rails = new RailPath(view, route);
                 Replay replay = new Replay(r, route, rails, ai.rrw.kine.Settings.walkSearchDetailed);
                 r.tree = null;   // drawn from the replay now; let the record go
-                job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails));
+                TimeProfile time = null;
+                try {
+                    time = TimeProfile.of(view, costs, canSprint, gaps, glides, r, route, gx, gz);
+                } catch (RuntimeException e) {
+                    Kine.LOGGER.warn("Kine walk: no time profile for the ETA", e);
+                }
+                job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails, time));
                 if (r.found) bestCost = c;
             }
             if (r.partial) break;   // out of time or floors: a better pass won't fit

@@ -58,7 +58,7 @@ public final class Settings {
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
-        walkSearchDetailed;
+        walkReadouts, walkSearchDetailed;
     /** The walking route's safety margin, hundredths of a block. */
     public static int walkMargin;
     public static Show displaySpeed, displayGroundSpeed,
@@ -190,6 +190,7 @@ public final class Settings {
     public static final Option WALK_LAYER2                = toggle("walkLayer2", WALK, true, v -> walkLayer2 = v);
     public static final Option WALK_LAYER2_DISPLAY        = toggle("walkLayer2Display", WALK, true, v -> walkLayer2Display = v);
     public static final Option WALK_ELYTRA_HOPS           = toggle("walkElytraHops", WALK, false, v -> walkElytraHops = v);
+    public static final Option WALK_READOUTS              = toggle("walkReadouts", WALK, true, v -> walkReadouts = v);
 
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);
     public static final Option FALL_PREVENTION            = toggle("fallPrevention", SAFETY, true, v -> fallPrevention = v);

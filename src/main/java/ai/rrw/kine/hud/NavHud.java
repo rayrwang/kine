@@ -12,6 +12,7 @@ import ai.rrw.kine.util.Compass;
 import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.util.Smoothing;
+import ai.rrw.kine.walk.Walk;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
@@ -37,6 +38,7 @@ public final class NavHud {
     private static final double ETA_TC         = 12.0;   // time constant (s) that smooths the porpoise wobble out of the ETA
 
     private static double etaShown = Double.NaN;  // smoothed ETA on display (s)
+    private static int lastHalfCenter = 0;        // the centre block's half width last drawn (the walk's WALK keeps clear)
     private static long   etaNanos = 0L;          // wall-clock time of the last ETA update
 
     public static void register() {
@@ -84,10 +86,24 @@ public final class NavHud {
                     : "DIST " + Readouts.distance(dist) + "    ETA " + Readouts.eta(smoothEta(dist / RangeEndurance.speedEstimate()));
             }
         }
+        // the walk's block and the flight's share the centre, and the mode you are in wins (RW, 2026-10-12: "on gorudn
+        // overird eair na divce versa"): on the ground with a walk going or paused with its route, the walk's
+        // destination, distance left along the route and ETA, in the walk's cyan; in the air (gliding, a takeoff under
+        // way) the flight's, unless it is the walk's own elytra hop
+        boolean walkBlock = Settings.walkReadouts && Walk.etaShowing() && Walk.destination() != null
+            && (Walk.active() || !Settings.inFlight());
+        if (walkBlock) {
+            int[] wd = Walk.destination();
+            top = "COORD " + wd[0] + " " + wd[1];
+            line2 = "DIST " + Readouts.distance(Walk.distanceLeft()) + "    ETA " + Readouts.eta(Walk.etaSeconds());
+            navCenter = true;
+        }
+        int centerColor = walkBlock ? HudColors.CYAN : HudColors.GREEN;
         int halfCenter = (top == null) ? 0
             : Math.max(mc.font.width(top), line2 == null ? 0 : mc.font.width(line2)) / 2;
 
         // vertical mode annunciator: two rows left of the nav block, shown whenever the director is armed
+        lastHalfCenter = navCenter ? halfCenter : 0;
         drawModeAnnunciator(g, mc, cx, lineY, etaY, halfCenter);
 
         // autopilot status on the right, mirroring the vertical mode block; shown whatever the autopilot state.
@@ -100,9 +116,10 @@ public final class NavHud {
 
         if (!navCenter) return;
 
-        g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, HudColors.GREEN, true);
+        g.text(mc.font, top, cx - mc.font.width(top) / 2, lineY, centerColor, true);
         if (line2 == null) return;   // SELECTED, or no destination yet: no distance, ETA or range
-        g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, HudColors.GREEN, true);
+        g.text(mc.font, line2, cx - mc.font.width(line2) / 2, etaY, centerColor, true);
+        if (walkBlock) return;
 
         // If the elytra can't take us that far, flag it on the warning row.
         double range = RangeEndurance.rangeMeters();
@@ -203,6 +220,9 @@ public final class NavHud {
         int ticks = HoldModel.ticksToDawn(mc.level.getOverworldClockTime(), mc.level.getRainLevel(1.0F));
         return "HOLDING, LAND IN " + KineTime.format(ticks / 20.0);
     }
+
+    /** The centre block's half width as last drawn (0 if none), for annunciators beside it. */
+    public static int lastHalfCenter() { return lastHalfCenter; }
 
     /** Forget the smoothed ETA, so a new destination starts fresh instead of easing from the old one. */
     public static void resetEta() { etaShown = Double.NaN; etaNanos = 0L; }

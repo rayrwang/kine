@@ -6,6 +6,7 @@ import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.util.Compass;
+import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.walk.Planner;
 import ai.rrw.kine.walk.Route;
 import ai.rrw.kine.walk.Walk;
@@ -293,16 +294,23 @@ public class KineNavScreen extends Screen {
             double dist = Math.hypot(d[0] + 0.5 - mc.player.getX(), d[1] + 0.5 - mc.player.getZ());
             g.centeredText(this.font, Component.literal(String.format(java.util.Locale.ROOT, "%.0f blocks away in a straight line", dist)), cx, y + 12, DIM);
         }
+        int below = 24;
+        if (Settings.walkReadouts && Walk.etaShowing()) {
+            // the HUD's figures: along the route (straight on past where it stops short), and the arrival time
+            String e = "Along the route " + Readouts.distance(Walk.distanceLeft()) + ", ETA " + Readouts.eta(Walk.etaSeconds());
+            g.centeredText(this.font, Component.literal(e), cx, y + 24, HudColors.CYAN);
+            below = 36;
+        }
         if (p != null && (Walk.active() || Walk.showing())) {
             Route r = p.route;
             String a = String.format(java.util.Locale.ROOT, "Route %.1f blocks (grid %.1f)%s", r.length, r.gridLength,
                 r.viaExit ? ", then straight on past what's loaded" : "");
             String b = String.format(java.util.Locale.ROOT, "Search %.0f ms, %,d places, weight %.2f", p.result.nanos / 1e6,
                 p.result.expanded, p.result.weight);
-            g.centeredText(this.font, Component.literal(a), cx, y + 24, DIM);
-            g.centeredText(this.font, Component.literal(b), cx, y + 36, DIM);
+            g.centeredText(this.font, Component.literal(a), cx, y + below, DIM);
+            g.centeredText(this.font, Component.literal(b), cx, y + below + 12, DIM);
         }
-        g.centeredText(this.font, Component.literal("Any movement key pauses the walk. Your view stays yours."), cx, y + 54, DIM);
+        g.centeredText(this.font, Component.literal("Any movement key pauses the walk. Your view stays yours."), cx, y + below + 30, DIM);
     }
 
     private void updateVisibility() {
