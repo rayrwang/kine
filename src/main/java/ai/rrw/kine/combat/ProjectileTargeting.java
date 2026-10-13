@@ -59,11 +59,14 @@ import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 
 public class ProjectileTargeting {
@@ -124,6 +127,13 @@ public class ProjectileTargeting {
     private static float lastSolYaw, lastSolPitch;    // its solved aim last tick, for the turn's feed-forward
     private static boolean haveLastSol = false;
     private static final Map<Integer, Ballistics.Course> courses = new HashMap<>();   // each target's course, by entity id, worked out once a tick
+
+    // The ender dragon's parts, each with the trail of its box centre over the last 2 TRAIL_SPAN ticks, from which its
+    // turning lead is read (dragonCourse); kept for every part every tick, so a part is ready the moment it is picked up.
+    private static final Map<Integer, ArrayDeque<Vec3>> trails = new HashMap<>();
+    private static final int TRAIL_SPAN = 3;                     // ticks a motion sample spans (the dragon's position comes every 3 ticks)
+    private static final double MAX_TURN = Math.toRadians(20);   // radians a tick: the dragon turns at most about 17.5 degrees a tick (EnderDragon.aiStep's yRotA)
+    private static final double MIN_TURN_SPEED = 0.05;           // blocks a tick across: slower (hovering, perched), no turn is read
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
@@ -232,7 +242,7 @@ public class ProjectileTargeting {
 
     private static List<Mover> movers(ClientLevel level, Entity self, Vec3 eye, Predicate<Entity> hittable) {
         List<Mover> out = new ArrayList<>();
-        for (Entity e : level.entitiesForRendering())
+        for (Entity e : everything(level))
             if (e != self && hittable.test(e) && e.position().distanceToSqr(eye) <= AIM_RANGE * AIM_RANGE)
                 out.add(new Mover(e, motion(e)));
         return out;
@@ -266,7 +276,9 @@ public class ProjectileTargeting {
                 // across first, where the course goes straight on, so only an entity near the flight reads its floor
                 AABB b0 = m.e().getBoundingBox();
                 double t = lead + tick, hx = m.motion().x * t, hz = m.motion().z * t;
-                if (b0.maxX + hx < seg.minX || b0.minX + hx > seg.maxX || b0.maxZ + hz < seg.minZ || b0.minZ + hz > seg.maxZ) continue;
+                // (not for a dragon part, whose lead curves)
+                if (!(m.e() instanceof EnderDragonPart)
+                    && (b0.maxX + hx < seg.minX || b0.minX + hx > seg.maxX || b0.maxZ + hz < seg.minZ || b0.minZ + hz > seg.maxZ)) continue;
                 AABB bb = b0.move(course(level, m.e()).at(t));
                 if (!bb.intersects(seg)) continue;
                 Optional<Vec3> h = entityHit(level, self, bb, pos, segEnd, HitChance.margin(tick));
@@ -313,10 +325,10 @@ public class ProjectileTargeting {
     // client's entities are looked at (a box query this wide would walk thousands of empty sections).
     private static Entity acquire(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec aim, double lead,
                                   Entity covered, Predicate<Entity> hurtable) {
-        if (covered != null && visible(level, p, eye, covered)) return covered;
+        if (covered != null && visible(level, p, eye, covered)) return headFirst(p, level, eye, spawn, aim, lead, covered, hurtable);
         Vec3 look = p.getLookAngle();
         Entity best = null; double bestRatio = 1.0;   // gap as a share of the target's own pickup width
-        for (Entity e : level.entitiesForRendering()) {
+        for (Entity e : everything(level)) {
             if (e == p || !hurtable.test(e)) continue;
             Vec3 to = e.getBoundingBox().getCenter().subtract(eye);
             double dist = to.length();
@@ -327,7 +339,28 @@ public class ProjectileTargeting {
             double ratio = aimGap(look, to.scale(1.0 / dist), Ballistics.dirOf(s.yaw(), s.pitch())) / acquireDeg(level, e, dist);
             if (ratio < bestRatio) { bestRatio = ratio; best = e; }
         }
-        return best;
+        return best == null ? null : headFirst(p, level, eye, spawn, aim, lead, best, hurtable);
+    }
+
+    // Every entity the client has, the ender dragon's parts included. entitiesForRendering() leaves the parts out: the
+    // client keeps them in a list of their own (ClientLevel.dragonParts()), and only the box query Level.getEntities
+    // adds them. They are the dragon's only hitboxes (EnderDragon.isPickable() is false), so without them auto aim
+    // never picks up the dragon and the reticle's flight passes through it.
+    private static List<Entity> everything(ClientLevel level) {
+        List<Entity> all = new ArrayList<>();
+        level.entitiesForRendering().forEach(all::add);
+        all.addAll(level.dragonParts());
+        return all;
+    }
+
+    // A dragon picked up by any part is aimed at by its head when the head is in view and in reach: the other parts
+    // pass on a quarter of the damage plus at most 1 (EnderDragon.hurt).
+    private static Entity headFirst(LocalPlayer p, ClientLevel level, Vec3 eye, Vec3 spawn, Spec aim, double lead,
+                                    Entity e, Predicate<Entity> hurtable) {
+        if (!(e instanceof EnderDragonPart part) || part == part.parentMob.head) return e;
+        Entity head = part.parentMob.head;
+        if (!hurtable.test(head) || head.getBoundingBox().getCenter().distanceTo(eye) > AIM_RANGE || !visible(level, p, eye, head)) return e;
+        return Math.abs(solve(p, spawn, head, aim, lead).miss()) <= REACH_MISS ? head : e;
     }
 
     // How close the view must come to aiming at a target to pick it up, degrees. On the ground (or in water), the
@@ -384,10 +417,43 @@ public class ProjectileTargeting {
     // motion, falling back down for one gravity acts on. Once a tick per target.
     private static Ballistics.Course course(Level level, Entity target) {
         return courses.computeIfAbsent(target.getId(), id -> {
+            if (target instanceof EnderDragonPart part) return dragonCourse(part);
             Vec3 v = motion(target);
             if (!(target instanceof LivingEntity le) || !falls(le)) return Ballistics.Course.straight(v);
             return new Ballistics.Course(v, true, le.getGravity(), le.hasEffect(MobEffects.SLOW_FALLING), floor(level, le));
         });
+    }
+
+    // Each dragon part's centre this tick onto its trail; trails of parts gone are dropped.
+    private static void updateTrails(ClientLevel level) {
+        Set<Integer> live = new HashSet<>();
+        for (EnderDragonPart part : level.dragonParts()) {
+            live.add(part.getId());
+            ArrayDeque<Vec3> t = trails.computeIfAbsent(part.getId(), id -> new ArrayDeque<>());
+            t.addLast(part.getBoundingBox().getCenter());
+            while (t.size() > 2 * TRAIL_SPAN + 1) t.removeFirst();
+        }
+        trails.keySet().retainAll(live);
+    }
+
+    // A dragon part's lead: the dragon flies smooth curves (EnderDragon.aiStep turns it toward its phase's target by a
+    // turn rate that keeps 0.8 of itself each tick), so its course turns on at the rate it has turned lately. Its
+    // motion is the mean over the last TRAIL_SPAN ticks and its turn the change of direction from the TRAIL_SPAN before
+    // that, a tick's worth; the mean motion is about the middle tick's, so it is turned on by one tick's turn to give
+    // this tick's. The target the dragon steers for isn't sent to the client (only its phase), so the curve is held,
+    // not foreseen. Straight while the trail is short or the dragon barely moves across.
+    private static Ballistics.Course dragonCourse(EnderDragonPart part) {
+        ArrayDeque<Vec3> t = trails.get(part.getId());
+        if (t == null || t.size() < 2 * TRAIL_SPAN + 1) return Ballistics.Course.straight(motion(part));
+        Vec3[] p = t.toArray(new Vec3[0]);
+        int n = p.length - 1;
+        Vec3 v1 = p[n].subtract(p[n - TRAIL_SPAN]).scale(1.0 / TRAIL_SPAN);
+        Vec3 v0 = p[n - TRAIL_SPAN].subtract(p[n - 2 * TRAIL_SPAN]).scale(1.0 / TRAIL_SPAN);
+        if (Math.hypot(v1.x, v1.z) < MIN_TURN_SPEED || Math.hypot(v0.x, v0.z) < MIN_TURN_SPEED) return Ballistics.Course.straight(v1);
+        double d = Math.atan2(v1.z, v1.x) - Math.atan2(v0.z, v0.x);
+        double turn = Mth.clamp(Math.atan2(Math.sin(d), Math.cos(d)) / TRAIL_SPAN, -MAX_TURN, MAX_TURN);
+        double c = Math.cos(turn), s = Math.sin(turn);
+        return Ballistics.Course.turning(new Vec3(v1.x * c - v1.z * s, v1.y, v1.x * s + v1.z * c), turn);
     }
 
     // Whether gravity moves a target as LivingEntity.travelInAir does (26.1.2), so that its lead comes back down rather
@@ -474,6 +540,7 @@ public class ProjectileTargeting {
         LocalPlayer p = mc.player; ClientLevel level = mc.level;
         if (p == null || level == null) { dropLock(); valid = false; return; }
         if (!Settings.projectileReticle && !Settings.autoAim) { dropLock(); valid = false; return; }
+        updateTrails(level);
 
         valid = false; hitBox = null; hitId = -1; noDamage = null;
         courses.clear();

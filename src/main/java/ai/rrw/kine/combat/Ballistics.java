@@ -322,12 +322,39 @@ public final class Ballistics {
      * and it stops on the floor, the height its box comes down on (relative to now, 0 or below; negative infinity
      * when none is known). A new jump isn't foreseen.
      */
-    public record Course(Vec3 motion, boolean falls, double gravity, boolean slowFalling, double floor) {
+    public record Course(Vec3 motion, boolean falls, double gravity, boolean slowFalling, double floor, double turn) {
+        public Course(Vec3 motion, boolean falls, double gravity, boolean slowFalling, double floor) {
+            this(motion, falls, gravity, slowFalling, floor, 0.0);
+        }
+
         /** A target that keeps its present motion, the vertical part included. */
         public static Course straight(Vec3 motion) { return new Course(motion, false, 0.0, false, Double.NEGATIVE_INFINITY); }
 
+        /** A flier on a steady curve (the ender dragon): its motion across turns by `turn` radians a tick (positive from
+         *  +x toward +z), its speed across and its vertical motion kept. */
+        public static Course turning(Vec3 motion, double turn) {
+            return new Course(motion, false, 0.0, false, Double.NEGATIVE_INFINITY, turn);
+        }
+
         /** Where the target is t ticks on, relative to now; between whole ticks, on the line from one to the next. */
-        public Vec3 at(double t) { return new Vec3(motion.x * t, dy(t), motion.z * t); }
+        public Vec3 at(double t) {
+            if (turn == 0.0 || t <= 0) return new Vec3(motion.x * t, dy(t), motion.z * t);
+            int k = (int) Math.floor(t);
+            double f = t - k;
+            double[] a = across(k), b = across(k + 1);
+            return new Vec3(a[0] + f * (b[0] - a[0]), dy(t), a[1] + f * (b[1] - a[1]));
+        }
+
+        // The move across over the next n whole ticks on the curve: each tick's move is the last one turned by `turn`,
+        // so the sum is c (q + q^2 + ... + q^n) with c = motion.x + i motion.z and q = e^(i turn), which is
+        // c e^(i (n + 1) turn / 2) sin(n turn / 2) / sin(turn / 2).
+        private double[] across(int n) {
+            double s = Math.sin(turn / 2);
+            double scale = Math.abs(s) < 1e-12 ? n : Math.sin(n * turn / 2) / s;
+            double ang = (n + 1) * turn / 2;
+            double re = Math.cos(ang) * scale, im = Math.sin(ang) * scale;
+            return new double[]{motion.x * re - motion.z * im, motion.x * im + motion.z * re};
+        }
 
         /** Its height t ticks on, relative to now. */
         public double dy(double t) {
