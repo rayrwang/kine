@@ -5,8 +5,10 @@ import ai.rrw.kine.move.MoveState;
 
 /**
  * The combat movement's actions and how one becomes keys. An action is a way to go in the world and a gait: one of 16
- * compass headings, or straight away from the nearest mob, or away from the middle of the crowd; walking, sprinting or
- * sprint-jumping; or standing still. The keys are the movement keys whose direction, at the rotation the server gets
+ * compass headings, or straight away from the nearest mob, or away from the middle of the crowd; walking or sprinting;
+ * or standing still. No jumping: RW 2026-10-12, verbatim, "i think that can jsut be removed, i mean remove jumping? i
+ * honestly dont relaly think jumping is worth the effeort, that swhere the most risk comes from, and ctitism atatck
+ * sarent that necesayr anyway" (the jump toward a mob was where most of his damage came from). The keys are the movement keys whose direction, at the rotation the server gets
  * this tick (the kill aura's when it is on), is nearest the heading: one of the eight W/A/S/D directions, so up to
  * 22.5 degrees off. Sprinting needs W among them (LocalPlayer.canStartSprinting reads a forward impulse), so a heading
  * more than 67.5 degrees off the rotation is walked. The simulation and the executor both use {@link #keys}, so the
@@ -18,7 +20,7 @@ public final class Moves {
     public static final int HEADINGS = 16;
     public static final int AWAY_NEAREST = 16, AWAY_CROWD = 17;
     public static final int DIRECTIONS = 18;
-    public static final int WALK = 0, SPRINT = 1, SPRINT_JUMP = 2, GAITS = 3;
+    public static final int WALK = 0, SPRINT = 1, GAITS = 2;
     /** The last action: no keys. */
     public static final int HOLD = DIRECTIONS * GAITS;
     public static final int COUNT = HOLD + 1;
@@ -48,10 +50,7 @@ public final class Moves {
             if (err < bestErr) { bestErr = err; best = i; }
         }
         int k = COMBO[best];
-        if (gait != WALK && (k & MoveState.FORWARD) != 0) {
-            k |= MoveState.SPRINT;
-            if (gait == SPRINT_JUMP) k |= MoveState.JUMP;
-        }
+        if (gait == SPRINT && (k & MoveState.FORWARD) != 0) k |= MoveState.SPRINT;
         return k;
     }
 
@@ -68,6 +67,6 @@ public final class Moves {
         if (action == HOLD) return "hold";
         int d = direction(action), g = gait(action);
         String dir = d == AWAY_NEAREST ? "away-nearest" : d == AWAY_CROWD ? "away-crowd" : "h" + (int) headingYaw(d);
-        return dir + (g == WALK ? "-walk" : g == SPRINT ? "-sprint" : "-sprintjump");
+        return dir + (g == WALK ? "-walk" : "-sprint");
     }
 }

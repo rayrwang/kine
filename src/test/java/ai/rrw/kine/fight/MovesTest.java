@@ -35,8 +35,16 @@ class MovesTest {
             boolean sprint = (k & MoveState.SPRINT) != 0;
             assertEquals((k & MoveState.FORWARD) != 0, sprint, "rel " + rel);
             assertEquals(Math.abs(rel) <= 67.5, sprint, "rel " + rel);
-            int j = Moves.keys(rel, 0f, Moves.SPRINT_JUMP);
-            assertEquals(sprint, (j & MoveState.JUMP) != 0, "sprint-jump jumps only where it can sprint, rel " + rel);
+        }
+    }
+
+    @Test
+    void noActionJumps() {
+        FightWorld w = new FightWorld();
+        for (float yaw = -180; yaw < 180; yaw += 15) {
+            w.segmentYaw = yaw;
+            for (int a = 0; a < Moves.COUNT; a++)
+                assertEquals(0, FightModel.keysFor(w, a, yaw) & MoveState.JUMP, Moves.name(a) + " at yaw " + yaw);
         }
     }
 
