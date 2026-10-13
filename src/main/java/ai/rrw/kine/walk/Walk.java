@@ -542,6 +542,11 @@ public final class Walk {
             replanFor(r.viaExit ? NEAR_EDGE : NEAR_END, mc);
         } else if (idle && (r.viaExit || plan.result.partial) && tick - lastPlanTick > 100) {
             replanFor(EVERY_5S, mc);
+        } else if (idle && plan.throughUnknown && tick - lastPlanTick > 100) {
+            // the goal reached round ground not loaded then (chunks kept from an earlier visit with a gap between):
+            // as the gap loads, a straighter way may open (measured 2026-10-13: a route bent 4.9 blocks off the line
+            // and walked to the end)
+            replanFor(PAST_UNKNOWN, mc);
         } else if (idle && tick - lastCheckTick > 20) {
             lastCheckTick = tick;
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
@@ -567,10 +572,11 @@ public final class Walk {
     }
 
     /** Replans that only refresh the route toward a far goal (no replay): the reasons below. */
-    static final String EVERY_5S = "every 5 s toward a far goal", NEAR_EDGE = "near the loaded edge", NEAR_END = "near a partial route's end";
+    static final String EVERY_5S = "every 5 s toward a far goal", NEAR_EDGE = "near the loaded edge", NEAR_END = "near a partial route's end",
+        PAST_UNKNOWN = "every 5 s while the line to the goal crosses ground not loaded";
 
     private static void replanFor(String why, Minecraft mc) {
-        replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END));
+        replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END) || why.equals(PAST_UNKNOWN));
         replans++;
         if (replanWhy.size() < 200) replanWhy.add(tick + ": " + why);
         replan(mc, REPLAN_BUDGET);

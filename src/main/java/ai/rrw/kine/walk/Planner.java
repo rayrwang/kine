@@ -51,10 +51,13 @@ public final class Planner {
         final RailPath rails;
         /** The planned time left from each place along the route, for the ETA; null if it couldn't be made. */
         public final TimeProfile time;
+        /** The route reaches the goal, but the straight line from its start to the goal crosses ground not loaded when
+         *  it was planned: a straighter way may open as that ground loads. */
+        public final boolean throughUnknown;
         Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails,
-             TimeProfile time) {
+             TimeProfile time, boolean throughUnknown) {
             this.route = route; this.result = result; this.pass = pass; this.id = id; this.stamps = stamps; this.replay = replay;
-            this.rails = rails; this.time = time;
+            this.rails = rails; this.time = time; this.throughUnknown = throughUnknown;
         }
     }
 
@@ -152,13 +155,23 @@ public final class Planner {
                 } catch (RuntimeException e) {
                     Kine.LOGGER.warn("Kine walk: no time profile for the ETA", e);
                 }
-                job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails, time));
+                boolean blind = !route.viaExit && r.found && crossesUnknown(view, route.x[0], route.z[0], gx + 0.5, gz + 0.5);
+                job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails, time, blind));
                 if (r.found) bestCost = c;
             }
             if (r.partial) break;   // out of time or floors: a better pass won't fit
         }
         lastPasses = job.passes;
         lastNanos = System.nanoTime() - t0;
+    }
+
+    /** Whether the straight line from (ax, az) to (bx, bz) crosses a column the view doesn't know (every half block). */
+    static boolean crossesUnknown(View v, double ax, double az, double bx, double bz) {
+        double lx = bx - ax, lz = bz - az, len = Math.hypot(lx, lz);
+        for (double t = 0; t <= len; t += 0.5) {
+            if (!v.known(Mth.floor(ax + lx / Math.max(1e-9, len) * t), Mth.floor(az + lz / Math.max(1e-9, len) * t))) return true;
+        }
+        return false;
     }
 
     /** The columns under and beside the route's ground samples (the 3 by 3 around each), with their stamps in the view:

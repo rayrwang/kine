@@ -5,7 +5,7 @@ package ai.rrw.kine.walk;
  * from there to the route's end by layer 1's own moves costed as time alone (Costs.timeOnly: the costs fitted from
  * layer 2's simulated runs when it walks, Baritone's for the layer 1 follower; no penalty for hazards or the elytra's
  * wear), and the blocks of it on foot (where sprinting costs food). Past a route that stops at the loaded area's edge,
- * the straight line on to the goal, its time charged later with a detour factor learned on the way. Made once per
+ * the straight line on to the goal, its time charged at the line's own rate (lineRate). Made once per
  * plan on the planner's worker; read on the game's thread.
  */
 public final class TimeProfile {
@@ -20,9 +20,9 @@ public final class TimeProfile {
     public final double flatRate;
     /** Ticks a block on the straight line toward the goal: the mean of the floors on it as far as it is loaded (the
      *  search's own rate past the loaded edge; a sea's swim, the land's sprint); the part past the route's end is
-     *  charged at it, times a detour factor. */
+     *  charged at it. */
     public final double lineRate;
-    /** The route's own straight distance (start to end) and its planned time: what a detour factor is learned from. */
+    /** The route's own straight distance (start to end) and its planned time. */
     public final double straight, total;
     /** How much slower without sprinting. */
     public final double noSprintFactor;
@@ -139,7 +139,7 @@ public final class TimeProfile {
      * open water: the tightened route keeps swims step by step on the eight-neighbour grid (up to 8.3% longer than the
      * straight line), while layer 2 swims the straight line. A run of swimming steps that is a shortest way on the grid
      * between its ends (open water) is scaled by the straight line over the grid's length; a run that bends (a
-     * channel) is left as it is. Measured 2026-10-13: the sea's planned time and its detour factor ran 5 to 20% high.
+     * channel) is left as it is. Measured 2026-10-13: the sea's planned time ran 5 to 8% high.
      */
     static double[] swimStraighten(PathSearch.Result r, double[] x, double[] z) {
         int n = r.path.length;

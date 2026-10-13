@@ -7,9 +7,10 @@ package ai.rrw.kine.walk;
  *   <li>The planned time left along the route ({@link TimeProfile}): layer 1's moves ahead costed as time (open
  *       ground, water, ladders, steps, drops, gaps, glides, the route's corners), with the costs fitted from layer 2's
  *       own simulated runs when layer 2 walks. This knows what lies ahead, which closing speed alone can't.</li>
- *   <li>Past a route that stops at the loaded area's edge, the straight line on to the goal at the open-ground rate
- *       times a detour factor: how much longer than the straight line the known part of the route is, learned from
- *       the plans of this walk (a prior of 1.15 until it has seen enough of the ground).</li>
+ *   <li>Past a route that stops at the loaded area's edge, the straight line on to the goal at the line's own rate
+ *       (the mean of the floors on the straight line as far as it is loaded: a sea's swim, the land's sprint). A
+ *       detour factor learned from the known routes was tried and dropped: it only added error (measured
+ *       2026-10-13 on ten lockstep walks: 6.7% and 1.01 s with it, 6.3% and 0.84 s without; no walk worse).</li>
  *   <li>A ratio learned on the way: the real ticks spent walking against the planned ticks they used up, over the
  *       whole walk and over the last ten seconds, blended, starting from 1 (the plan's own word). It takes in what the
  *       plan can't know: a Speed or Slowness effect, the layer that walks, a slow server, fights and stops.</li>
@@ -29,12 +30,6 @@ public final class Eta {
     public static double RECENT_TC = 200.0;
     /** The recent ratio's share of the blend. */
     public static double RECENT_SHARE = 0.5;
-    /** The detour factor past the loaded edge (time against the straight line at the line's own rate) before the
-     *  routes have shown theirs; worth this many blocks of route. Measured 2026-10-13: 1.15 with weight 64 put the
-     *  part past the edge on open ground 10% high early on (the routes' own factor there 1.0 to 1.05). */
-    public static double DETOUR_PRIOR = 1.05, DETOUR_WEIGHT = 24.0;
-    /** What each new route keeps of the routes before it in the detour factor. */
-    public static double DETOUR_KEEP = 0.7;
     /** The shown ETA's time constant: a share of the time left, between DISPLAY_TC_MIN and DISPLAY_TC_MAX seconds;
      *  DISPLAY_TC_UP when the estimate is above the figure (it would count up: what reads as an instrument that
      *  fluctuates), DISPLAY_TC_DOWN when below (a quicker countdown). Chosen 2026-10-13 on nine lockstep walks: error
@@ -53,7 +48,6 @@ public final class Eta {
     private double at = -1, routeAt = -1, prevLeft = Double.NaN;
     private double elapsed, consumed, recentE, recentC;
     private int walkingRun = 0;   // ticks walked since the last stop
-    private double detourBlocks, detourTicks;   // the known routes' straight lines and their planned times (as a rate)
     private double leftTicks, footLeft;
 
     // the shown figure
@@ -66,7 +60,6 @@ public final class Eta {
         at = routeAt = -1; prevLeft = Double.NaN;
         elapsed = consumed = recentE = recentC = 0;
         walkingRun = 0;
-        detourBlocks = detourTicks = 0;
         shown = Double.NaN; shownNanos = 0;
     }
 
@@ -83,14 +76,6 @@ public final class Eta {
         route = r;
         at = -1; routeAt = -1;
         prevLeft = Double.NaN;
-        if (p != null && p.straight > 16 && p.lineRate > 0) {
-            // how much longer this route takes than its straight line at the line's own rate, for the part past the
-            // loaded edge
-            // the newest routes count most: they cover the ground nearest the edge (measured 2026-10-13: a maze
-            // near the start held the factor at 1.08 for the open ground past the edge)
-            detourBlocks = detourBlocks * DETOUR_KEEP + p.straight;
-            detourTicks = detourTicks * DETOUR_KEEP + p.total / p.lineRate;
-        }
     }
 
     public boolean hasPlan() {
@@ -129,10 +114,9 @@ public final class Eta {
         return Math.max(0.5, Math.min(4.0, r));
     }
 
-    /** The detour factor past the loaded edge. */
+    /** The detour factor past the loaded edge: 1 (kept for the tests' logs; see the class comment). */
     public double detour() {
-        double d = (DETOUR_PRIOR * DETOUR_WEIGHT + detourTicks) / (DETOUR_WEIGHT + detourBlocks);
-        return Math.max(1.0, Math.min(3.0, d));
+        return 1.0;
     }
 
     /** The planned ticks left on the route (no ratio, nothing past the edge). */
@@ -157,7 +141,7 @@ public final class Eta {
 
     /** The ticks past the loaded edge, before the ratio. */
     public double beyondTicks() {
-        return profile == null ? 0 : profile.beyondBlocks * profile.lineRate * detour();
+        return profile == null ? 0 : profile.beyondBlocks * profile.lineRate;
     }
 
     /**

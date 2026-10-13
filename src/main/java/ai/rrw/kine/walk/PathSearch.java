@@ -69,6 +69,9 @@ public final class PathSearch {
     private int hn = 0;
 
     private double goalMinH = Double.NaN;
+    // a quick pass's aim: where the straight line to the goal leaves the loaded area, and the straight line on from it
+    private boolean aiming = false;
+    private double aimX, aimZ, aimOn;
 
     public PathSearch(View v, Costs c) {
         this.v = v;
@@ -144,6 +147,17 @@ public final class PathSearch {
         graph.goalUnknown = exitAlways || !v.known(gx, gz);
         r.lineRate = beyondRate(start, gx, gz);
         if (graph.goalUnknown) graph.beyondRate = r.lineRate;
+        // a quick (weighted) pass toward a goal past the loaded area aims through the point where the straight line
+        // leaves it: greedy toward the goal itself, it left at the grid's headings (knight's and diagonal lines: goals
+        // at 5 to 20 degrees left at 26, up to 18.8 blocks off the line), and that route was walked and drawn until
+        // the finer pass came in, or kept when that didn't fit its time (RW, 2026-10-13: a stray route "at an angle"
+        // flashing every few seconds)
+        aiming = graph.goalUnknown && w > 1.0;
+        if (aiming) {
+            double[] c0 = lineLeaves(start, gx, gz);
+            aimX = c0[0]; aimZ = c0[1];
+            aimOn = Math.hypot(gx + 0.5 - aimX, gz + 0.5 - aimZ);
+        }
         goalMinH = Double.NaN;
         if (v.known(gx, gz)) {
             ChunkFloors gc = v.chunk(gx, gz);
@@ -291,6 +305,20 @@ public final class PathSearch {
         return n == 0 ? startRate : sum / n;
     }
 
+    /** Where the straight line from the start toward the goal leaves what the view knows: its last known point, every
+     *  half block. */
+    private double[] lineLeaves(long start, int gx, int gz) {
+        double ax = View.nodeX(start) + 0.5, az = View.nodeZ(start) + 0.5;
+        double lx = gx + 0.5 - ax, lz = gz + 0.5 - az, len = Math.hypot(lx, lz);
+        double cx = ax, cz = az;
+        for (double t = 0; t <= len; t += 0.5) {
+            double x = ax + lx / Math.max(1e-9, len) * t, z = az + lz / Math.max(1e-9, len) * t;
+            if (!v.known((int) Math.floor(x), (int) Math.floor(z))) break;
+            cx = x; cz = z;
+        }
+        return new double[]{cx, cz};
+    }
+
     /** A floor's rate a block: swimming, wading, slow ground or a sprint (a walk without sprinting). */
     private double floorRate(ChunkFloors cf, int idx) {
         if (cf.type(idx) == ChunkFloors.SWIM) return c.water;
@@ -429,7 +457,8 @@ public final class PathSearch {
             fy[id] = (float) h;
             double dx = x - graph.goalX, dz = z - graph.goalZ;
             double climb = Double.isNaN(goalMinH) ? 0 : Math.max(0, goalMinH - h);
-            hEst[id] = c.estimate(Math.sqrt(dx * dx + dz * dz), climb);
+            double horizontal = aiming ? Math.hypot(x + 0.5 - aimX, z + 0.5 - aimZ) + aimOn : Math.sqrt(dx * dx + dz * dz);
+            hEst[id] = c.estimate(horizontal, climb);
         }
         index.put(key, id);
         return id;

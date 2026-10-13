@@ -89,6 +89,29 @@ public class RouteStraightTest {
         }
     }
 
+    /** The planner's quick passes (weights 2.0 and 1.27, published first) left the loaded area at the grid's headings
+     *  (goals at 5 to 20 degrees left at 26 to 27, an 80 degree goal at 64; up to 18.8 blocks off), and only the
+     *  weight 1.0 pass went straight (the main session's probe and RW's flashing stray route, 2026-10-13). Every pass's
+     *  way out must be where the straight line leaves. */
+    @Test
+    void everyPassLeavesWhereTheStraightLineDoes() {
+        TestWorld w = TestWorld.blocks(-48, -48, 47, 47).floor(10);
+        View v = w.view();
+        double worst = 0;
+        for (double weight : Planner.WEIGHTS)
+            for (double deg : new double[]{0, 5, 10, 20, 30, 45, 60, 80, -10, -30}) {
+                double rad = Math.toRadians(deg);
+                int gx = (int) Math.round(1000 * Math.cos(rad)), gz = (int) Math.round(1000 * Math.sin(rad));
+                PathSearch.Result r = new PathSearch(v, Costs.layer2()).gaps(true).run(v.nodeAt(0, 11, 0), gx, gz, weight, Long.MAX_VALUE, 2_000_000, false);
+                Route route = new Tighten(v, Costs.layer2(), 0.2, true).route(r, gx, gz);
+                double lat = lateral(route.x[route.n - 1], route.z[route.n - 1], 0.5, 0.5, gx + 0.5, gz + 0.5);
+                double heading = Math.toDegrees(Math.atan2(route.z[route.n - 1] - 0.5, route.x[route.n - 1] - 0.5));
+                System.out.printf(Locale.ROOT, "pass w=%.2f deg=%.0f leaves at heading %.1f lateral %.2f expanded %d%n", weight, deg, heading, lat, r.expanded);
+                worst = Math.max(worst, Math.abs(lat));
+            }
+        assertTrue(worst < 1.5, "a pass leaves " + worst + " off the straight line");
+    }
+
     @Test
     void layer2KeepsToTheStraightLine() {
         for (double deg : new double[]{0, 5, 10, 20, 30, 45, 60, 80, -10}) {
@@ -107,6 +130,36 @@ public class RouteStraightTest {
 
     /** The goal's chunk loaded but cut off from the start's by unloaded ones (a chunk left over after a teleport): the
      *  search had found "every reachable place searched"; it heads out past the loaded edge toward it instead. */
+    /** The 60 degree stray (lockstep, 2026-10-13): the goal's chunks known from an earlier walk, joined to the
+     *  player's by known ground but not on the straight line, so the route bent through the known ground (4.9 blocks
+     *  off the line) and was walked to the end. Such a route is marked, and the walk refreshes it every 5 s; once the
+     *  gap is loaded the route is straight. */
+    @Test
+    void aRouteRoundGroundNotLoadedIsMarked() {
+        TestWorld full = TestWorld.blocks(-16, -16, 127, 223).floor(10);
+        it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<ChunkFloors> m = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+        for (int cx = full.cx0; cx <= full.cx1; cx++)
+            for (int cz = full.cz0; cz <= full.cz1; cz++) {
+                // the player's chunks (x < 64, z < 128) and the goal's (x >= 80, z >= 112), joined by one chunk
+                // (x 64..79, z 112..127); the straight line crosses x 64..79 at z 128..160, not loaded
+                boolean mine = cx < 4 && cz < 8, goals = cx >= 5 && cz >= 7, join = cx == 4 && cz == 7;
+                if (mine || goals || join) m.put(View.key(cx, cz), full.chunk(cx, cz));
+            }
+        View part = new View(m), all = full.view();
+        int gx = 100, gz = 200;
+        for (View v : new View[]{part, all}) {
+            PathSearch.Result r = new PathSearch(v, Costs.layer2()).gaps(true).run(v.nodeAt(0, 11, 0), gx, gz, 1.0, Long.MAX_VALUE, 2_000_000, false);
+            assertTrue(r.found && !r.viaExit, "the goal is reached");
+            Route route = new Tighten(v, Costs.layer2(), 0.2, true).route(r, gx, gz);
+            double worst = 0;
+            for (int i = 0; i < route.n; i++) worst = Math.max(worst, Math.abs(lateral(route.x[i], route.z[i], 0.5, 0.5, gx + 0.5, gz + 0.5)));
+            boolean blind = Planner.crossesUnknown(v, route.x[0], route.z[0], gx + 0.5, gz + 0.5);
+            System.out.printf(Locale.ROOT, "gap %s: route n=%d worst lateral %.2f crossesUnknown=%b%n", v == part ? "not loaded" : "loaded", route.n, worst, blind);
+            if (v == part) assertTrue(blind && worst > 1.0, "bent round the gap, and marked");
+            else assertTrue(!blind && worst < 0.75, "straight once loaded, and not marked");
+        }
+    }
+
     @Test
     void aCutOffGoalChunkIsHeadedFor() {
         TestWorld near = TestWorld.blocks(-48, -48, 47, 47).floor(10);
