@@ -41,6 +41,8 @@ public final class FightWorld {
     /** Health taken off mobs and off the player so far, and ticks played. */
     public double dealt, taken;
     public int ticks;
+    /** Ticks since a mob in the fight last lost health, at the snapshot (the idle cost grows with it). */
+    public int lull;
     /** The heading a situational action settled on at the start of its segment (yaw degrees). */
     public float segmentYaw;
     /** The worst safety mark so far: a fall, a hazard touched, the edge of the known world. */
@@ -55,7 +57,7 @@ public final class FightWorld {
         w.mobs = new MobSim[mobs.length];
         for (int i = 0; i < mobs.length; i++) w.mobs[i] = mobs[i].copy();
         w.aura = aura.copy();
-        w.dealt = dealt; w.taken = taken; w.ticks = ticks; w.segmentYaw = segmentYaw; w.unsafe = unsafe;
+        w.dealt = dealt; w.taken = taken; w.ticks = ticks; w.lull = lull; w.segmentYaw = segmentYaw; w.unsafe = unsafe;
         return w;
     }
 

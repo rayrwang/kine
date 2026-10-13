@@ -96,9 +96,48 @@ public final class FightModel implements Model<FightWorld> {
         if (action != Moves.HOLD && (tickInSegment == 0 || Float.isNaN(w.segmentYaw)))
             w.segmentYaw = headingFor(w, Moves.direction(action));
         double wh = wHealth(w);   // before this tick's loss
+        // the nearest live mob before the move: the idle cost asks whether the player backs away from it
+        MobSim near = null;
+        double best = Double.MAX_VALUE;
+        for (MobSim m : w.mobs) {
+            if (!m.alive) continue;
+            double d = (m.x - w.player.x) * (m.x - w.player.x) + (m.z - w.player.z) * (m.z - w.player.z);
+            if (d < best) { best = d; near = m; }
+        }
+        double nx = near == null ? 0 : near.x, nz = near == null ? 0 : near.z;
         double[] r = w.tick(phys, chooser(w, action, ideal), rnd);
-        return wh * (r[1] + spacing(w)) - wDealt * r[0] + risk * w.alive() + idle(w) + safety(w);
+        boolean backing = false;
+        if (near != null) {
+            double ax = w.player.x - w.pdx - nx, az = w.player.z - w.pdz - nz, len = Math.sqrt(ax * ax + az * az);
+            backing = len > 1e-6 && (w.pdx * ax + w.pdz * az) / len > BACKING;
+        }
+        return wh * (r[1] + spacing(w)) - wDealt * r[0] + risk * w.alive() + (backing ? idle(w) : 0.0) + lunge(w) + safety(w);
     }
+
+    /** Below kill fast, the player's own move toward a mob whose attack is ready and that is within LUNGE_RANGE: the
+     *  mobs come to the player, and at survive it lets them, stepping in only on one that has just attacked. (1 - s) *
+     *  LUNGE_COST for a sprint's worth of closing a tick (0.28 blocks), in proportion. In a lockstep run of version 2 at
+     *  survive with lag, 16% of replans near zombies began by walking or sprinting at one whose attack was ready (RW:
+     *  "lunge at the mobs even while in the safest setting"). */
+    double lunge(FightWorld w) {
+        if (slider >= 1.0) return 0.0;
+        double px = w.player.x - w.pdx, pz = w.player.z - w.pdz;   // where the move started
+        double worst = 0;
+        for (MobSim m : w.mobs) {
+            if (!m.alive || m.attackCooldown > 1) continue;
+            double dx = m.x - px, dz = m.z - pz, d = Math.sqrt(dx * dx + dz * dz);
+            if (d > LUNGE_RANGE || d < 1e-6) continue;
+            double toward = (w.pdx * dx + w.pdz * dz) / d;
+            if (toward > BACKING) worst = Math.max(worst, toward);
+        }
+        return worst > 0 ? (1.0 - slider) * LUNGE_COST * worst / 0.28 : 0.0;
+    }
+
+    /** At survive, the cost of closing on a ready mob at a sprint for a tick, and how near a mob must be to count. */
+    static final double LUNGE_COST = 0.5, LUNGE_RANGE = 4.5;
+
+    /** The player's move away from (or toward) a mob, blocks a tick, that counts (a walk is 0.216). */
+    static final double BACKING = 0.05;
 
     private SwingPlan.Weapon idleWeapon;
     private int idleFull;
@@ -106,7 +145,10 @@ public final class FightModel implements Model<FightWorld> {
     /** Below kill fast, a tick in which the kill aura is fully charged and no live mob is in its reach: the fight makes
      *  no progress, and at survive keeping the crowd just out of reach would otherwise
      *  cost almost nothing (lockstep, version 2's first survive build: six zombies kited for 785 ticks, the nearest held
-     *  at about 4 blocks). (1 - s) * IDLE_COST a tick. */
+     *  at about 4 blocks). (1 - s) * IDLE_COST a tick, charged only while the player backs away from the nearest mob
+     *  (step): charged whenever the aura waited, it paid the plan to step toward a mob to bring it into reach (a
+     *  lockstep debug run at survive, the steps toward a ready zombie: walking away cost 2.1 more in idle than the step
+     *  in), and RW saw it lunge at mobs; backing away while the aura waits is the kiting it is there to stop. */
     double idle(FightWorld w) {
         AuraSim a = w.aura;
         if (!a.on || slider >= 1.0) return 0.0;
@@ -119,8 +161,19 @@ public final class FightModel implements Model<FightWorld> {
             any = true;
             if (AuraSim.eyeToBox(ex, ey, ez, m, m.seen()) <= a.reach) return 0.0;
         }
-        return any ? IDLE_COST * (1.0 - slider) : 0.0;
+        // impatience: the longer the fight has gone without a hit landing, the more backing away costs, so the middle
+        // settings retreat from a threat for a while but not for ever (in a lockstep run with lag the player ran from
+        // three baby zombies for the whole 900 ticks: the aura, aiming where the client draws them, two blocks behind
+        // a baby, could never knock one back first). Weighted by the slider, so survive has none and keeps backing
+        // away rather than take a hit to end the fight (RW: "close to 0 means the second is very low or zero").
+        double impatience = 1.0 + slider * Math.min(IMPATIENCE_MAX, (w.lull + w.ticks) / IMPATIENCE_TICKS);
+        return any ? IDLE_COST * (1.0 - slider) * impatience : 0.0;
     }
+
+    /** The idle cost grows by the slider's share of itself every IMPATIENCE_TICKS of the fight without a mob losing
+     *  health, to at most 1 + slider x IMPATIENCE_MAX times: none at survive, and the idle cost itself is gone at kill
+     *  fast, so it matters most in the middle. */
+    static final double IMPATIENCE_TICKS = 60.0, IMPATIENCE_MAX = 5.0;
 
     /** At survive, the cost of standing near a mob whose attack is ready: within SPACING_BASE + SPACING_MARGIN of its
      *  reach (box to box), more the nearer; nothing at kill fast. In health, before the health weight. */
@@ -197,6 +250,9 @@ public final class FightModel implements Model<FightWorld> {
         return c;
     }
 
+    /** When set, estimate() writes its parts here: {danger, per-mob share, edge, fight length}, weighted (debug). */
+    private double[] parts;
+
     @Override
     public double estimate(FightWorld w) {
         if (w.health <= 0) return UNSAFE;
@@ -253,7 +309,9 @@ public final class FightModel implements Model<FightWorld> {
         double baseline = 0;
         for (MobSim m : w.mobs)
             if (m.alive) baseline += HITS_PER_MOB * m.attackDamage * (0.25 + 0.75 * clamp(m.health / m.maxHealth, 0.0, 1.0));
-        return wHealth(w) * (danger + baseline + edge(w)) + (wTime + risk * n) * tLeft;
+        double edge = edge(w);
+        if (parts != null) { parts[0] = wHealth(w) * danger; parts[1] = wHealth(w) * baseline; parts[2] = wHealth(w) * edge; parts[3] = (wTime + risk * n) * tLeft; }
+        return wHealth(w) * (danger + baseline + edge) + (wTime + risk * n) * tLeft;
     }
 
     /** A plan that ends in the air over a drop (nothing to land on within the 3 safe blocks, below where it is or
@@ -282,6 +340,31 @@ public final class FightModel implements Model<FightWorld> {
             else if (phys.unsafeAt(p, dx * 1.8, dz * 1.8, 3.0)) worst = Math.max(worst, EDGE_TWO_HITS);
         }
         return worst;
+    }
+
+    /**
+     * For the debug line: one draw of a plan (an action a tick) from the root, its cost split into terms, weighted as
+     * the search weighs them: health lost, spacing, dealt (negative), risk, idle, safety; and the end-of-plan
+     * estimate's danger, per-mob share, edge, fight length. "hl=.. sp=.. dl=.. rk=.. id=.. sf=.. | dg=.. sh=.. ed=.. tm=..".
+     */
+    public String explain(FightWorld root, int[] plan, int hold, long seed) {
+        FightWorld w = root.copy();
+        double hl = 0, sp = 0, dl = 0, rk = 0, id = 0, sf = 0;
+        java.util.SplittableRandom rnd = new java.util.SplittableRandom(seed);
+        for (int i = 0; i < plan.length; i++) {
+            int action = plan[i];
+            int run = i % hold != 0 && plan[i] == plan[i - 1] ? 1 : 0;
+            if (action != Moves.HOLD && (run == 0 || Float.isNaN(w.segmentYaw))) w.segmentYaw = headingFor(w, Moves.direction(action));
+            double wh = wHealth(w);
+            double[] r = w.tick(phys, chooser(w, action, ideal), rnd);
+            hl += wh * r[1]; sp += wh * spacing(w); dl -= wDealt * r[0]; rk += risk * w.alive(); id += idle(w); sf += safety(w);
+        }
+        double[] pt = new double[4];
+        parts = pt;
+        double est = estimate(w);
+        parts = null;
+        return String.format(java.util.Locale.ROOT, "hl=%.2f sp=%.2f dl=%.2f rk=%.2f id=%.2f sf=%.1f | dg=%.2f sh=%.2f ed=%.2f tm=%.2f est=%.2f",
+            hl, sp, dl, rk, id, sf, pt[0], pt[1], pt[2], pt[3], est);
     }
 
     static double clamp(double v, double lo, double hi) {

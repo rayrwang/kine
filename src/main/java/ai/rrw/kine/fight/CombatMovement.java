@@ -141,7 +141,7 @@ public final class CombatMovement {
             FightModel model = new FightModel(new GroundPhysics(shot.grid(), shot.body()), slider);
             RecedingSearch<FightWorld> rs = new RecedingSearch<>(model);
             RecedingSearch.Result r = rs.plan(shot.world(), previous, shift, e, seed);
-            if (DEBUG) debug(at, shot, rs, r, e, seed);
+            if (DEBUG) debug(at, shot, rs, model, r, e, seed);
             return r;
         });
         job = new Job(shot, tick, System.nanoTime(), f);
@@ -150,8 +150,8 @@ public final class CombatMovement {
     private static final boolean DEBUG = System.getProperty("kine.combatDebug") != null;
 
     /** A line per replan for diagnosis (-Dkine.combatDebug): the snapshot, the plan, and what standing still scores. */
-    private static void debug(int at, FightSnapshot.Shot shot, RecedingSearch<FightWorld> rs, RecedingSearch.Result r,
-                              RecedingSearch.Effort e, long seed) {
+    private static void debug(int at, FightSnapshot.Shot shot, RecedingSearch<FightWorld> rs, FightModel fm,
+                              RecedingSearch.Result r, RecedingSearch.Effort e, long seed) {
         FightWorld w = shot.world();
         int[] hold = new int[e.horizon()];
         java.util.Arrays.fill(hold, Moves.HOLD);
@@ -165,6 +165,14 @@ public final class CombatMovement {
             double[] seen = m.seen();
             sb.append(String.format(java.util.Locale.ROOT, "| m%d %.2f,%.2f seen %.2f,%.2f v %.3f,%.3f hp %.1f cd %d fresh %d delay %d",
                 m.id, m.x, m.z, seen[0], seen[2], m.vx, m.vz, m.health, m.attackCooldown, m.freshIn, m.delay));
+        }
+        // the chosen plan's terms against standing still and walking straight away from the nearest
+        if (r.plan() != null) {
+            int[] away = new int[e.horizon()];
+            java.util.Arrays.fill(away, Moves.action(Moves.AWAY_NEAREST, Moves.WALK));
+            sb.append(" || plan ").append(fm.explain(w, r.plan(), e.hold, seed));
+            sb.append(" || hold ").append(fm.explain(w, hold, e.hold, seed));
+            sb.append(" || away ").append(fm.explain(w, away, e.hold, seed));
         }
         Kine.LOGGER.info(sb.toString());
     }

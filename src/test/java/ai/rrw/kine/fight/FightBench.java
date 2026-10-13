@@ -45,6 +45,7 @@ public final class FightBench {
             m.attackCooldown = 0;
             m.pathIn = rnd.nextInt(10);
             m.drawnX = m.x; m.drawnY = m.y; m.drawnZ = m.z; m.delay = Integer.getInteger("delay", 4);   // the aura sees it as the client shows it
+            if (i < Integer.getInteger("babies", 0)) { m.speed = 0.23 * 1.5; m.width = 0.3; m.height = 0.975; }   // -Dbabies=n: the first n are babies
             w.mobs[i] = m;
         }
         return w;
@@ -107,7 +108,8 @@ public final class FightBench {
             for (int i = 0; i < truth.mobs.length; i++) {
                 MobSim m = truth.mobs[i];
                 if (!m.alive) continue;
-                if (!inReach(px0, py0, pz0, m, mx0[i], mz0[i]) && inReach(truth.player.x, truth.player.y, truth.player.z, m, mx0[i], mz0[i])) stepsIn++;
+                if (!inReach(px0, py0, pz0, m, mx0[i], mz0[i]) && inReach(truth.player.x, truth.player.y, truth.player.z, m, mx0[i], mz0[i])
+                    && (!m.active || m.attackCooldown <= 1)) stepsIn++;   // into the reach of a mob whose attack is ready
                 if (inReach(truth.player.x, truth.player.y, truth.player.z, m, m.x, m.z)) in++;
                 closest = Math.min(closest, Math.hypot(m.x - truth.player.x, m.z - truth.player.z));
             }

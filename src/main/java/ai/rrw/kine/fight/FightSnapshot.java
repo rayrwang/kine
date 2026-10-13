@@ -57,11 +57,14 @@ public final class FightSnapshot {
         int tick0 = -1; double x0, y0, z0;     // the latest received position and when it changed
         int tick1 = -1; double x1, y1, z1;     // the one before
         int swungAt = Integer.MIN_VALUE / 2;
+        float health = -1;
         boolean wasSwinging;
         int seen;
     }
     private static final Map<Integer, Track> tracks = new HashMap<>();
     private static int clientTick = 0;
+    /** The last tick a modelled mob near lost health; the time since is the fight's lull (FightWorld.lull). */
+    private static int lastProgress = 0;
 
     /** Every tick (END_CLIENT_TICK), whatever the setting: follow the mobs near the player (their received positions
      *  and swings). Cheap: a few entities. */
@@ -79,6 +82,9 @@ public final class FightSnapshot {
                 t.tick0 = clientTick; t.x0 = at.x; t.y0 = at.y; t.z0 = at.z;
             }
             if (m.swinging && !t.wasSwinging) t.swungAt = clientTick;
+            // the fight's progress: a modelled mob near losing health (or dying), or none near
+            if (t.health >= 0 && m.getHealth() < t.health && modelled(m)) lastProgress = clientTick;
+            t.health = m.getHealth();
             t.wasSwinging = m.swinging;
         }
         if ((clientTick & 63) == 0) tracks.values().removeIf(t -> clientTick - t.seen > 100);
@@ -137,6 +143,8 @@ public final class FightSnapshot {
         w.mobs = new MobSim[zs.size()];
         for (int i = 0; i < zs.size(); i++) w.mobs[i] = mob(zs.get(i), p, grid, difficulty, lag);
         w.segmentYaw = Float.NaN;
+        if (zs.isEmpty()) lastProgress = clientTick;
+        w.lull = Math.min(1000, clientTick - lastProgress);
         return new Shot(w, grid, body, zs.size(), unsupported, nearest);
     }
 
