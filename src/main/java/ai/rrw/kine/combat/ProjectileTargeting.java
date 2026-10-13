@@ -82,6 +82,7 @@ public class ProjectileTargeting {
 
     // aim assist (the turn itself: AimControl)
     private static final float  MOUSE_EPS      = 0.4f;   // mouse drift (deg) that releases the lock
+    private static final float  TRACK_DEG      = 2.0f;   // a view turning with the shown target to within this (deg a tick, each axis) counts as resting
     private static final int    SETTLE_TICKS   = 10;     // the view must rest this long (half a second) before a target is picked up
     // A target is picked up when the view is this close to aiming at it (aimGap): for a mob on the ground, the
     // reticle ring's own angular radius plus the mob's half width as seen, the reticle's receptive field; in the air,
@@ -122,7 +123,9 @@ public class ProjectileTargeting {
     private static boolean aiming = false;
     private static float lastYaw, lastPitch;          // the view at the end of the last tick, after any turn of ours
     private static boolean haveLast = false;
-    private static int stillTicks = 0;                // ticks the pilot has left the view alone
+    private static int stillTicks = 0;                // ticks the pilot has left the view alone, or turned it with the shown target
+    private static Entity lastShown = null;           // the target shown at the end of the last tick (held or about to be picked up)
+    private static float lastShownYaw, lastShownPitch;   // the direction from the eye to its centre then
     private static Entity lock = null;                // the target auto aim holds, kept from tick to tick
     private static float lastSolYaw, lastSolPitch;    // its solved aim last tick, for the turn's feed-forward
     private static boolean haveLastSol = false;
@@ -522,19 +525,37 @@ public class ProjectileTargeting {
 
     // Whether the pilot moved the view since the last tick (any turn but ours, which is recorded after it is made):
     // that lets go of a held target, and a new one is picked up only once the view has rested SETTLE_TICKS, so
-    // sweeping the crosshair across a mob doesn't grab the view.
+    // sweeping the crosshair across a mob doesn't grab the view. Turning the view with the shown target, as when
+    // following a dragon or a phantom across the sky, counts as resting: it says which target is meant as clearly as
+    // holding still does (RW 2026-10-12, Claude's proposal: "ok applyt eh two changes"). It still lets go of a held
+    // target, which is then picked up again at once, so the pilot's turn and auto aim's don't add up.
     private static void tick(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null) { haveLast = false; stillTicks = 0; }
         else {
-            boolean moved = haveLast && (Math.abs(Mth.wrapDegrees(p.getYRot() - lastYaw)) > MOUSE_EPS
-                                         || Math.abs(p.getXRot() - lastPitch) > MOUSE_EPS);
-            stillTicks = moved ? 0 : Math.min(stillTicks + 1, SETTLE_TICKS);
+            float dYaw = Mth.wrapDegrees(p.getYRot() - lastYaw), dPitch = p.getXRot() - lastPitch;
+            boolean moved = haveLast && (Math.abs(dYaw) > MOUSE_EPS || Math.abs(dPitch) > MOUSE_EPS);
+            stillTicks = moved && !tracking(p, dYaw, dPitch) ? 0 : Math.min(stillTicks + 1, SETTLE_TICKS);
             if (moved) dropLock();
         }
         aimTick(mc);
         if (mc.player != null) { lastYaw = mc.player.getYRot(); lastPitch = mc.player.getXRot(); haveLast = true; }
     }
+
+    // Whether the pilot's turn this tick (dYaw, dPitch) followed the target shown last tick: the direction from the eye
+    // to its centre turned by as much, to within TRACK_DEG on each axis.
+    private static boolean tracking(LocalPlayer p, float dYaw, float dPitch) {
+        Entity e = lastShown;
+        if (e == null || e.isRemoved() || !e.isAlive() || e.level() != p.level()) return false;
+        Vec3 d = e.getBoundingBox().getCenter().subtract(p.getEyePosition());
+        if (d.lengthSqr() < 1e-6) return false;
+        float yaw = yawOf(d), pitch = pitchOf(d);
+        return Math.abs(dYaw - Mth.wrapDegrees(yaw - lastShownYaw)) <= TRACK_DEG && Math.abs(dPitch - (pitch - lastShownPitch)) <= TRACK_DEG;
+    }
+
+    private static float yawOf(Vec3 d) { return (float) Math.toDegrees(Math.atan2(-d.x, d.z)); }
+
+    private static float pitchOf(Vec3 d) { return (float) -Math.toDegrees(Math.asin(Mth.clamp(d.y / d.length(), -1.0, 1.0))); }
 
     private static void aimTick(Minecraft mc) {
         LocalPlayer p = mc.player; ClientLevel level = mc.level;
@@ -542,7 +563,7 @@ public class ProjectileTargeting {
         if (!Settings.projectileReticle && !Settings.autoAim) { dropLock(); valid = false; return; }
         updateTrails(level);
 
-        valid = false; hitBox = null; hitId = -1; noDamage = null;
+        valid = false; hitBox = null; hitId = -1; noDamage = null; lastShown = null;
         courses.clear();
         Held held = heldShot(p);
         if (held == null) { dropLock(); return; }
@@ -628,6 +649,10 @@ public class ProjectileTargeting {
         hitId = tgtF != null && spec.weapon() ? tgtF.getId() : -1;
         noDamage = why;
         ringOnTarget = onTarget;
+        if (spec.weapon() && tgtF != null) {
+            Vec3 d = tgtF.getBoundingBox().getCenter().subtract(eye);
+            if (d.lengthSqr() > 1e-6) { lastShown = tgtF; lastShownYaw = yawOf(d); lastShownPitch = pitchOf(d); }
+        }
         if (sf.impact() == null) return;
         impact = sf.impact(); normal = sf.normal();
         radius = r;

@@ -21,8 +21,10 @@ public final class AimControl {
     public static final float MAX_STEP = 10f;
     /** Within this many mouse counts of the solution, turn the whole way. */
     public static final double DIRECT_COUNTS = 2.0;
-    /** Largest feed-forward taken from the solution's motion, degrees a tick (a jump is not motion). */
-    public static final float MAX_FEED = 5f;
+    /** Largest feed-forward taken from the solution's motion, degrees a tick (a jump is not motion). The turn as a
+     *  whole is held to MAX_STEP anyway; 5 until 2026-10-12, when a dragon crossing 10 blocks out (about 7 a tick)
+     *  trailed (RW: "ok applyt eh two changes"). */
+    public static final float MAX_FEED = 10f;
 
     /**
      * The turn this tick on one axis. gap: the solution minus the view now. motion: the solution now minus the
