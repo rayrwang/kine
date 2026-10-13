@@ -1,5 +1,7 @@
 package ai.rrw.kine.walk;
 
+import ai.rrw.kine.hud.HudColors;
+
 import java.util.Arrays;
 
 /**
@@ -57,7 +59,8 @@ final class Replay {
         }
         expansions = t == null ? 0 : t.expansions;
 
-        // the grid path, thin white; the route, gold; past the loaded area, a thin line to the goal
+        // the grid path, thin white; the route, magenta (layer 2's chosen run is gold); past the loaded area, a thin
+        // line to the goal
         for (int k = 1; k < r.path.length; k++) {
             long a = r.path[k - 1], b = r.path[k];
             grid.add(View.nodeX(a) + 0.5, height(r, k - 1, rt) + 0.06, View.nodeZ(a) + 0.5,
@@ -66,7 +69,7 @@ final class Replay {
         // the route line along the rails' smooth centreline, at its height, so it runs between them
         for (int k = 1; k < rails.n; k++) {
             if (Math.abs(rails.y[k] - rails.y[k - 1]) > 1.2) continue;
-            route.add(rails.x[k - 1], rails.y[k - 1] + 0.04, rails.z[k - 1], rails.x[k], rails.y[k] + 0.04, rails.z[k], 0xFFFFC828, ROUTE_W);
+            route.add(rails.x[k - 1], rails.y[k - 1] + 0.04, rails.z[k - 1], rails.x[k], rails.y[k] + 0.04, rails.z[k], HudColors.MAGENTA, ROUTE_W);
         }
         if (rt.viaExit) {
             int e = rt.n - 1;

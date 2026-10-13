@@ -26,7 +26,7 @@ import java.util.Optional;
  *   <li>0 to 2 s: the search tree grows from the player in the order the search expanded it, one short line per floor
  *       from the floor it was reached from, coloured by the cost so far (cyan near the start, violet, rose far out); the
  *       open frontier bright, the expanded floors dim under it;</li>
- *   <li>then the stepped grid path as a thin white line, then the tightened route in gold over it, so the corner cutting
+ *   <li>then the stepped grid path as a thin white line, then the tightened route in magenta over it, so the corner cutting
  *       shows;</li>
  *   <li>then the tree and the grid path fade, and the route stays as rails on the ground near the player (his rail
  *       colours, blue seen from above, orange from below), with a thin line on along the rest of the route and past the
@@ -221,7 +221,7 @@ public final class WalkRender {
         }
     }
 
-    /** The route: gold during the replay, then a thin line on past the rails, and on past the loaded area. */
+    /** The route: magenta during the replay, then a thin line on past the rails, and on past the loaded area. */
     private static void drawRoute(Shown s, Matrix4f pose, Vec3 cam, boolean faint) {
         double t = s.age();
         boolean searchOn = Settings.walkSearchDisplay;
