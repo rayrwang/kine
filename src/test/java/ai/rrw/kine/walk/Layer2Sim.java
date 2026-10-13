@@ -121,6 +121,7 @@ final class Layer2Sim {
         if (!r.found) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route");
         lastRoute = r;
         Field f = null;
+        Route route = null;
         float sentYaw = yaw, sentPitch = 0f;
         int[] prev = null;
         int jumps = 0, replans = 0;
@@ -129,7 +130,8 @@ final class Layer2Sim {
         for (int t = 0; t < maxTicks; t++) {
             if (f == null || f.to < r.path.length - 1
                 && Field.nearestIndex(r.path, s.x, s.z) > (f.from + f.to) / 2) {
-                f = Field.build(view, costs, true, true, glides, 1, r.path, s.x, s.z, gx, gz, !r.viaExit && !r.partial);
+                if (route == null) route = new Tighten(view, costs, 0.2, true).route(r, gx, gz);
+                f = Field.build(view, costs, true, true, glides, 1, r.path, route, s.x, s.z, gx, gz, !r.viaExit && !r.partial);
                 prev = null;
             }
             RunModel model = new RunModel(phys, f, gx, gz, 0f, costs.maxFall);

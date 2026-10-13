@@ -231,7 +231,7 @@ public final class Layer2 {
             boolean reached = plan.result.found && !plan.result.viaExit && !plan.result.partial;
             Costs costs = Walk.costs();
             boolean glides = Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
-            fieldJob = WORKER.submit(() -> Field.build(v, costs, canSprint, true, glides, plan.id, path, px, pz, dest[0], dest[1], reached));
+            fieldJob = WORKER.submit(() -> Field.build(v, costs, canSprint, true, glides, plan.id, path, plan.route, px, pz, dest[0], dest[1], reached));
         }
         Field f = field;
         if (f == null) return;

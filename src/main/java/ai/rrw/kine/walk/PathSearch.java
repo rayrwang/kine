@@ -80,6 +80,43 @@ public final class PathSearch {
         return this;
     }
 
+    /** Treat the goal as past the loaded area (ways out at the loaded edge toward it) even where its own chunk is
+     *  loaded: for a goal whose loaded chunks aren't joined to the start's (see goalCutOff). */
+    public PathSearch exitAlways(boolean b) {
+        exitAlways = b;
+        return this;
+    }
+
+    private boolean exitAlways = false;
+
+    /**
+     * Whether the goal's chunk is loaded but not joined to the start's by loaded chunks: a chunk left loaded (or
+     * still in the table) away from the rest, after a teleport or a long walk out and back. A search over what's
+     * loaded can't reach it there and found "every reachable place searched"; it should head out past the loaded
+     * edge toward it instead.
+     */
+    public boolean goalCutOff(long start, int gx, int gz) {
+        if (!v.known(gx, gz)) return false;
+        int scx = View.nodeX(start) >> 4, scz = View.nodeZ(start) >> 4, gcx = gx >> 4, gcz = gz >> 4;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet seen = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        java.util.ArrayDeque<long[]> queue = new java.util.ArrayDeque<>();
+        queue.add(new long[]{scx, scz});
+        seen.add(View.key(scx, scz));
+        while (!queue.isEmpty()) {
+            long[] c = queue.poll();
+            if (c[0] == gcx && c[1] == gcz) return false;
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++) {
+                    int nx = (int) c[0] + dx, nz = (int) c[1] + dz;
+                    long k = View.key(nx, nz);
+                    if (seen.contains(k) || v.chunkAt(nx, nz) == null) continue;
+                    seen.add(k);
+                    queue.add(new long[]{nx, nz});
+                }
+        }
+        return true;
+    }
+
     /** Offer jumps over gaps (layer 2 only). */
     public PathSearch gaps(boolean b) {
         graph.gaps = b;
@@ -101,9 +138,10 @@ public final class PathSearch {
         Result r = new Result();
         r.weight = w;
         graph.goalX = gx; graph.goalZ = gz;
-        graph.goalUnknown = !v.known(gx, gz);
+        graph.goalUnknown = exitAlways || !v.known(gx, gz);
+        if (graph.goalUnknown) graph.beyondRate = beyondRate(start, gx, gz);
         goalMinH = Double.NaN;
-        if (!graph.goalUnknown) {
+        if (v.known(gx, gz)) {
             ChunkFloors gc = v.chunk(gx, gz);
             int n = gc.count(gx & 15, gz & 15);
             for (int i = 0; i < n; i++) {
@@ -124,12 +162,28 @@ public final class PathSearch {
         double bestH = Double.MAX_VALUE;
         int bestId = s;
         boolean exitReached = false;
+        // toward a goal past the loaded area: the floor to leave from, chosen as if the way to it were the straight line
+        // the walk will take (see exitScore), and how far past the first exit found the search goes on looking
+        int sx = View.nodeX(start), sz = View.nodeZ(start);
+        int bestExit = -1;
+        double bestExitScore = Double.MAX_VALUE, bandLimit = Double.MAX_VALUE;
+        boolean bestExitWater = false;
+        it.unimi.dsi.fastutil.ints.IntArrayList exitIds = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        it.unimi.dsi.fastutil.doubles.DoubleArrayList exitScores = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
         while (hn > 0) {
             int id = hid[0];
-            double gg = hg[0];
+            double gg = hg[0], ff = hf[0];
             pop();
+            if (exitReached && ff > bandLimit) break;
             if (closedAt[id] != Integer.MAX_VALUE || gg != g[id]) continue;
-            if (keys[id] == Long.MIN_VALUE) { goalId = id; exitReached = true; break; }
+            if (keys[id] == Long.MIN_VALUE) {
+                if (!exitReached) {
+                    goalId = id;
+                    exitReached = true;
+                    bandLimit = ff + (bestExitWater ? EXIT_BAND_WATER : EXIT_BAND) * g[parent[id]] + 1.0;
+                }
+                continue;
+            }
             closedAt[id] = expansions++;
             long key = keys[id];
             if (View.nodeX(key) == gx && View.nodeZ(key) == gz) { goalId = id; break; }
@@ -139,6 +193,13 @@ public final class PathSearch {
             graph.expand(key);
             for (int k = 0; k < graph.n; k++) {
                 long to = graph.to[k];
+                if (graph.move[k] == Graph.EXIT) {
+                    boolean water = graph.expandedType == ChunkFloors.SWIM;
+                    double sc = exitScore(g[id], graph.cost[k], water, sx, sz, View.nodeX(key), View.nodeZ(key));
+                    if (sc < bestExitScore) { bestExitScore = sc; bestExit = id; bestExitWater = water; }
+                    exitIds.add(id);
+                    exitScores.add(sc);
+                }
                 double ng = g[id] + graph.cost[k];
                 int tid = index.get(to);
                 if (tid >= 0) {
@@ -153,12 +214,27 @@ public final class PathSearch {
         r.expanded = expansions;
         r.generated = count;
         r.sweeps = graph.sweeps;
+        if (exitReached && bestExit >= 0) {
+            // among the ways out as good as the best (within EXIT_TIE of its cost inside), the one nearest the straight
+            // line: what is left of the grid's bias is far smaller than that, and a way out off the line by more is
+            // taken only when it is better by more
+            double tol = EXIT_TIE * g[bestExit] + 1e-6, bestLat = Double.MAX_VALUE;
+            double lx = gx - sx, lz = gz - sz, ll = Math.max(1e-9, Math.hypot(lx, lz));
+            for (int e = 0; e < exitIds.size(); e++) {
+                if (exitScores.getDouble(e) > bestExitScore + tol) continue;
+                long key = keys[exitIds.getInt(e)];
+                double lat = Math.abs(((View.nodeX(key) - sx) * lz - (View.nodeZ(key) - sz) * lx) / ll);
+                if (lat < bestLat - 1e-9) { bestLat = lat; bestExit = exitIds.getInt(e); }
+            }
+        }
         if (goalId >= 0) {
             r.found = true;
             r.viaExit = exitReached;
-            int end = exitReached ? parent[goalId] : goalId;
+            int end = exitReached ? (bestExit >= 0 ? bestExit : parent[goalId]) : goalId;
             fill(r, end);
-            r.totalCost = g[goalId];
+            // past the loaded edge: the way out's score as the walk will take it (so a later, finer pass that finds a way
+            // out nearer the straight line counts as cheaper, which the grid's own costs alone would deny)
+            r.totalCost = exitReached ? (bestExit >= 0 ? bestExitScore : g[goalId]) : g[goalId];
             r.cost = g[end];
         } else if (hn == 0 && r.reason.isEmpty()) {
             r.exhausted = true;
@@ -172,6 +248,86 @@ public final class PathSearch {
         if (recordTree) r.tree = tree(expansions);
         r.nanos = System.nanoTime() - t0;
         return r;
+    }
+
+    /**
+     * The rate charged past the loaded edge, the same for every way out: the mean rate of the floors on the straight
+     * line from the start toward the goal, as far as it is loaded (a sea's way on charged as a swim, the land's as a
+     * sprint, a coast's as the mix). One rate for all ways out, so no way out is favoured for the kind of floor it
+     * leaves from: charged at each floor's own rate, a coast's land made walking round a sea look cheaper than
+     * crossing it (measured 2026-10-12); charged as a sprint everywhere, the shortest swim to the edge, along an axis,
+     * made the cheapest way out of a sea (RW's ocean, 2026-10-12).
+     */
+    double beyondRate(long start, int gx, int gz) {
+        int sx = View.nodeX(start), sz = View.nodeZ(start);
+        ChunkFloors sc = v.chunk(sx, sz);
+        if (sc == null) return c.sprint;
+        int si = sc.index(sx & 15, sz & 15, View.nodeI(start));
+        double h = sc.h(si);
+        double startRate = floorRate(sc, si), sum = 0;
+        int n = 0;
+        double dx = gx - sx, dz = gz - sz, len = Math.hypot(dx, dz);
+        if (len < 1) return startRate;
+        for (int k = 1; k <= len; k++) {
+            int x = (int) Math.floor(sx + 0.5 + dx * k / len), z = (int) Math.floor(sz + 0.5 + dz * k / len);
+            ChunkFloors cf = v.chunk(x, z);
+            if (cf == null) break;
+            int cnt = cf.count(x & 15, z & 15), best = -1;
+            double bestD = Double.MAX_VALUE;
+            for (int i = 0; i < cnt; i++) {
+                int idx = cf.index(x & 15, z & 15, i);
+                double d = Math.abs(cf.h(idx) - h);
+                if (d < bestD) { bestD = d; best = idx; }
+            }
+            if (best < 0) continue;
+            h = cf.h(best);
+            sum += floorRate(cf, best);
+            n++;
+        }
+        return n == 0 ? startRate : sum / n;
+    }
+
+    /** A floor's rate a block: swimming, wading, slow ground or a sprint (a walk without sprinting). */
+    private double floorRate(ChunkFloors cf, int idx) {
+        if (cf.type(idx) == ChunkFloors.SWIM) return c.water;
+        int f = cf.flags(idx);
+        return c.rate(graph.canSprint, (f & ChunkFloors.SLOW) != 0, (f & ChunkFloors.WADE) != 0);
+    }
+
+    /** How far past the first way out found (a share of its cost inside) the search goes on looking for a better floor
+     *  to leave from: the grid's anisotropy, at most 2.7% on foot (knight's moves) and 8.3% swimming (eight
+     *  neighbours only). */
+    static final double EXIT_BAND = 0.03, EXIT_BAND_WATER = 0.09;
+    /** Ways out within this share of the best's cost inside count as as good, and the one nearest the line is taken. */
+    static final double EXIT_TIE = 0.01;
+
+    /**
+     * A way out past the loaded area, scored as the walk will take it: the cost to the floor, scaled from the grid's
+     * way there to the straight line, and the way on past the edge (a straight line at the floor's rate). Inside, the
+     * grid's moves (eight neighbours, and knight's moves on foot) make a way up to 2.7% longer than the straight line
+     * on foot and 8.3% swimming, while the way on past the edge is charged as a straight line; so the cheapest way out
+     * had been one along an axis or a diagonal and then the straight line, not the straight line itself (RW,
+     * 2026-10-12: "when the target is off teh rendred chunks, the pathfingin goes in liek one axis direction, rather
+     * than a straight line"). The tightened route (and layer 2's field) take the straight line, so the cost inside is
+     * scaled to it.
+     */
+    private double exitScore(double inside, double onward, boolean water, int sx, int sz, int x, int z) {
+        double grid = water ? octileLength(x - sx, z - sz) : gridLength(x - sx, z - sz);
+        double straight = Math.hypot(x - sx, z - sz);
+        return (grid < 1e-9 ? inside : inside * straight / grid) + onward;
+    }
+
+    /** The length of the shortest way across open water by eight-neighbour moves. */
+    static double octileLength(int dx, int dz) {
+        int u = Math.max(Math.abs(dx), Math.abs(dz)), v = Math.min(Math.abs(dx), Math.abs(dz));
+        return u - v + v * Math.sqrt(2);
+    }
+
+    /** The length of the shortest way across open ground by the graph's moves (straight, diagonal, knight's). */
+    static double gridLength(int dx, int dz) {
+        int u = Math.max(Math.abs(dx), Math.abs(dz)), v = Math.min(Math.abs(dx), Math.abs(dz));
+        if (2 * v <= u) return (u - 2 * v) + v * Math.sqrt(5);
+        return (u - v) * Math.sqrt(5) + (2 * v - u) * Math.sqrt(2);
     }
 
     /**

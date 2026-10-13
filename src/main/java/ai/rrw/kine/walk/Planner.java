@@ -99,6 +99,7 @@ public final class Planner {
         PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(gaps).glides(glides);
         double bestCost = Double.MAX_VALUE;
         int prevExpanded = 0;
+        boolean cutOff = false;
         for (int pass = 0; pass < WEIGHTS.length && !job.cancelled; pass++) {
             long now = System.nanoTime();
             if (pass > 0 && rate > 0) {
@@ -117,6 +118,13 @@ public final class Planner {
             prevExpanded = r.expanded;
             job.passes = pass + 1;
             if (pass == 0) lastFirstNanos = r.nanos;
+            if (r.exhausted && pass == 0 && !cutOff && search.goalCutOff(start, gx, gz)) {
+                // the goal's chunk is loaded but cut off from ours: head out past the loaded edge toward it
+                cutOff = true;
+                search.exitAlways(true);
+                pass--;
+                continue;
+            }
             if (r.exhausted) { job.failure = r.reason; return; }
             if (!r.found && !r.partial) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
             if (r.partial && pass == 0) {

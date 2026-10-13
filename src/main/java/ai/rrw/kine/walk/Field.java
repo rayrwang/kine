@@ -45,6 +45,12 @@ public final class Field {
     long[] nodes = new long[0];
     double[] value = new double[0];
     int[] next = new int[0];
+    /** The move each floor's next[] step is (Graph's kinds), and the floor a straight line from it leads to along its
+     *  chain (the any-angle pass), -1 where none. */
+    byte[] nextMove = new byte[0];
+    int[] lineTo = new int[0];
+    /** Turn the any-angle pass off (only to measure what it changes). */
+    public static boolean ANY_ANGLE = true;
     float[] px = new float[0], py = new float[0], pz = new float[0];
     byte[] type = new byte[0];
     int n = 0;
@@ -78,11 +84,13 @@ public final class Field {
      */
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, long planId, long[] path, double x, double z,
                               int goalX, int goalZ, boolean reachedGoal) {
-        return build(v, c, canSprint, gaps, false, planId, path, x, z, goalX, goalZ, reachedGoal);
+        return build(v, c, canSprint, gaps, false, planId, path, null, x, z, goalX, goalZ, reachedGoal);
     }
 
+    /** route: the tightened route the walk follows (or null): the corridor takes it in too, and the window's end is
+     *  sourced along it. */
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
-                              double x, double z, int goalX, int goalZ, boolean reachedGoal) {
+                              Route route, double x, double z, int goalX, int goalZ, boolean reachedGoal) {
         long t0 = System.nanoTime();
         int at = nearestIndex(path, x, z);
         int from = at;
@@ -98,7 +106,7 @@ public final class Field {
         g.gaps = gaps;
         g.glides = glides;
         g.goalX = goalX; g.goalZ = goalZ;
-        f.make(g, path, from, to);
+        f.make(g, path, route, from, to);
         f.buildNanos = System.nanoTime() - t0;
         return f;
     }
@@ -107,12 +115,32 @@ public final class Field {
         return Math.hypot(View.nodeX(a) - View.nodeX(b), View.nodeZ(a) - View.nodeZ(b));
     }
 
-    private void make(Graph g, long[] path, int from, int to) {
-        // the corridor's columns and their floors
+    private void make(Graph g, long[] path, Route route, int from, int to) {
+        // the corridor's columns and their floors: round the grid path and round the tightened route, which on open
+        // ground can lie several blocks off the grid path's staircase (the walk follows the route: a corridor round the
+        // grid path alone pulled it back toward the staircase's side)
         for (int i = from; i <= to; i++) {
             int x = View.nodeX(path[i]), z = View.nodeZ(path[i]);
             for (int dx = -RADIUS; dx <= RADIUS; dx++)
                 for (int dz = -RADIUS; dz <= RADIUS; dz++) columns.add(View.key(x + dx, z + dz));
+        }
+        double[] routeArc = null;
+        double sFrom = 0, sTo = 0;
+        if (route != null && route.gn > 1) {
+            routeArc = new double[route.gn];
+            for (int k = 1; k < route.gn; k++)
+                routeArc[k] = routeArc[k - 1] + Math.hypot(route.gx[k] - route.gx[k - 1], route.gz[k] - route.gz[k - 1]);
+            sFrom = routeArc[nearestSample(route, View.nodeX(path[from]) + 0.5, View.nodeZ(path[from]) + 0.5)];
+            sTo = routeArc[nearestSample(route, View.nodeX(path[to]) + 0.5, View.nodeZ(path[to]) + 0.5)];
+            int lastX = Integer.MIN_VALUE, lastZ = Integer.MIN_VALUE;
+            for (int k = 0; k < route.gn; k++) {
+                if (routeArc[k] < sFrom - 1 || routeArc[k] > sTo + 1) continue;
+                int x = (int) Math.floor(route.gx[k]), z = (int) Math.floor(route.gz[k]);
+                if (x == lastX && z == lastZ) continue;
+                lastX = x; lastZ = z;
+                for (int dx = -RADIUS; dx <= RADIUS; dx++)
+                    for (int dz = -RADIUS; dz <= RADIUS; dz++) columns.add(View.key(x + dx, z + dz));
+            }
         }
         if (endsAtGoal) columns.add(View.key(goalX, goalZ));
         long[] list = new long[256];
@@ -148,6 +176,7 @@ public final class Field {
         // the moves out of every floor, kept where both ends are in the corridor; reversed for the backward search
         int[] fFrom = new int[1024], fTo = new int[1024];
         double[] fCost = new double[1024];
+        byte[] fMove = new byte[1024];
         int m = 0;
         for (int i = 0; i < n; i++) {
             g.expand(nodes[i]);
@@ -156,8 +185,9 @@ public final class Field {
                 if (j < 0) continue;
                 if (m == fFrom.length) {
                     fFrom = Arrays.copyOf(fFrom, m * 2); fTo = Arrays.copyOf(fTo, m * 2); fCost = Arrays.copyOf(fCost, m * 2);
+                    fMove = Arrays.copyOf(fMove, m * 2);
                 }
-                fFrom[m] = i; fTo[m] = j; fCost[m] = g.cost[e]; m++;
+                fFrom[m] = i; fTo[m] = j; fCost[m] = g.cost[e]; fMove[m] = g.move[e]; m++;
             }
         }
         edges = m;
@@ -167,14 +197,38 @@ public final class Field {
         for (int i = 0; i < n; i++) rStart[i + 1] += rStart[i];
         int[] rFrom = new int[m];
         double[] rCost = new double[m];
+        byte[] rMove = new byte[m];
         int[] fill = Arrays.copyOf(rStart, n);
-        for (int e = 0; e < m; e++) { int k = fill[fTo[e]]++; rFrom[k] = fFrom[e]; rCost[k] = fCost[e]; }
+        for (int e = 0; e < m; e++) { int k = fill[fTo[e]]++; rFrom[k] = fFrom[e]; rCost[k] = fCost[e]; rMove[k] = fMove[e]; }
+        nextMove = new byte[n];
+        lineTo = new int[n];
+        Arrays.fill(lineTo, -1);
 
         // the sources: the corridor's end at the route's cost from there on (or the goal column's floors at 0)
         double tail = endsAtGoal ? 0.0 : routeCostFrom(g, path, to);
         Heap h = new Heap(n);
         int end = id.get(path[to]);
-        if (end >= 0) { value[end] = tail; h.push(end, tail); }
+        if (end >= 0 && (endsAtGoal || routeArc == null)) { value[end] = tail; h.push(end, tail); }
+        if (!endsAtGoal && routeArc != null) {
+            // the tightened route's last stretch in the window, each floor under it at the route's cost on (the rate of
+            // the grid path's last move): the times then lead along the route the walk follows at the window's end
+            double rate = to > from ? edgeCost(g, path[to - 1], path[to]) / Math.max(1e-6, hdist(path[to - 1], path[to])) : c.sprint;
+            for (int k = 0; k < route.gn; k++) {
+                double sArc = routeArc[k];
+                if (sArc < sTo - TAIL_LENGTH || sArc > sTo) continue;
+                int j = floorAt((int) Math.floor(route.gx[k]), (int) Math.floor(route.gz[k]), route.gy[k], 0.6);
+                if (j < 0) continue;
+                double t = tail + (sTo - sArc) * rate;
+                if (t < value[j]) { value[j] = t; h.push(j, t); }
+            }
+        } else if (!endsAtGoal) {
+            double t = tail;
+            for (int k = to - 1; k >= Math.max(from, to - TAIL_SOURCES); k--) {
+                t += edgeCost(g, path[k], path[k + 1]);
+                int j = id.get(path[k]);
+                if (j >= 0 && t < value[j]) { value[j] = t; h.push(j, t); }
+            }
+        }
         if (endsAtGoal) {
             ChunkFloors ch = v.chunk(goalX, goalZ);
             if (ch != null)
@@ -190,9 +244,117 @@ public final class Field {
             for (int k = rStart[i]; k < rStart[i + 1]; k++) {
                 int j = rFrom[k];
                 double nv = vi + rCost[k];
-                if (nv < value[j] - 1e-9) { value[j] = nv; next[j] = i; h.push(j, nv); }
+                if (nv < value[j] - 1e-9) { value[j] = nv; next[j] = i; nextMove[j] = rMove[k]; h.push(j, nv); }
             }
         }
+        if (ANY_ANGLE) anyAngle();
+    }
+
+    /** The longest straight line the any-angle pass draws, blocks. */
+    static final double LINE_REACH = 64.0;
+
+    /**
+     * The grid's moves (eight neighbours and knight's moves) make the times anisotropic: on open ground the time to the
+     * goal grows up to 2.7% faster across the grid's directions than along them, and within each sector between two of
+     * them it slopes toward one fixed direction (13.3 degrees off an axis for a goal anywhere between 0 and 26.6), so
+     * the search, going down the times, veered off the straight line (RW, 2026-10-12: "the layer 2 keeps giving a path
+     * that veers liek 10 degrees to the letr"). This pass works as Theta* does, backward and over the finished times:
+     * in order of time from the goal, a floor whose next floor's straight line ends at a floor it can itself see in a
+     * straight line (every column under the line, and a third of a block either side, a floor of its kind and speed
+     * within a step of the line's height) takes that line instead, and the time of the line at its own move's rate. On open
+     * ground every floor's line runs to the goal or to a corner of the way round, and the times are the straight-line
+     * ones. lineTo is the line's far end, for the aim.
+     */
+    private void anyAngle() {
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        Arrays.sort(order, (a, b) -> Double.compare(value[a], value[b]));
+        double[] corrected = value.clone();
+        for (int oi = 0; oi < n; oi++) {
+            int i = order[oi];
+            int q = next[i];
+            if (value[i] == Double.POSITIVE_INFINITY || q < 0) continue;
+            int mv = nextMove[i];
+            double step = Math.hypot(px[q] - px[i], pz[q] - pz[i]);
+            // its own move as the next floor's corrected time and the move
+            corrected[i] = corrected[q] + (value[i] - value[q]);
+            if (mv != Graph.WALK && mv != Graph.WADE && mv != Graph.SWIM || step < 1e-6) continue;
+            double rate = (value[i] - value[q]) / step;
+            int p = lineTo[q];
+            if (p < 0 || type[p] != type[i]) { lineTo[i] = q; continue; }
+            double d = Math.hypot(px[p] - px[i], pz[p] - pz[i]);
+            if (d <= LINE_REACH && straight(i, p)) {
+                double v = corrected[p] + d * rate;
+                if (v <= corrected[i] + 1e-9) { corrected[i] = v; lineTo[i] = p; continue; }   // ties: the line, so lines grow
+            }
+            lineTo[i] = q;
+        }
+        // a line that ends at the goal side's first floor: those floors are their own ends
+        value = corrected;
+    }
+
+    /** Whether a straight walk from floor i to floor a stays on floors of i's kind: under the line and a third of a
+     *  block either side of it, every block, a floor within a step of the line's height. */
+    private boolean straight(int i, int a) {
+        double x0 = px[i], z0 = pz[i], y0 = py[i], x1 = px[a], z1 = pz[a], y1 = py[a];
+        double len = Math.hypot(x1 - x0, z1 - z0);
+        if (len < 1e-6) return true;
+        double nx = -(z1 - z0) / len * 0.3, nz = (x1 - x0) / len * 0.3;
+        int steps = (int) Math.ceil(len);
+        int kind = type[i], speed = speedClass(i);
+        for (int s = 1; s < steps; s++) {
+            double t = s / (double) steps, x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t, y = y0 + (y1 - y0) * t;
+            for (int side = -1; side <= 1; side += 2)
+                if (!floorNear((int) Math.floor(x + nx * side), (int) Math.floor(z + nz * side), y, kind, speed)) return false;
+        }
+        return true;
+    }
+
+    /** What sets a floor's speed: slow blocks (soul sand), water at the feet. A line keeps to one, so its rate holds
+     *  all along it. */
+    private int speedClass(int i) {
+        long nd = nodes[i];
+        int x = View.nodeX(nd), z = View.nodeZ(nd);
+        ChunkFloors ch = v.chunk(x, z);
+        return ch.flags(ch.index(x & 15, z & 15, View.nodeI(nd))) & (ChunkFloors.SLOW | ChunkFloors.WADE);
+    }
+
+    /** A floor of this kind and speed in column (x, z) within a step of height y, in the corridor. */
+    private boolean floorNear(int x, int z, double y, int kind, int speed) {
+        if (!columns.contains(View.key(x, z))) return false;
+        ChunkFloors ch = v.chunk(x, z);
+        if (ch == null) return false;
+        int lx = x & 15, lz = z & 15, k = ch.count(lx, lz);
+        for (int i = 0; i < k; i++) {
+            int idx = ch.index(lx, lz, i);
+            if (ch.type(idx) == kind && Math.abs(ch.h(idx) - y) <= 0.6
+                && (ch.flags(idx) & (ChunkFloors.SLOW | ChunkFloors.WADE)) == speed) return true;
+        }
+        return false;
+    }
+
+    /** How many floors before a window's end take the route's own cost as sources (along the grid path, with no
+     *  tightened route), and how far back along the tightened route. */
+    static final int TAIL_SOURCES = 8;
+    static final double TAIL_LENGTH = 8.0;
+
+    /** The route's ground sample nearest (x, z). */
+    private static int nearestSample(Route r, double x, double z) {
+        int best = 0;
+        double bestD = Double.MAX_VALUE;
+        for (int k = 0; k < r.gn; k++) {
+            double d = (r.gx[k] - x) * (r.gx[k] - x) + (r.gz[k] - z) * (r.gz[k] - z);
+            if (d < bestD) { bestD = d; best = k; }
+        }
+        return best;
+    }
+
+    /** The cheapest move's cost from floor a to floor b (a straight walk's if there is no move). */
+    private static double edgeCost(Graph g, long a, long b) {
+        g.expand(a);
+        double best = Double.NaN;
+        for (int e = 0; e < g.n; e++) if (g.to[e] == b && (Double.isNaN(best) || g.cost[e] < best)) best = g.cost[e];
+        return Double.isNaN(best) ? hdist(a, b) * g.c.sprint : best;
     }
 
     /** The route's cost from path index k to its end, from the moves between its floors. */
@@ -314,7 +476,7 @@ public final class Field {
     public double[] aim(int i, double x, double z, double dist) {
         int j = i, steps = 0, guard = 0;
         while (steps < 6 && guard++ < 64) {
-            int k = next[j];
+            int k = lineTo[j] >= 0 ? lineTo[j] : next[j];   // along the straight lines of the any-angle pass
             if (k < 0) break;
             // a move within the column (up or down a ladder) doesn't count: aim at where the climb leads off it
             if (px[k] != px[j] || pz[k] != pz[j]) steps++;

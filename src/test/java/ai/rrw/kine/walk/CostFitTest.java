@@ -86,13 +86,17 @@ public class CostFitTest {
         Layer2Sim.Outcome so = run("soulsand", ss, 0.5, 11, 0.5, 80, 0, 1500);
         near("soul sand ticks a block", (crossX(so, 60) - crossX(so, 20)) / 40.0, c.sprint * c.slowFactor, 0.6);
 
-        // a ladder 16 up a wall, the goal on top; and back down
+        // a ladder 16 up a wall (its plate against the wall), the goal on top; and back down
         TestWorld lad = TestWorld.blocks(-8, -8, 31, 7).floor(10);
         lad.fill(10, 11, -8, 31, 26, 7, TestWorld.STONE);
-        lad.fill(9, 11, 0, 9, 26, 0, TestWorld.LADDER_WEST);
+        lad.fill(9, 11, 0, 9, 26, 0, TestWorld.LADDER_EAST);
         Layer2Sim.Outcome l = run("ladderUp", lad, 0.5, 11, 0.5, 15, 0, 800);
         near("ladder up ticks a block", (crossY(l, 24, true) - crossY(l, 13, true)) / 11.0, c.ladderUp, 1.3);
         Layer2Sim.Outcome ld = run("ladderDown", lad, 15.5, 27, 0.5, 0, 0, 800);
-        near("ladder down ticks a block", (crossY(ld, 13, false) - crossY(ld, 24, false)) / 11.0, c.ladderDown, 1.1);
+        // down: layer 2 may jump off the top and fall, catching the ladder low down (the game resets the fall distance
+        // on a climbable, so it doesn't hurt): faster than climbing down, so only the table's bound is checked
+        double down = (crossY(ld, 13, false) - crossY(ld, 24, false)) / 11.0;
+        System.out.printf(Locale.ROOT, "fit ladder down ticks a block: measured %.3f, table %.3f (at most)%n", down, c.ladderDown);
+        assertTrue(down <= c.ladderDown + 1.1, "ladder down " + down);
     }
 }

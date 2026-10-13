@@ -21,8 +21,9 @@ package ai.rrw.kine.walk;
  *       onto a bank at most a quarter block above the water's top;</li>
  *   <li>CLIMB_ON, CLIMB_UP, CLIMB_DOWN, CLIMB_OFF: walking (or swimming) into a ladder, up and down it, and off it
  *       sideways or at its top;</li>
- *   <li>EXIT: from a floor at the edge of what is loaded to a goal beyond it, the rest charged as a straight sprint
- *       over open ground.</li>
+ *   <li>EXIT: from a floor at the edge of what is loaded to a goal beyond it, the rest charged as a straight line at
+ *       one rate for every way out (beyondRate: the search sets it from the ground on the straight line to the goal,
+ *       so a sea's way on is charged as a swim and the land's as a sprint).</li>
  * </ul>
  */
 final class Graph {
@@ -51,6 +52,10 @@ final class Graph {
     /** The goal column, and whether the goal lies beyond the loaded area (then edge floors get an EXIT move). */
     int goalX, goalZ;
     boolean goalUnknown;
+    /** Ticks a block past the loaded edge, the same for every way out (PathSearch sets it). */
+    double beyondRate;
+    /** The type of the floor expand() last expanded (ChunkFloors.GROUND, SWIM or CLIMB). */
+    int expandedType;
 
     // the moves found by expand()
     int n;
@@ -66,6 +71,7 @@ final class Graph {
         this.c = c;
         this.sweep = new Sweep(v, c, 0.0);
         this.sweep.allowClimb = true;
+        this.beyondRate = c.sprint;
     }
 
     private void add(long node, double cst, int mv) {
@@ -85,6 +91,7 @@ final class Graph {
         if (a == null) return;
         int ai = a.index(x & 15, z & 15, i);
         int type = a.type(ai);
+        expandedType = type;
         float ah = a.h(ai);
         boolean edge = false;
 
@@ -137,7 +144,7 @@ final class Graph {
         if (glides && type == ChunkFloors.GROUND) glideMoves(a, ai, x, z);
         if (edge && goalUnknown) {
             double gx = goalX + 0.5 - (x + 0.5), gz = goalZ + 0.5 - (z + 0.5);
-            add(Long.MIN_VALUE, Math.sqrt(gx * gx + gz * gz) * c.sprint, EXIT);
+            add(Long.MIN_VALUE, Math.sqrt(gx * gx + gz * gz) * beyondRate, EXIT);
         }
     }
 

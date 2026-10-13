@@ -222,28 +222,41 @@ final class RunModel implements Model<RunWorld> {
         return !s.onGround && !s.inWater && !phys.onClimbable(s);
     }
 
+    /** Ticks on a ladder before a run carried on to its landing counts as caught by it. */
+    static final int CAUGHT = 8;
+
+    /** Still to be carried on: in the air, or on a ladder for fewer than CAUGHT ticks and not standing. */
+    private boolean unsettled(MoveState s, int heldOnLadder) {
+        if (s.onGround || s.inWater) return false;
+        return !phys.onClimbable(s) || heldOnLadder < CAUGHT;
+    }
+
     @Override
     public double estimate(RunWorld w) {
         if (w.arrived) return 0.0;
         MoveState s = w.s;
         double extra = 0;
-        if (airborne(phys, s)) {
+        if (airborne(phys, s) || phys.onClimbable(s) && !s.onGround && (Math.abs(s.vx) > 0.15 || Math.abs(s.vz) > 0.15)) {
             // carried on until it lands: the same keys without jump, the rotation going on toward the heading
             MoveState r = scratch;
             r.set(s);
             int keys = w.lastKeys & ~MoveState.JUMP;
             float yaw = w.sentYaw, pitch = w.sentPitch;
-            int t = 0;
-            while (airborne(phys, r) && t < (r.fallFlying ? 60 : 40)) {
+            int t = 0, held = 0;
+            // on a ladder it lets go of the keys (it slides down, held in the ladder's cell); caught once it has been on
+            // one for CAUGHT ticks (a jump through a ladder's cell at speed can fly on out of it and fall)
+            while (unsettled(r, held) && t < (r.fallFlying ? 60 : 40)) {
                 double y0 = r.y, fall0 = r.fallDistance;
-                phys.step(r, keys, yaw, pitch);
+                boolean ladder = phys.onClimbable(r);
+                phys.step(r, ladder ? 0 : keys, yaw, pitch);
+                held = phys.onClimbable(r) ? held + 1 : 0;
                 t++;
                 extra += 1.0 + marks(r, true, y0, fall0);
                 if (arrived(r)) return extra;
                 float dy = GameMath.wrapDegrees(w.segYaw - yaw);
                 yaw += Math.max(-TURN, Math.min(TURN, dy));
             }
-            if (airborne(phys, r)) {
+            if (unsettled(r, held)) {
                 if (!r.fallFlying) return extra + UNSAFE;
                 // still gliding: count from the floor it is over, a tick a block of height to come down
                 int j = field.below(r.x, r.y, r.z);

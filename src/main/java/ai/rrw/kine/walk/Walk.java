@@ -73,6 +73,9 @@ public final class Walk {
     private static int seg = 1;                     // the waypoint walked toward
     private static double bestLeft = Double.MAX_VALUE;
     private static int bestLeftTick = 0, stuckReplans = 0, replans = 0;
+    private static double progressed = 0;           // route length gained since the last no-progress replan
+    /** Route length gained that clears the count of no-progress replans: "stuck" is several of them in a row. */
+    static final double REAL_PROGRESS = 8.0;
     private static boolean handBack = false;
     private static int settleWaits = 0;
     /** Why the last replans happened (for tests and the report). */
@@ -193,6 +196,7 @@ public final class Walk {
         seg = 1;
         handBack = false;
         stuckReplans = 0;
+        progressed = 0;
         replans = 0;
         replanWhy.clear();
         settleWaits = 0;
@@ -442,13 +446,14 @@ public final class Walk {
         if (job != null) {
             Planner.Plan np = job.latest.get();
             if (np != null && (np.id != planId || np.pass != planPass)) {
-                boolean first = plan == null || np.id != planId;
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
                 planId = np.id;
                 planPass = np.pass;
                 seg = nearestSegment(p, plan.route);
-                if (first) { bestLeft = Double.MAX_VALUE; bestLeftTick = tick; }
+                // a new route, or a finer pass of the same one: its length left is not comparable with the old mark
+                bestLeft = Double.MAX_VALUE;
+                bestLeftTick = tick;
                 state = State.WALKING;
                 message = np.route.viaExit ? "Walking toward the edge of what's loaded" : "Walking";
                 WalkRender.newPlan(np);
@@ -478,13 +483,21 @@ public final class Walk {
 
         // progress, stuck and off-route checks; replans
         double left = remaining(p, r);
-        if (left < bestLeft - 0.25 || mc.screen != null) { bestLeft = left; bestLeftTick = tick; }   // a screen pauses it
+        if (left < bestLeft - 0.25 || mc.screen != null) {   // a screen pauses it
+            if (bestLeft != Double.MAX_VALUE && left < bestLeft) progressed += bestLeft - left;
+            if (progressed >= REAL_PROGRESS) stuckReplans = 0;
+            bestLeft = left;
+            bestLeftTick = tick;
+        }
         boolean idle = job == null || job.done;
         if (tick - bestLeftTick > 60 && idle) {
             if (++stuckReplans > 3) { fail("Stuck"); measure(t0); return; }
+            String why = String.format(java.util.Locale.ROOT, "no progress in 3 s (%d in a row, left %.1f, seg %d/%d)",
+                stuckReplans, left, seg, r.n);
             bestLeft = Double.MAX_VALUE;
             bestLeftTick = tick;
-            replanFor("no progress in 3 s", mc);
+            progressed = 0;
+            replanFor(why, mc);
         } else if (idle && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
             replanFor("off the route", mc);
         } else if (idle && (r.viaExit || plan.result.partial) && left < 24 && tick - lastPlanTick > 20) {
