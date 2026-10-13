@@ -114,6 +114,7 @@ class ZombieModelTest {
             m.active = true; m.hasPath = true;
             m.pathX = Math.floor(p.x()) + 0.5; m.pathZ = Math.floor(p.z()) + 0.5;
             m.pathTargetX = p.x(); m.pathTargetY = p.y(); m.pathTargetZ = p.z(); m.pathIn = 100;
+            m.walking = true; m.op = MobSim.OP_MOVE;   // walking on toward the player, as its goal would have it
             // this zombie's random knockback resistance (0 to 0.05 at spawn, not sent to the client) came out near 0;
             // the model uses the worst case 0.05 in play, which flies 0.02 a tick shorter at first
             m.knockbackResistance = 0.0;

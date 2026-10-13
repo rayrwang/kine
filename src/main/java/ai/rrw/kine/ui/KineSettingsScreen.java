@@ -130,9 +130,12 @@ public class KineSettingsScreen extends Screen {
         + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
         + "stays put; the server sees turns no faster than a quick flick. Survival and adventure only. Servers may ban it.";
     private static final String DESC_COMBAT_MOVE =
-        "Near zombies, moves you with your movement keys so you take less damage, keeping them in front and out of "
-        + "reach between the kill aura's swings. Only while you press no movement key; press any to take over. Avoids "
-        + "drops and lava. Stands down while the pathfinder walks you. Survival and adventure only. Servers may ban it.";
+        "In fights with most hostile mobs (zombies, skeletons, creepers, spiders, witches, slimes, blazes, "
+        + "phantoms, pillagers, piglins and more), moves you with your movement keys so you take less damage: out "
+        + "of reach between the kill aura's swings, off the lines of projectiles, clear of creepers about to blow. "
+        + "Only while you press no movement key; press any to take over. Lets go near mobs it doesn't know (ghasts, "
+        + "guardians, shulkers, wardens). Avoids drops and lava. Stands down while the pathfinder walks you. "
+        + "Survival and adventure only. Servers may ban it.";
     private static final String DESC_WALK_PATHFINDER =
         "Walks you to the destination in the nav screen's Walk tab (N), pressing your movement keys along a route it "
         + "plans on foot. Your view stays yours; the server sees you face where you walk. Any movement key hands back "

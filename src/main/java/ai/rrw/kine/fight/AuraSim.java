@@ -29,11 +29,15 @@ public final class AuraSim {
     public double turnBudget = 29.5;
     /** Swings made in the simulation so far. */
     public int swings = 0;
+    /** A plan's caution (FightModel.copy, below the middle of the slider): a lit creeper is never killed by the plan's
+     *  aura, it keeps 1 health, so the plan walks out of every fuse rather than count on the kill landing in time. */
+    public boolean noLitKill = false;
 
     public AuraSim copy() {
         AuraSim a = new AuraSim();
         a.on = on; a.weapon = weapon; a.weaponKnockback = weaponKnockback; a.k = k; a.sentYaw = sentYaw;
         a.viewYaw = viewYaw; a.reach = reach; a.eyeHeight = eyeHeight; a.turnBudget = turnBudget; a.swings = swings;
+        a.noLitKill = noLitKill;
         return a;
     }
 
@@ -113,7 +117,7 @@ public final class AuraSim {
         boolean crit = canCrit && full;
         boolean sprintHit = p.sprinting && full;
         double raw = SwingPlan.hitDamage(weapon, m.bonus, c, crit);
-        double dealt = hurt(p, m, raw, true);
+        double dealt = hurt(p, m, raw, true, noLitKill);
         if (dealt >= 0 && (sprintHit || weaponKnockback > 0)) {   // Player.causeExtraKnockback along the player's facing
             double r = Math.toRadians(sentYaw);
             m.knockback((sprintHit ? 0.5 : 0.0) + weaponKnockback, Math.sin(r), -Math.cos(r));
@@ -123,7 +127,7 @@ public final class AuraSim {
             for (int j : plan.get(idx).swept) {
                 MobSim o = found.get(j);
                 double sw = SwingPlan.sweepDamage(weapon, o.bonus, c);
-                double d = hurt(p, o, sw, false);
+                double d = hurt(p, o, sw, false, noLitKill);
                 if (d >= 0) {
                     double r = Math.toRadians(sentYaw);
                     o.knockback(0.4, Math.sin(r), -Math.cos(r));
@@ -136,7 +140,7 @@ public final class AuraSim {
 
     /** LivingEntity.hurtServer on a mob: the window, armour, knockback 0.4 away from the player on a full hit.
      *  Returns the health taken, or -1 if the hit did nothing. */
-    private static double hurt(MoveState p, MobSim m, double raw, boolean knock) {
+    private static double hurt(MoveState p, MobSim m, double raw, boolean knock, boolean noLitKill) {
         double through;
         boolean full = m.freshIn <= 0;
         if (!full) {
@@ -149,8 +153,10 @@ public final class AuraSim {
             m.freshIn = SwingPlan.WINDOW;
         }
         double taken = Math.min(m.health, SwingPlan.afterArmour(through, m.armour, m.toughness));
+        if (noLitKill && m.kind == MobSim.Kind.CREEPER && (m.swellDir > 0 || m.swelling)) taken = Math.min(taken, Math.max(0.0, m.health - 1.0));
         m.health -= taken;
         if (m.health <= 1e-9) { m.alive = false; m.health = 0; }
+        if (m.kind == MobSim.Kind.PHANTOM && taken > 0) m.swoop = false;   // hurt, it breaks off the swoop
         if (full && knock) m.knockback(0.4, p.x - m.x, p.z - m.z);
         return taken;
     }
@@ -173,12 +179,20 @@ public final class AuraSim {
     }
 
     /** Ticks until the mob's attack reaches the player, from its distance and how fast the two closed in the last
-     *  tick (KillAura.contact; pdx, pdz the player's last move). */
+     *  tick (KillAura.contact; pdx, pdz the player's last move): for a creeper the 3 blocks its fuse starts at, 0 once
+     *  it swells; for the rest their melee reach past their box. */
     static double contact(MoveState p, double pdx, double pdz, MobSim m) {
         double[] at = m.seen(), step = m.seenStep();
-        if (at[1] >= p.y + 1.8 || at[1] + m.height <= p.y) return Double.POSITIVE_INFINITY;
-        double half = (0.6 + m.width) / 2 + MobSim.REACH;
-        double gap = Math.max(Math.abs(at[0] - p.x), Math.abs(at[2] - p.z)) - half;
+        double gap;
+        if (m.kind == MobSim.Kind.CREEPER) {   // the 3 blocks its fuse starts at, and 0 once lit (KillAura.contact)
+            if (m.swellDir > 0) return 0.0;
+            double dx = at[0] - p.x, dy = at[1] - p.y, dz = at[2] - p.z;
+            gap = Math.sqrt(dx * dx + dy * dy + dz * dz) - 3.0;
+        } else {
+            if (at[1] >= p.y + 1.8 || at[1] + m.height <= p.y) return Double.POSITIVE_INFINITY;
+            double half = (0.6 + m.width) / 2 + MobSim.REACH;
+            gap = Math.max(Math.abs(at[0] - p.x), Math.abs(at[2] - p.z)) - half;
+        }
         if (gap <= 0) return 0.0;
         double dx = at[0] - p.x, dz = at[2] - p.z, d = Math.sqrt(dx * dx + dz * dz);
         if (d < 1e-6) return 0.0;

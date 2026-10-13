@@ -28,28 +28,32 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Combat movement: during a melee fight with zombies, moves you so you take less damage and the fight goes better, by
- * pressing movement keys (so the server sees an ordinary player walking), on top of the kill aura.
+ * Combat movement: during a fight with the mobs it models (zombies and their variants, skeletons and their kin,
+ * creepers, spiders; FightSnapshot.kindOf), moves you so you take less damage and the fight goes better, by pressing
+ * movement keys (so the server sees an ordinary player walking), on top of the kill aura.
  *
- * <p>At the end of every tick with zombies (the kill aura's targets) within RANGE, it takes a snapshot of the fight
+ * <p>At the end of every tick with such mobs (the kill aura's targets) near, it takes a snapshot of the fight
  * (FightSnapshot) and hands it to a worker thread, which runs the receding-horizon search (RecedingSearch over
- * FightModel: the exact movement copy, the zombie model and, when it is on, the kill aura's own swing timing) within a
+ * FightModel: the exact movement copy, the mob models, the projectiles in flight and, when it is on, the kill aura's own
+ * swing timing) within a
  * time budget, with the effort set from measured replan times (EffortTuner). The next tick, where the movement keys
  * are read (VanillaActions.adjustInput, after the kill aura's swap of your keys), it takes the plan's first action and
  * presses the keys that go nearest its heading at the rotation sent this tick.
  *
  * <p>Control (RW's rule): it moves you only while you press no movement key (W, A, S, D, jump, sneak, sprint, read as
  * physical presses, so toggle sprint and toggle sneak don't hold it off). Press any and only your movement counts;
- * release and it moves you again at once; the search keeps running meanwhile. With no zombie within 8 blocks it lets go
- * completely and doesn't search. On foot only. It stands down when another kind of hostile is within 8 blocks
- * (version 1 models zombies only), while you use an item, and when every plan it finds is unsafe. Fall prevention
- * still acts after it; projectile dodge stands down while it moves you.
+ * release and it moves you again at once; the search keeps running meanwhile. With no modelled mob within 8 blocks (a
+ * skeleton within 16) it lets go completely and doesn't search. On foot only. It stands down when a hostile it doesn't
+ * model is within 8 blocks, while you use an item, and when every plan it finds is unsafe. Fall prevention still acts
+ * after it. Projectile dodge stands down while it moves you, so the two never press keys in the same tick; its plans
+ * fly every projectile the dodge would consider and take their hits into account, so it dodges them itself.
  */
 public final class CombatMovement {
     private CombatMovement() {}
 
-    /** Zombies within this many blocks start the search and give it control. */
-    public static final double ENGAGE = 8.0;
+    /** Modelled mobs within this many blocks start the search and give it control (skeletons within
+     *  FightSnapshot.ENGAGE_BOW). */
+    public static final double ENGAGE = FightSnapshot.ENGAGE;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "kine-combat-search");
@@ -60,6 +64,15 @@ public final class CombatMovement {
 
     private static final RecedingSearch.Effort START = effort();
     private static final EffortTuner TUNER = new EffortTuner(START, 2, 10, 1, 4);
+
+    /** Ticks each plan step holds its action when a creeper is in the fight: 10, a 40-tick horizon that sees a whole
+     *  fuse (30 ticks) and the walk out of it; 5 otherwise. */
+    static final int CREEPER_HOLD = 10;
+
+    static boolean hasCreeper(FightWorld w) {
+        for (MobSim m : w.mobs) if (m.alive && m.kind == MobSim.Kind.CREEPER) return true;
+        return false;
+    }
 
     static RecedingSearch.Effort effort() {
         RecedingSearch.Effort e = new RecedingSearch.Effort();
@@ -122,10 +135,10 @@ public final class CombatMovement {
         long t0 = System.nanoTime();
         FightSnapshot.Shot shot = FightSnapshot.take(mc);
         long took = System.nanoTime() - t0;
-        if (shot == null || shot.zombies() == 0 || shot.nearest() > ENGAGE) {
+        if (shot == null || shot.mobs() == 0 || !shot.engage()) {
             engaged = false;
             lastResult = null;
-            standDownReason = "no zombie near";
+            standDownReason = "no modelled mob near";
             return;
         }
         engaged = true;
@@ -134,6 +147,7 @@ public final class CombatMovement {
         int[] previous = lastResult != null ? lastResult.plan() : null;
         int shift = lastResult != null ? tick - lastResultTick : 0;
         RecedingSearch.Effort e = TUNER.effort().copy();
+        if (hasCreeper(shot.world())) e.hold = CREEPER_HOLD;   // a 40-tick horizon: a fuse is 30 (model-world bench: no blasts)
         long seed = tick * 0x9E3779B97F4A7C15L;
         double slider = Settings.killAura ? Settings.combatBias / 100.0 : 0.0;   // without the aura nothing attacks: survive
         int at = tick;
@@ -163,9 +177,11 @@ public final class CombatMovement {
         if (r.plan() != null) for (int i = 0; i < Math.min(10, r.plan().length); i += 5) sb.append(Moves.name(r.plan()[i])).append(' ');
         for (MobSim m : w.mobs) {
             double[] seen = m.seen();
-            sb.append(String.format(java.util.Locale.ROOT, "| m%d %.2f,%.2f seen %.2f,%.2f v %.3f,%.3f hp %.1f cd %d fresh %d delay %d",
-                m.id, m.x, m.z, seen[0], seen[2], m.vx, m.vz, m.health, m.attackCooldown, m.freshIn, m.delay));
+            sb.append(String.format(java.util.Locale.ROOT, "| m%d %s %.2f,%.2f seen %.2f,%.2f v %.3f,%.3f hp %.1f cd %d fresh %d delay %d draw %d atk %d xbow %d swell %d/%d",
+                m.id, m.kind, m.x, m.z, seen[0], seen[2], m.vx, m.vz, m.health, m.attackCooldown, m.freshIn, m.delay, m.drawTicks, m.attackTime, m.xbow, m.swell, m.swellDir));
         }
+        for (ArrowSim a : w.arrows)
+            sb.append(String.format(java.util.Locale.ROOT, "| a%d %.2f,%.2f,%.2f v %.3f,%.3f,%.3f age %d", a.id, a.x, a.y, a.z, a.vx, a.vy, a.vz, a.age));
         // the chosen plan's terms against standing still and walking straight away from the nearest
         if (r.plan() != null) {
             int[] away = new int[e.horizon()];

@@ -46,10 +46,30 @@ public final class FightBench {
             m.pathIn = rnd.nextInt(10);
             m.drawnX = m.x; m.drawnY = m.y; m.drawnZ = m.z; m.delay = Integer.getInteger("delay", 4);   // the aura sees it as the client shows it
             if (i < Integer.getInteger("babies", 0)) { m.speed = 0.23 * 1.5; m.width = 0.3; m.height = 0.975; }   // -Dbabies=n: the first n are babies
+            if (i < Integer.getInteger("creepers", 0)) {   // -Dcreepers=n: the first n are creepers
+                m.kind = MobSim.Kind.CREEPER; m.speed = 0.25; m.height = 1.7; m.attackDamage = 0; m.health = 20; m.maxHealth = 20;
+                m.armour = 0; m.blastRadius = 3.0; m.maxSwell = 30;
+            }
+            int slime = Integer.getInteger("slime", 0);   // -Dslime=size: slimes of that size (-Dmagma=true: magma cubes)
+            if (slime > 0) {
+                boolean magma = Boolean.getBoolean("magma");
+                m.kind = MobSim.Kind.SLIME; m.magma = magma; m.slimeSize = slime; m.touchDamage = magma || slime > 1;
+                m.speed = 0.2F + 0.1F * slime; m.jumpPower = 0.42F + (magma ? slime * 0.1F : 0.0F);
+                m.width = 0.52F * slime; m.height = 0.52F * slime;
+                m.attackDamage = m.touchDamage ? slime + (magma ? 2 : 0) : 0;
+                m.health = slime * slime; m.maxHealth = m.health; m.armour = magma ? slime * 3 : 0;
+                m.walking = false; m.jumpDelay = rnd.nextInt(10); m.fullTick = rnd.nextBoolean();
+                m.yRot = (float) AuraSim.yawTo(m.x, m.z, 0.5, 0.5);
+            }
             w.mobs[i] = m;
         }
         return w;
     }
+
+    /** Creeper counts over a bench run (all fights with the search): fuses lit, ticks within 3 of a creeper not
+     *  swelling, blasts, the closest approach to a creeper (3D). */
+    static int[] fuses = new int[2], in3 = new int[2], blasts = new int[2];
+    static double[] creeperClosest = {Double.MAX_VALUE, Double.MAX_VALUE};
 
     record Outcome(double lost, int ticks, int left, double msPerReplan, double maxMs, int stepsIn, int ticksInTwo, double closest) {}
 
@@ -70,6 +90,8 @@ public final class FightBench {
         int stepsIn = 0, inTwo = 0;
         double closest = Double.MAX_VALUE;
         int lag = Integer.getInteger("obsLag", 0);   // ticks the planner's view of the mobs trails the truth (0: it sees the truth)
+        boolean[] lit = new boolean[truth.mobs.length], creeperSeen = new boolean[truth.mobs.length];
+        String[] log = new String[40];
         double[][] hist = new double[truth.mobs.length][2 * 64];
         for (t = 0; t < 1200 && truth.alive() > 0 && truth.health > 0; t++) {
             for (int i = 0; i < truth.mobs.length; i++) { hist[i][(t % 64) * 2] = truth.mobs[i].x; hist[i][(t % 64) * 2 + 1] = truth.mobs[i].z; }
@@ -80,6 +102,7 @@ public final class FightBench {
                 FightWorld view = truth;
                 if (lag > 0) {   // what the client would know: each mob where it was lag ticks ago, carried on at its velocity then
                     view = truth.copy();
+                    view.lag = lag;   // and the planner knows the lag (the snapshot's from the ping)
                     for (int i = 0; i < view.mobs.length; i++) {
                         MobSim m = view.mobs[i];
                         int a = Math.max(0, t - lag), b = Math.max(0, t - lag - 1);
@@ -102,6 +125,30 @@ public final class FightBench {
                 truth.tick(phys, FightModel.chooser(truth, act, ideal), real);
             } else {
                 truth.tick(phys, 0, real);
+            }
+            // creepers: fuses lit, ticks within 3 of one not swelling (its fuse trigger), blasts
+            if (Boolean.getBoolean("blastlog") && search) {
+                StringBuilder sb = new StringBuilder(String.format(Locale.ROOT, "t%d p %.2f,%.2f hp %.1f k %d:", t, truth.player.x, truth.player.z, truth.health, truth.aura.k));
+                for (MobSim m : truth.mobs)
+                    if (m.kind == MobSim.Kind.CREEPER && m.alive)
+                        sb.append(String.format(Locale.ROOT, " [d%.2f sw%d dir%d hp%.0f]", Math.sqrt(MobSim.sq(m.x - truth.player.x) + MobSim.sq(m.z - truth.player.z)), m.swell, m.swellDir, m.health));
+                log[t % log.length] = sb.toString();
+            }
+            for (int i = 0; i < truth.mobs.length; i++) {
+                MobSim m = truth.mobs[i];
+                if (m.kind != MobSim.Kind.CREEPER) continue;
+                int mode = search ? 1 : 0;
+                if (m.exploded && !creeperSeen[i] && Boolean.getBoolean("blastlog") && search) {
+                    System.out.println("BLAST at t" + t + " (seed " + seed + "):");
+                    for (int k = Math.max(0, t - 34); k <= t; k++) System.out.println("  " + log[k % log.length]);
+                }
+                if (m.exploded && !creeperSeen[i]) { blasts[mode]++; creeperSeen[i] = true; }
+                if (!m.alive) continue;
+                if (m.swellDir > 0 && !lit[i]) fuses[mode]++;
+                lit[i] = m.swellDir > 0;
+                double dx = m.x - truth.player.x, dy = m.y - truth.player.y, dz = m.z - truth.player.z;
+                if (dx * dx + dy * dy + dz * dz < 9.0 && m.swellDir <= 0) in3[mode]++;
+                creeperClosest[mode] = Math.min(creeperClosest[mode], Math.sqrt(dx * dx + dy * dy + dz * dz));
             }
             // the player's own move into a mob's reach (mob where it was), ticks in reach of two or more, closest approach
             int in = 0;
@@ -135,7 +182,9 @@ public final class FightBench {
         System.out.printf(Locale.ROOT, "mobs %d arc %.0f slider %.2f effort %s%n", n, arc, slider, e);
         for (int s = 0; s < seeds; s++) {
             Outcome a = fight(scene(n, s, arc), phys, false, false, slider, e, s);
+            int b0 = blasts[1];
             Outcome b = fight(scene(n, s, arc), phys, true, false, slider, e, s);
+            if (blasts[1] > b0) System.out.printf(Locale.ROOT, "seed %2d: %d blasts with the search%n", s, blasts[1] - b0);
             Outcome c = ideal ? fight(scene(n, s, arc), phys, true, true, slider, e, s) : b;
             System.out.printf(Locale.ROOT, "seed %2d  aura alone: lost %5.1f in %4d ticks (%d left)   with search: lost %5.1f in %4d ticks (%d left), %.1f ms a replan (max %.1f); steps into reach %d, ticks in reach of 2+ %d, closest %.2f%s%n",
                 s, a.lost(), a.ticks(), a.left(), b.lost(), b.ticks(), b.left(), b.msPerReplan(), b.maxMs(), b.stepsIn(), b.ticksInTwo(), b.closest(),
@@ -143,6 +192,10 @@ public final class FightBench {
             sum[0] += a.lost(); sum[1] += a.ticks(); sum[2] += b.lost(); sum[3] += b.ticks(); sum[4] += c.lost(); sum[5] += c.ticks();
             sum[6] += b.stepsIn(); sum[7] += b.ticksInTwo(); sum[8] += b.closest();
         }
+        if (Integer.getInteger("creepers", 0) > 0)
+            for (int mode = 0; mode < 2; mode++)
+                System.out.printf(Locale.ROOT, "CREEPERS %s: fuses lit %d, ticks within 3 of one not swelling %d, blasts %d, closest %.2f%n",
+                    mode == 0 ? "aura alone" : "with search", fuses[mode], in3[mode], blasts[mode], creeperClosest[mode]);
         System.out.printf(Locale.ROOT, "MEAN aura alone: lost %.2f, %.0f ticks;  with search: lost %.2f, %.0f ticks, steps into reach %.1f, ticks in reach of 2+ %.1f, closest %.2f%s%n",
             sum[0] / seeds, sum[1] / seeds, sum[2] / seeds, sum[3] / seeds, sum[6] / seeds, sum[7] / seeds, sum[8] / seeds,
             ideal ? String.format(Locale.ROOT, ";  ideal heading: lost %.2f, %.0f ticks", sum[4] / seeds, sum[5] / seeds) : "");

@@ -46,7 +46,7 @@ public class ProjectileDodge {
     /** How a projectile flies on: arrows (and tridents) move, then lose 1% and fall 0.05; thrown items
      *  fall 0.03, lose 1%, then move (AbstractArrow.tick and ThrowableProjectile.tick). Other projectiles
      *  (fireballs, wind charges, shulker bullets) are taken to fly straight. */
-    static Ballistics.Spec flightOf(Projectile proj) {
+    public static Ballistics.Spec flightOf(Projectile proj) {
         if (proj instanceof AbstractArrow) return new Ballistics.Spec(proj.getGravity(), 0.99, 0, 0, false, false);
         if (proj instanceof ThrowableProjectile) return new Ballistics.Spec(proj.getGravity(), 0.99, 0, 0, true, false);
         return new Ballistics.Spec(0.0, 1.0, 0, 0, true, false);
@@ -70,8 +70,16 @@ public class ProjectileDodge {
         return new Pass(bestT, bestMiss, bestVel);
     }
 
+    private static boolean acted = false;
+
+    /** Whether the dodge pressed its keys this tick (for tests: it and combat movement never both act in a tick). */
+    public static boolean acted() {
+        return acted;
+    }
+
     /** The keys to hold this tick: the dodge's movement keys while a projectile is about to hit, else as given. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
+        acted = false;
         if (!Settings.projectileDodge || !GameModes.survivalLike(Minecraft.getInstance()) || p.isFallFlying() || p.isPassenger()
             || p.getAbilities().flying) return keys;   // not in creative or spectator: nothing can hurt you
         if (CombatMovement.controlling()) return keys;   // combat movement has the keys
@@ -85,6 +93,7 @@ public class ProjectileDodge {
             c = bestCombo(esc.fallback(), p.getYRot());
             if (walksOffCliff(p, c)) return keys;       // a cliff either way: stay put
         }
+        acted = true;
         return new Input(c[0], c[1], c[2], c[3], keys.jump(), keys.shift(), keys.sprint());
     }
 
