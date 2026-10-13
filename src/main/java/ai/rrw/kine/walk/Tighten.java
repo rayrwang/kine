@@ -20,11 +20,13 @@ final class Tighten {
     static final int CHAMFER_PASSES = 2;
 
     private final View v;
+    private final Costs c;
     private final Sweep sweep;
     private int checks = 0;
 
     Tighten(View v, Costs c, double margin, boolean canSprint) {
         this.v = v;
+        this.c = c;
         this.sweep = new Sweep(v, c, margin);
         this.sweep.canSprint = canSprint;
     }
@@ -200,6 +202,14 @@ final class Tighten {
             }
         }
         sweep.record = false;
+        // the turns: each bend's share of a 90 degree corner's time (Costs.turn, fitted from layer 2's runs)
+        for (int i = 1; i + 1 < r.n && c.turn > 0; i++) {
+            double ax = r.x[i] - r.x[i - 1], az = r.z[i] - r.z[i - 1], bx = r.x[i + 1] - r.x[i], bz = r.z[i + 1] - r.z[i];
+            double la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+            if (la < 1e-6 || lb < 1e-6) continue;
+            double cos = Math.max(-1, Math.min(1, (ax * bx + az * bz) / (la * lb)));
+            time += c.turn * Math.toDegrees(Math.acos(cos)) / 90.0;
+        }
         r.gn = g.size();
         r.gx = new float[r.gn]; r.gy = new float[r.gn]; r.gz = new float[r.gn];
         for (int i = 0; i < r.gn; i++) { r.gx[i] = g.get(i)[0]; r.gy[i] = g.get(i)[1]; r.gz[i] = g.get(i)[2]; }

@@ -15,9 +15,20 @@ public final class Body {
     public float stepHeight = 0.6F;
     public float movementEfficiency = 0.0F;
     public float width = 0.6F, height = 1.8F, crouchHeight = 1.5F;
+    /** The swimming pose's box height and the eye heights of the three poses (EntityDimensions). */
+    public float swimHeight = 0.6F, eyeHeight = 1.62F, crouchEyeHeight = 1.27F, swimEyeHeight = 0.4F;
+    /** Attributes.WATER_MOVEMENT_EFFICIENCY (Depth Strider), and Dolphin's Grace. */
+    public float waterMovementEfficiency = 0.0F;
+    public boolean dolphinsGrace = false;
     public boolean canSprint = true;
     public int sprintWindow = 7;
     public boolean canGlide = false;
+    /** Copy gliding (a jump pressed in the air with a glider worn starts it) instead of only marking it (wouldGlide):
+     *  for the walk's elytra hops; the combat model leaves it off. */
+    public boolean glide = false;
+    /** Ticks on the ground before a landed glide ends on the client (the server ends it on landing and tells the
+     *  client: measured in a lockstep test; on a real server add the ping). */
+    public int glideLandTicks = 3;
     public double knockbackResistance = 0.0;
 
     /** The defaults of a plain survival player. */

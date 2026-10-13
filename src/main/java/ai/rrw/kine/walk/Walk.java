@@ -80,10 +80,16 @@ public final class Walk {
 
     // this tick's steering, set at the tick's start
     private static boolean steering = false;
+    /** Layer 2 steers this tick (else the layer 1 follower). */
+    private static boolean layer2 = false;
     private static float wantYaw = 0f;
     private static boolean wantJump = false, wantSprint = false, wantKeys = false;
 
-    private static final Costs COSTS = new Costs();
+    /** The move costs layer 1 plans with: Baritone's for its own follower, the ones fitted from layer 2's runs when
+     *  layer 2 walks (Costs.layer2); layer 2's field uses the same. */
+    static Costs costs() {
+        return Settings.walkLayer2 ? Costs.LAYER2 : Costs.BARITONE;
+    }
     public static final long FIRST_BUDGET = 400_000_000L, REPLAN_BUDGET = 200_000_000L;
 
     // measured, for tests and the report
@@ -136,6 +142,8 @@ public final class Walk {
      *  it through (RW, 2026-10-12); on the rest of the walk fall prevention guards as usual. */
     public static boolean steppingIntoWater(LocalPlayer p) {
         if (state != State.WALKING || !steering || plan == null) return false;
+        // layer 2 checked its plan's landing in the movement copy (no fall that hurts): let it through
+        if (layer2) return Layer2.safe();
         Route r = plan.route;
         if (seg < 1 || seg >= r.n) return false;
         int m = r.move[seg];
@@ -191,6 +199,7 @@ public final class Walk {
         firstPlan = null;
         bestLeft = Double.MAX_VALUE;
         bestLeftTick = tick;
+        Layer2.reset();
         replan(mc, FIRST_BUDGET);
     }
 
@@ -205,7 +214,7 @@ public final class Walk {
         View v = WalkTable.snapshot();
         long start = v.nodeAt(x, y, z);
         if (start == View.NONE) { lastWhy = "preview: no floor at the start"; return; }
-        previewJob = Planner.plan(v, start, gx, gz, COSTS, margin(), true, FIRST_BUDGET);
+        previewJob = Planner.plan(v, start, gx, gz, costs(), margin(), true, Settings.walkLayer2, FIRST_BUDGET);
         previewing = true;
     }
 
@@ -239,6 +248,7 @@ public final class Walk {
     public static void cancel() {
         if (job != null) job.cancelled = true;
         job = null;
+        Layer2.reset();
         state = State.IDLE;
         message = "";
         steering = false;
@@ -273,7 +283,8 @@ public final class Walk {
         }
         settleWaits = 0;
         boolean canSprint = p.getFoodData().getFoodLevel() > 6;
-        job = Planner.plan(view, start, d[0], d[1], COSTS, margin(), canSprint, budget);
+        boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
+        job = Planner.plan(view, start, d[0], d[1], costs(), margin(), canSprint, Settings.walkLayer2, glides, budget);
         lastPlanTick = tick;
         plans++;
     }
@@ -307,6 +318,7 @@ public final class Walk {
     public static void onTickStart(Minecraft mc) {
         long t0 = System.nanoTime();
         steering = false;
+        layer2 = false;
         LocalPlayer p = mc.player;
         if (p != null && active()) {
             if (mc.screen == null && yourMovement(mc)) {
@@ -318,7 +330,9 @@ public final class Walk {
                 cancel();   // the route belongs to the dimension left
             } else if (!p.isAlive()) {
                 stop("died");
-            } else if (p.isFallFlying() || p.isPassenger() || p.getAbilities().flying) {
+            } else if (p.isFallFlying() && !(Settings.walkLayer2 && Settings.walkElytraHops) || p.isPassenger()
+                       || p.getAbilities().flying) {
+                // a glide is the walk's own with elytra hops on (layer 2 opened the glider)
                 stop("off the ground (gliding, riding or flying)");
             } else if (state == State.WALKING && plan != null) {
                 steer(p);
@@ -346,7 +360,7 @@ public final class Walk {
     /** Where the rotation sent should rest when the kill aura isn't fighting (KillAura.beforeKeybinds): while walking,
      *  facing the way the follower walks (the view's pitch kept); else your view. */
     public static float[] restRotation(LocalPlayer p, float viewYaw, float viewPitch) {
-        if (steering && state == State.WALKING) return new float[]{wantYaw, viewPitch};
+        if (steering && state == State.WALKING) return new float[]{wantYaw, layer2 ? Layer2.pitch(p, viewPitch) : viewPitch};
         return new float[]{viewYaw, viewPitch};
     }
 
@@ -363,6 +377,7 @@ public final class Walk {
                 return handBackKeys(keys);
             }
             if (state == State.PLANNING || !steering) return Input.EMPTY;   // stand while the first plan is made
+            if (layer2) return WorldSnapshot.input(Layer2.keys(p));
             int k = wantKeys ? Moves.keys(wantYaw, p.getYRot(), wantSprint ? Moves.SPRINT : Moves.WALK) : 0;
             if (wantJump) k |= MoveState.JUMP;
             return WorldSnapshot.input(k);
@@ -377,6 +392,16 @@ public final class Walk {
         if (keys.sprint() && !keys.forward())
             return new Input(keys.forward(), keys.backward(), keys.left(), keys.right(), keys.jump(), keys.shift(), false);
         return keys;
+    }
+
+    /** This tick's steering, for tests: the waypoint walked toward and its move, who steers, the heading and the
+     *  follower's wants. */
+    public static String steeringState() {
+        Route r = plan == null ? null : plan.route;
+        String mv = r != null && seg < r.n ? r.moveName(seg) : "-";
+        return String.format(java.util.Locale.ROOT, "seg=%d/%s move=%s steer=%b l2=%b want=%.1f jump=%b sprint=%b keys=%b%s",
+            seg, r == null ? "-" : Integer.toString(r.n), mv, steering, layer2, wantYaw, wantJump, wantSprint, wantKeys,
+            layer2 ? "" : Layer2.lastWhy.isEmpty() ? "" : " l2why=" + Layer2.lastWhy);
     }
 
     /** Whether the hand-back is on: from your first key press until the rotation sent is back on your view. */
@@ -450,7 +475,7 @@ public final class Walk {
             bestLeft = Double.MAX_VALUE;
             bestLeftTick = tick;
             replanFor("no progress in 3 s", mc);
-        } else if (idle && offRoute(p, r) > 2.5) {
+        } else if (idle && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
             replanFor("off the route", mc);
         } else if (idle && (r.viaExit || plan.result.partial) && left < 24 && tick - lastPlanTick > 20) {
             replanFor(r.viaExit ? "near the loaded edge" : "near a partial route's end", mc);
@@ -460,6 +485,7 @@ public final class Walk {
             lastCheckTick = tick;
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
+        if (state == State.WALKING) Layer2.endTick(mc, plan, d);
         measure(t0);
     }
 
@@ -488,6 +514,16 @@ public final class Walk {
     /** This tick's steering: which waypoint, which way, which keys. */
     private static void steer(LocalPlayer p) {
         Route r = plan.route;
+        if (Settings.walkLayer2 && Layer2.steer(p)) {
+            // layer 2 moves along the route its own way: keep the place on the route for the progress check and for
+            // the follower should layer 2 hand it a tick
+            int near = nearestSegment(p, r);
+            if (near > seg) seg = near;
+            wantYaw = Layer2.yaw();
+            layer2 = true;
+            steering = true;
+            return;
+        }
         if (seg >= r.n) { steering = false; return; }
         advance(p, r);
         if (seg >= r.n) { steering = false; return; }

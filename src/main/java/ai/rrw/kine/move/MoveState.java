@@ -19,6 +19,16 @@ public final class MoveState {
     public boolean crouching;
     /** The pose is CROUCHING (a 1.5-high box) rather than STANDING. */
     public boolean crouchPose;
+    /** The pose is SWIMMING (a 0.6-high box), and the swimming flag (Entity.isSwimming). */
+    public boolean swimPose, swimming;
+    /** The fluid tracker after the last tick (EntityFluidInteraction for water): in water (wasTouchingWater), how far
+     *  the water reaches above the feet, and the eyes in water. */
+    public boolean inWater, eyesInWater;
+    public double waterHeight;
+    /** Gliding (Entity shared flag 7, LivingEntity.isFallFlying), the FALL_FLYING pose (a 0.6-high box), and the ticks
+     *  on the ground since the glide touched down (the server ends it; the client hears a tick or more later). */
+    public boolean fallFlying, glidePose;
+    public int glideGroundTicks;
     public int sprintTriggerTime, noJumpDelay;
     public double fallDistance;
     /** Entity.mainSupportingBlockPos, and onGroundNoBlocks. */
@@ -45,6 +55,8 @@ public final class MoveState {
         vx = o.vx; vy = o.vy; vz = o.vz;
         onGround = o.onGround; horizontalCollision = o.horizontalCollision; minorHorizontalCollision = o.minorHorizontalCollision;
         sprinting = o.sprinting; crouching = o.crouching; crouchPose = o.crouchPose;
+        swimPose = o.swimPose; swimming = o.swimming; inWater = o.inWater; eyesInWater = o.eyesInWater; waterHeight = o.waterHeight;
+        fallFlying = o.fallFlying; glidePose = o.glidePose; glideGroundTicks = o.glideGroundTicks;
         sprintTriggerTime = o.sprintTriggerTime; noJumpDelay = o.noJumpDelay;
         fallDistance = o.fallDistance;
         hasSupport = o.hasSupport; onGroundNoBlocks = o.onGroundNoBlocks;

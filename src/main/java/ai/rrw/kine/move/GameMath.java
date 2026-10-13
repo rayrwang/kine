@@ -48,4 +48,9 @@ public final class GameMath {
     public static boolean equal(double a, double b) {
         return Math.abs(b - a) < 1.0E-5F;
     }
+
+    /** Mth.clamp(double, double, double). */
+    public static double clamp(double value, double min, double max) {
+        return value < min ? min : Math.min(value, max);
+    }
 }

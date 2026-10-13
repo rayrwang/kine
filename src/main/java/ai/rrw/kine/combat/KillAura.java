@@ -649,6 +649,11 @@ public final class KillAura {
         return sentKnown ? sentYaw : p.getYRot();
     }
 
+    /** The pitch the server got last, or the view's before the first (the walk's layer 2 turns on from it). */
+    public static float lastSentPitch(LocalPlayer p) {
+        return sentKnown ? sentPitch : p.getXRot();
+    }
+
     /** Whether the aura counts this entity as a target (hostile, or neutral and angry at you). */
     public static boolean targets(Entity e, LivingEntity player) {
         return isTarget(e, player);

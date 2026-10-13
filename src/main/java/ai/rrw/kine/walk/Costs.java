@@ -17,11 +17,27 @@ public final class Costs {
     public double walk = 20 / 4.317;            // 4.633
     public double sprint = 20 / 5.612;          // 3.564
     public double water = 20 / 2.2;             // 9.091
+    /** Wading (feet in water one deep, standing on the bottom): Baritone has one water cost for both. */
+    public double wade = 20 / 2.2;
     public double ladderUp = 20 / 2.35;         // 8.511
     public double ladderDown = 20 / 3.0;        // 6.667
     /** Baritone's soul sand cost is twice walking ("0.4 in BlockSoulSand but effectively about half"). */
     public double slowFactor = 2.0;
     public double jumpPenalty = 2.0;
+    /** A jump over a gap (layer 2 only), on top of the sprint over its length. */
+    public double gapPenalty = 2.0;
+    /** How much of a fall's time a running drop hides, ticks; below zero, Baritone's walk-off formula instead. */
+    public double fallHidden = -1;
+    /** A turn of 90 degrees on the route, ticks: only in the route's time (the search's floors carry no heading). */
+    public double turn = 0;
+    /** A glide (elytra hops): its start (the jump, opening the glider) and a block of it, ticks, and its wear. */
+    public double glideStart = 12.0, glidePerBlock = 1.5, glideWear = 0.5;
+
+    /** A glide of `dist` blocks: its time and the elytra's wear by the tick (a point of durability a second). */
+    double glideCost(double dist) {
+        double ticks = glideStart + dist * glidePerBlock;
+        return ticks * (1.0 + glideWear);
+    }
     public double waterPenalty = 3.0;
     /** Walking off an edge: 0.8 of a block's walk before the fall starts (Baritone's WALK_OFF_BLOCK_COST). */
     public double walkOffFraction = 0.8;
@@ -40,6 +56,37 @@ public final class Costs {
     public double hazardNear = 2.0;
 
     public static final Costs BARITONE = new Costs();
+
+    /**
+     * The costs fitted from layer 2's own simulated runs (RW: layer 2 "can basiclay generate training data which can
+     * feed back into the cost esitmes for layer one"): CostFitTest walks layer 2 closed loop on the movement copy over
+     * test courses and checks these numbers against what it measures. Measured 2026-10-12 (with this table planning
+     * the courses' routes, since the route changes what is measured; the second fit, with the sneaking gaits and the
+     * longer horizon in water): open ground 2.800 ticks a block once running (it sprint-jumps; 7.14 m/s), a sprint swim
+     * 5.10 a block, wading one deep 8.3, soul sand 6.25, a ladder 8.9 up and 6.7 down, a step up one block 0.6 to 2.4
+     * more than the flat (by the route and the search), a drop of 3 about 6.3 to 7.5 more (the run goes on while
+     * falling), into and out of water within a few ticks of nothing, a 90 degree corner about 9. The flat rate
+     * is kept at the estimate's top speed, so the estimate never exceeds a cost.
+     */
+    public static Costs layer2() {
+        Costs c = new Costs();
+        c.sprint = c.fastest;           // 2.806
+        c.walk = c.fastest;             // layer 2 runs wherever it can; walk-offs and climbs off at the same rate
+        c.water = 5.10;
+        c.wade = 8.2;
+        c.slowFactor = 6.13 / 2.806;
+        c.ladderUp = 9.0;
+        c.ladderDown = 7.0;
+        c.jumpOne = 0.0;
+        c.jumpPenalty = 1.0;
+        c.waterPenalty = 0.0;           // per block of swimming too in the graph: the crossing's 5 is left out
+        c.gapPenalty = 0.5;
+        c.fallHidden = 2.6;
+        c.turn = 9.0;
+        return c;
+    }
+
+    public static final Costs LAYER2 = layer2();
 
     /** Gravity's ticks to fall this far from rest (Baritone's distanceToTicks). */
     public static double fallTicks(double distance) {
@@ -64,7 +111,7 @@ public final class Costs {
 
     /** The rate a block for walking on this floor: sprint where allowed, twice for slow blocks, water when wading. */
     double rate(boolean canSprint, boolean slow, boolean wade) {
-        if (wade) return water;
+        if (wade) return this.wade;
         double r = canSprint ? sprint : walk;
         return slow ? r * slowFactor : r;
     }
@@ -72,6 +119,7 @@ public final class Costs {
     /** Walking off an edge and falling `drop` blocks, `dist` blocks across (Baritone's descend and fall: walk off, then
      *  the larger of the fall and centring on the new block). */
     double dropCost(double dist, double drop) {
+        if (fallHidden >= 0) return dist * walk + Math.max(0.0, fallTicks(drop) - fallHidden);
         double offWalk = dist * walk * walkOffFraction;
         double centre = dist * walk * (1 - walkOffFraction);
         return offWalk + Math.max(fallTicks(drop), centre);

@@ -41,5 +41,6 @@ public final class Route {
 
     public static final int WALK = Graph.WALK, WADE = Graph.WADE, DROP = Graph.DROP, JUMP = Graph.JUMP,
         WATER_IN = Graph.WATER_IN, SWIM = Graph.SWIM, WATER_OUT = Graph.WATER_OUT, CLIMB_ON = Graph.CLIMB_ON,
-        CLIMB_UP = Graph.CLIMB_UP, CLIMB_DOWN = Graph.CLIMB_DOWN, CLIMB_OFF = Graph.CLIMB_OFF, START = Graph.START;
+        CLIMB_UP = Graph.CLIMB_UP, CLIMB_DOWN = Graph.CLIMB_DOWN, CLIMB_OFF = Graph.CLIMB_OFF, START = Graph.START,
+        GAP = Graph.GAP, GLIDE = Graph.GLIDE;
 }

@@ -49,8 +49,21 @@ public final class RecedingSearch<W> {
 
     private final Model<W> model;
 
+    /** Sees every candidate the search scores, for a display (the walk's layer 2 draws them): its actions (one a tick),
+     *  its score, the depth it reached, and whether it stayed in the beam. Called on the search's thread. */
+    public interface Observer {
+        void candidate(int[] ticks, double score, int depth, boolean kept);
+    }
+
+    private Observer observer;
+
     public RecedingSearch(Model<W> model) {
         this.model = model;
+    }
+
+    public RecedingSearch<W> observe(Observer o) {
+        this.observer = o;
+        return this;
     }
 
     private final class Node {
@@ -121,6 +134,7 @@ public final class RecedingSearch<W> {
             children.sort(Comparator.comparingDouble(n -> n.score));
             List<Node> next = new ArrayList<>(children.subList(0, Math.min(e.beam, children.size())));
             if (prevNode != null && !next.contains(prevNode)) next.add(prevNode);
+            if (observer != null) for (Node c : children) observer.candidate(c.ticks, c.score, depth + 1, next.contains(c));
             beam = next;
             depthReached = depth + 1;
         }

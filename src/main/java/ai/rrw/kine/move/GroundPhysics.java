@@ -7,21 +7,32 @@ package ai.rrw.kine.move;
  * gravity and air drag, and collision against the blocks' own collision shapes. No Minecraft class is used: the
  * blocks come from a {@link BlockGrid} snapshot and the player's numbers from a {@link Body}.
  *
- * <p>The order is the game's, for a tick in which the player is in survival, on foot, out of water, not using an item
- * and not riding:
+ * <p>Since 2026-10-12 also water and climbing: the fluid the box is in and its height (Entity.baseTick's
+ * updateFluidInteraction, the eyes, swimming started and stopped), the crouch and sprint rules that read water,
+ * sneaking down in water, the jump in water (LivingEntity.jumpInLiquid), the swim pitch (Player.travel),
+ * LivingEntity.travelInWater (water drag, Depth Strider, Dolphin's Grace, the ladder in water, the fluid's falling
+ * adjustment and the jump out of water against a block), and on land ladders and vines (handleOnClimbable, the climb
+ * up when pressed against one or jumping, the sneak hold), and the swim pose's box. Checked against recorded ticks
+ * (WaterPhysicsTest). A current (flowing water) is not copied: touching it marks MoveState.touched SPECIAL; lava marks
+ * it HAZARD.
+ *
+ * <p>The order is the game's, for a tick in which the player is in survival, on foot, not using an item and not
+ * riding:
  * <ol>
+ *   <li>Entity.baseTick: the fluid, the eyes, swimming.</li>
  *   <li>LocalPlayer.aiStep: the sprint timer, the crouch state from last tick's sneak key and the room above, this
- *       tick's keys (KeyboardInput.tick), the sprint start and stop rules.</li>
+ *       tick's keys (KeyboardInput.tick), the sprint start and stop rules, sneaking down in water.</li>
  *   <li>LivingEntity.aiStep: the jump delay, tiny velocities zeroed, the input scaled (LocalPlayer.modifyInput), the
- *       jump.</li>
- *   <li>LivingEntity.travelInAir: the push from the keys (Entity.moveRelative with getFrictionInfluencedSpeed),
- *       Entity.move (the sneak edge stop, collision with step-up, ground and support, fall distance, the collided axes
- *       zeroed, the landing, the speed factor), then gravity and friction.</li>
+ *       jump (from the ground or in a fluid).</li>
+ *   <li>Player.travel: the swim pitch; then LivingEntity.travelInWater or travelInAir: the push from the keys
+ *       (Entity.moveRelative), climbing, Entity.move (the sneak edge stop, collision with step-up, ground and
+ *       support, fall distance, the collided axes zeroed, the landing, the speed factor), then gravity and drag.</li>
  *   <li>Player.tick: the pose for the next tick.</li>
  * </ol>
- * Left out (a plan that meets them is marked through MoveState.touched or wouldGlide): fluids, climbing, bouncy and
- * sticky blocks, cobwebs, scaffolding, powder snow, entities with collision boxes (boats, shulkers), the world border,
- * auto-jump (off by default), a fall of a block or more in one tick (its fall-distance reset by a ray).
+ * Left out (a plan that meets them is marked through MoveState.touched or wouldGlide): currents, lava's own movement,
+ * bouncy and sticky blocks, cobwebs, scaffolding, powder snow, bubble columns, entities with collision boxes (boats,
+ * shulkers), the world border, auto-jump (off by default), a fall of a block or more in one tick (its fall-distance
+ * reset by a ray).
  */
 public final class GroundPhysics {
     private final BlockGrid grid;
@@ -35,7 +46,7 @@ public final class GroundPhysics {
 
     // this tick's input after LocalPlayer.applyInput (xxa, zza), for isHorizontalCollisionMinor
     private float xxa, zza;
-    private float yRot;
+    private float yRot, xRot;
 
     public GroundPhysics(BlockGrid grid, Body body) {
         this.grid = grid;
@@ -45,15 +56,41 @@ public final class GroundPhysics {
     public BlockGrid grid() { return grid; }
     public Body body() { return body; }
 
-    /** One tick with these keys (MoveState bits) and this rotation sent. */
+    /** One tick with these keys (MoveState bits) and this yaw sent, pitch level (it matters only while swimming). */
     public void step(MoveState s, int keys, float yaw) {
+        step(s, keys, yaw, 0.0F);
+    }
+
+    /** One tick with these keys (MoveState bits) and this rotation sent. */
+    public void step(MoveState s, int keys, float yaw, float pitch) {
         yRot = yaw;
+        xRot = pitch;
+        // a landed glide ends between ticks: the server, on its tick after the landing, clears the flag and stands the
+        // pose up, and both come to the client together in its entity data (measured in a lockstep test: the client
+        // glides on the ground for 3 ticks, then the 4th is on foot)
+        if (s.fallFlying && s.glideGroundTicks >= body.glideLandTicks) {
+            s.fallFlying = false;
+            s.glideGroundTicks = 0;
+            if (s.glidePose) {
+                s.glidePose = false;
+                if (!canFit(s, POSE_STAND)) s.crouchPose = true;
+            }
+        }
+        // ---- Entity.baseTick (from LivingEntity.tick, before aiStep): the eyes as they were, the water now, swimming
+        boolean wasEyeInWater = s.eyesInWater;
+        updateFluid(s);
+        if (s.swimming) s.swimming = s.sprinting && s.inWater;
+        else s.swimming = s.sprinting && wasEyeInWater && s.inWater
+            && grid.get(GameMath.floor(s.x), GameMath.floor(s.y), GameMath.floor(s.z)).fluid == BlockInfo.WATER_FLUID;
+        boolean underWater = wasEyeInWater && s.inWater;            // Entity.isUnderWater
+        boolean shallow = s.inWater && !underWater;                 // Entity.isInShallowWater
+
         // ---- LocalPlayer.aiStep
         if (s.sprintTriggerTime > 0) s.sprintTriggerTime--;
         boolean wasJumping = (s.lastKeys & MoveState.JUMP) != 0;
         boolean wasShiftKeyDown = (s.lastKeys & MoveState.SHIFT) != 0;
         boolean hadForwardImpulse = s.lastMoveForward > 1.0E-5F;
-        s.crouching = canFit(s, true) && (wasShiftKeyDown || !canFit(s, false));
+        s.crouching = !s.swimming && canFit(s, POSE_CROUCH) && (wasShiftKeyDown || !canFit(s, POSE_STAND));
         // KeyboardInput.tick: the move vector from the keys
         float left = impulse((keys & MoveState.LEFT) != 0, (keys & MoveState.RIGHT) != 0);
         float fwd = impulse((keys & MoveState.FORWARD) != 0, (keys & MoveState.BACKWARD) != 0);
@@ -62,17 +99,33 @@ public final class GroundPhysics {
         if (!(dist < 1.0E-4F)) { mx = left / dist; my = fwd / dist; }
         boolean hasForwardImpulse = my > 1.0E-5F;
         if (wasShiftKeyDown || (keys & MoveState.BACKWARD) != 0) s.sprintTriggerTime = 0;
-        boolean movingSlowly = s.crouching;
-        if (!s.sprinting && hasForwardImpulse && body.canSprint && !movingSlowly) {   // canStartSprinting
+        // isMovingSlowly: crouching or crawling (the swim pose, or a glide's pose left after it ended, out of water)
+        boolean movingSlowly = s.crouching || (s.swimPose || s.glidePose && !s.fallFlying) && !s.inWater;
+        // canStartSprinting: food, not at the top of water (shallow), not slowed unless under water
+        if (!s.sprinting && hasForwardImpulse && body.canSprint && !shallow && (!s.fallFlying || underWater)
+            && (!movingSlowly || underWater)) {
             if (!hadForwardImpulse) {
                 if (s.sprintTriggerTime > 0) s.sprinting = true;
                 else s.sprintTriggerTime = body.sprintWindow;
             }
             if ((keys & MoveState.SPRINT) != 0) s.sprinting = true;
         }
-        if (s.sprinting && (!body.canSprint || !hasForwardImpulse || s.horizontalCollision && !s.minorHorizontalCollision))
-            s.sprinting = false;   // shouldStopRunSprinting
-        if ((keys & MoveState.JUMP) != 0 && !wasJumping && body.canGlide && !s.onGround) s.wouldGlide = true;   // tryToStartFallFlying
+        if (s.sprinting) {
+            if (s.swimming) {   // shouldStopSwimSprinting
+                if (!body.canSprint || !s.inWater || !hasForwardImpulse && !s.onGround && (keys & MoveState.SHIFT) == 0)
+                    s.sprinting = false;
+            } else if (!body.canSprint || shallow || !hasForwardImpulse || s.horizontalCollision && !s.minorHorizontalCollision) {
+                s.sprinting = false;   // shouldStopRunSprinting
+            }
+        }
+        if ((keys & MoveState.JUMP) != 0 && !wasJumping && body.canGlide && !s.onGround && !onClimbable(s)) {
+            if (!body.glide) s.wouldGlide = true;                          // marked: the copy may leave gliding out
+            else if (!s.fallFlying && !s.inWater) {                         // tryToStartFallFlying
+                s.fallFlying = true;
+                s.glideGroundTicks = 0;
+            }
+        }
+        if (s.inWater && (keys & MoveState.SHIFT) != 0) s.vy = s.vy + -0.04F;   // goDownInWater
 
         // ---- LivingEntity.aiStep
         if (s.noJumpDelay > 0) s.noJumpDelay--;
@@ -97,36 +150,206 @@ public final class GroundPhysics {
         }
         boolean jumping = (keys & MoveState.JUMP) != 0;
         if (jumping) {
-            if (s.onGround && s.noJumpDelay == 0) {
-                jumpFromGround(s);
-                s.noJumpDelay = 10;
+            double fluidHeight = s.waterHeight;
+            boolean inWaterAndHasFluidHeight = s.inWater && fluidHeight > 0.0;
+            double threshold = eyeHeight(s) < 0.4 ? 0.0 : 0.4;   // getFluidJumpThreshold
+            if (!inWaterAndHasFluidHeight || s.onGround && !(fluidHeight > threshold)) {
+                if ((s.onGround || inWaterAndHasFluidHeight && fluidHeight <= threshold) && s.noJumpDelay == 0) {
+                    jumpFromGround(s);
+                    s.noJumpDelay = 10;
+                }
+            } else {
+                s.vy = s.vy + 0.04F;   // jumpInLiquid
             }
         } else {
             s.noJumpDelay = 0;
         }
 
-        // ---- LivingEntity.travelInAir
+        // ---- Player.travel: swimming follows the look up or down
+        if (s.swimming) {
+            double lookY = -GameMath.sin(xRot * (float) (Math.PI / 180.0));   // Entity.calculateViewVector's y
+            double multiplier = lookY < -0.2 ? 0.085 : 0.06;
+            if (lookY <= 0.0 || jumping
+                || grid.get(GameMath.floor(s.x), GameMath.floor(s.y + 1.0 - 0.1), GameMath.floor(s.z)).fluid != BlockInfo.NO_FLUID)
+                s.vy = s.vy + (lookY - s.vy) * multiplier;
+        }
+        // ---- LivingEntity.aiStep: updateFallFlying's checkFallDistanceAccumulation (the rest is the server's)
+        if (s.fallFlying && s.vy > -0.5 && s.fallDistance > 1.0) s.fallDistance = 1.0;
+        // ---- LivingEntity.travel
+        if (s.inWater) travelInWater(s, keys);
+        else if (s.fallFlying) travelFallFlying(s, keys, jumping);
+        else travelInAir(s, keys, jumping);
+        touchedBlocks(s);
+
+        // ---- Player.tick: updatePlayerPose (the box for the next tick)
+        if (canFit(s, POSE_SWIM)) {
+            int desired = s.fallFlying ? POSE_GLIDE : s.swimming ? POSE_SWIM : (keys & MoveState.SHIFT) != 0 ? POSE_CROUCH : POSE_STAND;
+            int actual = canFit(s, desired) ? desired : canFit(s, POSE_CROUCH) ? POSE_CROUCH : POSE_SWIM;
+            s.crouchPose = actual == POSE_CROUCH;
+            s.swimPose = actual == POSE_SWIM;
+            s.glidePose = actual == POSE_GLIDE;
+        }
+        // the server ends a glide on the ground (LivingEntity.updateFallFlying: canGlide needs the air); the client hears
+        // of it some ticks later (at the start of a tick, above)
+        if (s.fallFlying && s.onGround) s.glideGroundTicks++;
+        else s.glideGroundTicks = 0;
+
+        s.lastKeys = keys;
+        s.lastMoveForward = my;
+    }
+
+    static final int POSE_STAND = 0, POSE_CROUCH = 1, POSE_SWIM = 2, POSE_GLIDE = 3;
+
+    /** LivingEntity.travelFallFlying (the server's damage for flying into a wall marked as a hazard). */
+    private void travelFallFlying(MoveState s, int keys, boolean jumping) {
+        if (onClimbable(s)) {
+            travelInAir(s, keys, jumping);
+            s.fallFlying = false;   // stopFallFlying
+            return;
+        }
+        double lastSpeed = Math.sqrt(s.vx * s.vx + s.vz * s.vz);
+        // updateFallFlyingMovement, with getLookAngle = calculateViewVector(xRot, yRot)
+        float realXRot = xRot * (float) (Math.PI / 180.0);
+        float realYRot = -yRot * (float) (Math.PI / 180.0);
+        float yCos = GameMath.cos(realYRot), ySin = GameMath.sin(realYRot);
+        float xCos = GameMath.cos(realXRot), xSin = GameMath.sin(realXRot);
+        double lx = ySin * xCos, lz = yCos * xCos;
+        float leanAngle = xRot * (float) (Math.PI / 180.0);
+        double lookHorLength = Math.sqrt(lx * lx + lz * lz);
+        double moveHorLength = Math.sqrt(s.vx * s.vx + s.vz * s.vz);
+        double gravity = body.gravity;
+        double c = Math.cos(leanAngle), liftForce = c * c;
+        double mx = s.vx, my = s.vy + gravity * (-1.0 + liftForce * 0.75), mz = s.vz;
+        if (my < 0.0 && lookHorLength > 0.0) {
+            double convert = my * -0.1 * liftForce;
+            mx = mx + lx * convert / lookHorLength; my = my + convert; mz = mz + lz * convert / lookHorLength;
+        }
+        if (leanAngle < 0.0F && lookHorLength > 0.0) {
+            double convert = moveHorLength * -GameMath.sin(leanAngle) * 0.04;
+            mx = mx + -lx * convert / lookHorLength; my = my + convert * 3.2; mz = mz + -lz * convert / lookHorLength;
+        }
+        if (lookHorLength > 0.0) {
+            mx = mx + (lx / lookHorLength * moveHorLength - mx) * 0.1;
+            mz = mz + (lz / lookHorLength * moveHorLength - mz) * 0.1;
+        }
+        s.vx = mx * 0.99F; s.vy = my * 0.98F; s.vz = mz * 0.99F;
+        move(s, keys);
+        if (s.horizontalCollision && (lastSpeed - Math.sqrt(s.vx * s.vx + s.vz * s.vz)) * 10.0 - 3.0 > 0.0)
+            s.touched |= BlockInfo.HAZARD;   // handleFallFlyingCollisions: flyIntoWall
+    }
+
+    /** LivingEntity.travelInAir, with LivingEntity.handleRelativeFrictionAndCalculateMovement's climbing. */
+    private void travelInAir(MoveState s, int keys, boolean jumping) {
         float blockFriction = s.onGround ? belowAffecting(s).friction : 1.0F;
         float friction = blockFriction * 0.91F;
         float speed = s.onGround
             ? (s.sprinting ? body.sprintSpeed : body.walkSpeed) * (0.21600002F / (blockFriction * blockFriction * blockFriction))
             : (s.sprinting ? 0.025999999F : 0.02F);
         moveRelative(s, speed);
+        if (onClimbable(s)) {   // handleOnClimbable
+            s.fallDistance = 0.0;
+            s.vx = GameMath.clamp(s.vx, -0.15F, 0.15F);
+            s.vz = GameMath.clamp(s.vz, -0.15F, 0.15F);
+            s.vy = Math.max(s.vy, -0.15F);
+            if (s.vy < 0.0 && (keys & MoveState.SHIFT) != 0) s.vy = 0.0;   // sneaking holds you on the ladder
+        }
         move(s, keys);
+        if ((s.horizontalCollision || jumping) && onClimbable(s)) s.vy = 0.2;
         double movementY = s.vy - body.gravity;
         s.vx = s.vx * friction;
         s.vy = movementY * 0.98F;
         s.vz = s.vz * friction;
-        touchedBlocks(s);
+    }
 
-        // ---- Player.tick: updatePlayerPose (the box for the next tick)
-        boolean wantCrouch = (keys & MoveState.SHIFT) != 0;
-        if (canFit(s, wantCrouch)) s.crouchPose = wantCrouch;
-        else if (canFit(s, true)) s.crouchPose = true;
-        else s.touched |= BlockInfo.SPECIAL;   // the game would make you swim (crawl): not copied
+    /** LivingEntity.travelInFluid and travelInWater, getFluidFallingAdjustedMovement and jumpOutOfFluid. */
+    private void travelInWater(MoveState s, int keys) {
+        boolean isFalling = s.vy <= 0.0;
+        double oldY = s.y;
+        float slowDown = s.sprinting ? 0.9F : 0.8F;
+        float speed = 0.02F;
+        float waterWalker = body.waterMovementEfficiency;
+        if (!s.onGround) waterWalker *= 0.5F;
+        if (waterWalker > 0.0F) {
+            slowDown += (0.54600006F - slowDown) * waterWalker;
+            speed += ((s.sprinting ? body.sprintSpeed : body.walkSpeed) - speed) * waterWalker;
+        }
+        if (body.dolphinsGrace) slowDown = 0.96F;
+        moveRelative(s, speed);
+        move(s, keys);
+        if (s.horizontalCollision && onClimbable(s)) s.vy = 0.2;
+        s.vx = s.vx * slowDown;
+        s.vy = s.vy * 0.8F;
+        s.vz = s.vz * slowDown;
+        if (body.gravity != 0.0 && !s.sprinting) {
+            if (isFalling && Math.abs(s.vy - 0.005) >= 0.003 && Math.abs(s.vy - body.gravity / 16.0) < 0.003) s.vy = -0.003;
+            else s.vy = s.vy - body.gravity / 16.0;
+        }
+        if (s.horizontalCollision && isFree(s, s.vx, s.vy + 0.6F - s.y + oldY, s.vz)) s.vy = 0.3F;
+    }
 
-        s.lastKeys = keys;
-        s.lastMoveForward = my;
+    /** LivingEntity.onClimbable: the block at the feet is climbable (scaffolding left out). */
+    public boolean onClimbable(MoveState s) {
+        return grid.get(GameMath.floor(s.x), GameMath.floor(s.y), GameMath.floor(s.z)).is(BlockInfo.CLIMBABLE);
+    }
+
+    /** Entity.getEyeHeight in the pose now. */
+    private float eyeHeight(MoveState s) {
+        return s.swimPose || s.glidePose ? body.swimEyeHeight : s.crouchPose ? body.crouchEyeHeight : body.eyeHeight;
+    }
+
+    /**
+     * Entity.updateFluidInteraction for water (EntityFluidInteraction.update over the box shrunk by 0.001): how far
+     * water reaches above the feet, whether the eyes are in it, in water at all; the fall distance reset in water.
+     * Lava is marked as a hazard and flowing water as a current not copied (still water has none).
+     */
+    void updateFluid(MoveState s) {
+        makeBox(s, box);
+        double minX = box[0] + 0.001, minY = box[1] + 0.001, minZ = box[2] + 0.001;
+        double maxX = box[3] - 0.001, maxY = box[4] - 0.001, maxZ = box[5] - 0.001;
+        int x0 = GameMath.floor(minX), y0 = GameMath.floor(minY), z0 = GameMath.floor(minZ);
+        int x1 = (int) Math.ceil(maxX) - 1, y1 = (int) Math.ceil(maxY) - 1, z1 = (int) Math.ceil(maxZ) - 1;
+        double entityY = box[1];
+        int eyeX = GameMath.floor(s.x), eyeZ = GameMath.floor(s.z);
+        double eyeY = s.y + eyeHeight(s);
+        double height = 0.0;
+        boolean eyes = false;
+        for (int x = x0; x <= x1; x++)
+            for (int y = y0; y <= y1; y++)
+                for (int z = z0; z <= z1; z++) {
+                    BlockInfo b = grid.get(x, y, z);
+                    if (b.fluid == BlockInfo.NO_FLUID) continue;
+                    double bottom = y;
+                    double top = bottom + fluidHeightAt(x, y, z, b);
+                    if (top < minY) continue;
+                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; continue; }
+                    if (x == eyeX && z == eyeZ && eyeY >= bottom && eyeY <= top) eyes = true;
+                    height = Math.max(top - entityY, height);
+                    if (b.is(BlockInfo.CURRENT)) s.touched |= BlockInfo.SPECIAL | BlockInfo.UNCOPIED;
+                }
+        s.waterHeight = height;
+        s.eyesInWater = eyes;
+        s.inWater = height > 0.0;
+        if (s.inWater) s.fallDistance = 0.0;
+    }
+
+    /** FlowingFluid.getHeight: 1 where the same fluid is above, else its own height. */
+    private float fluidHeightAt(int x, int y, int z, BlockInfo b) {
+        return grid.get(x, y + 1, z).fluid == b.fluid ? 1.0F : b.fluidHeight;
+    }
+
+    /** Entity.isFree: the box moved by (dx, dy, dz) meets no block and no fluid (LevelReader.containsAnyLiquid). */
+    private boolean isFree(MoveState s, double dx, double dy, double dz) {
+        makeBox(s, box);
+        double[] b = {box[0] + dx, box[1] + dy, box[2] + dz, box[3] + dx, box[4] + dy, box[5] + dz};
+        grid.collect(b, cols2);
+        if (cols2.n != 0) return false;
+        int x0 = GameMath.floor(b[0]), x1 = (int) Math.ceil(b[3]), y0 = GameMath.floor(b[1]), y1 = (int) Math.ceil(b[4]);
+        int z0 = GameMath.floor(b[2]), z1 = (int) Math.ceil(b[5]);
+        for (int x = x0; x < x1; x++)
+            for (int y = y0; y < y1; y++)
+                for (int z = z0; z < z1; z++)
+                    if (grid.get(x, y, z).fluid != BlockInfo.NO_FLUID) return false;
+        return true;
     }
 
     private static float impulse(boolean positive, boolean negative) {
@@ -203,8 +426,9 @@ public final class GroundPhysics {
         s.onGround = below;
         checkSupportingBlock(s, below, mxv, mzv);
         s.minorHorizontalCollision = s.horizontalCollision && isHorizontalCollisionMinor(mxv, mzv);
-        // checkFallDamage (Entity's; not in water)
-        if (myv < 0.0) s.fallDistance -= (float) myv;
+        // checkFallDamage: LivingEntity's looks at the water again first when not in it, then Entity's counts the fall
+        if (!s.inWater) updateFluid(s);
+        if (!s.inWater && myv < 0.0) s.fallDistance -= (float) myv;
         if (s.onGround) s.fallDistance = 0.0;
         if (s.horizontalCollision) {
             if (xCollision) s.vx = 0.0;
@@ -212,7 +436,7 @@ public final class GroundPhysics {
         }
         if (dy != myv) {   // Block.updateEntityMovementAfterFallOn on the block under the feet (getOnPosLegacy)
             BlockInfo on = blockAt(onPos(s, 0.2F));
-            if (on.is(BlockInfo.SPECIAL)) s.touched |= BlockInfo.SPECIAL;   // slime and beds bounce
+            if (on.is(BlockInfo.SPECIAL)) s.touched |= uncopied(on.flags) & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);   // slime and beds bounce
             s.vy = s.vy * 0.0;
         }
         float f = blockSpeedFactor(s);
@@ -373,8 +597,8 @@ public final class GroundPhysics {
     }
 
     /** Player.canPlayerFitWithinBlocksAndEntitiesWhen(pose): no block in the pose's box, shrunk by 1e-7. */
-    private boolean canFit(MoveState s, boolean crouch) {
-        float w = body.width / 2.0F, h = crouch ? body.crouchHeight : body.height;
+    private boolean canFit(MoveState s, int pose) {
+        float w = body.width / 2.0F, h = pose == POSE_SWIM || pose == POSE_GLIDE ? body.swimHeight : pose == POSE_CROUCH ? body.crouchHeight : body.height;
         double[] b = {s.x - w + 1.0E-7, s.y + 1.0E-7, s.z - w + 1.0E-7, s.x + w - 1.0E-7, s.y + h - 1.0E-7, s.z + w - 1.0E-7};
         grid.collect(b, cols2);
         return cols2.n == 0;
@@ -421,6 +645,12 @@ public final class GroundPhysics {
     }
 
     /** Flags of the blocks the box is in or stands on, for the planner. */
+    /** A block's flags, with UNCOPIED added for movement the copy leaves out (SPECIAL but not a ladder or vine, which
+     *  are copied now; the combat model still reads SPECIAL as before). */
+    private static int uncopied(int f) {
+        return (f & BlockInfo.SPECIAL) != 0 && (f & BlockInfo.CLIMBABLE) == 0 ? f | BlockInfo.UNCOPIED : f;
+    }
+
     private void touchedBlocks(MoveState s) {
         makeBox(s, box);
         int xa = GameMath.floor(box[0] + 1.0E-5), xb = GameMath.floor(box[3] - 1.0E-5);
@@ -429,9 +659,9 @@ public final class GroundPhysics {
         int t = 0;
         for (int x = xa; x <= xb; x++)
             for (int y = ya; y <= yb; y++)
-                for (int z = za; z <= zb; z++) t |= grid.get(x, y, z).flags;
-        if (s.onGround) t |= blockAt(onPos(s, 0.2F)).flags & (BlockInfo.HAZARD | BlockInfo.SPECIAL);
-        s.touched |= t & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.FLUID);
+                for (int z = za; z <= zb; z++) t |= uncopied(grid.get(x, y, z).flags);
+        if (s.onGround) t |= uncopied(blockAt(onPos(s, 0.2F)).flags) & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
+        s.touched |= t & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.FLUID | BlockInfo.UNCOPIED);
     }
 
     /**
@@ -456,7 +686,7 @@ public final class GroundPhysics {
 
     /** EntityDimensions.makeBoundingBox at the state's position and pose. */
     void makeBox(MoveState s, double[] b) {
-        float w = body.width / 2.0F, h = s.crouchPose ? body.crouchHeight : body.height;
+        float w = body.width / 2.0F, h = s.swimPose || s.glidePose ? body.swimHeight : s.crouchPose ? body.crouchHeight : body.height;
         b[0] = s.x - w; b[1] = s.y; b[2] = s.z - w;
         b[3] = s.x + w; b[4] = s.y + h; b[5] = s.z + w;
     }

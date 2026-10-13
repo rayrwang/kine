@@ -74,6 +74,18 @@ public final class PathSearch {
         index.defaultReturnValue(-1);
     }
 
+    /** Offer glides off drops (layer 2 with elytra hops on and a glider worn). */
+    public PathSearch glides(boolean b) {
+        graph.glides = b;
+        return this;
+    }
+
+    /** Offer jumps over gaps (layer 2 only). */
+    public PathSearch gaps(boolean b) {
+        graph.gaps = b;
+        return this;
+    }
+
     public PathSearch canSprint(boolean b) {
         graph.canSprint = b;
         return this;

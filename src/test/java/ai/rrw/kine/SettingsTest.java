@@ -162,15 +162,22 @@ class SettingsTest {
         assertTrue(Settings.walkPathDisplay);
         assertTrue(Settings.walkSearchDisplay);
         assertEquals(20, Settings.walkMargin, "0.20 blocks");
+        // layer 2 (the movement search) and its display on: it presses only the game's own keys
+        assertTrue(Settings.walkLayer2);
+        assertTrue(Settings.walkLayer2Display);
+        // elytra hops off: they wear the elytra (RW's scope ruling: "hops off by default")
+        assertFalse(Settings.walkElytraHops);
         assertTrue(Settings.WALK_MARGIN.isLevel());
         for (Settings.Option o : new Settings.Option[]{Settings.WALK_PATHFINDER, Settings.WALK_PATH_DISPLAY,
-                Settings.WALK_SEARCH_DISPLAY, Settings.WALK_MARGIN})
+                Settings.WALK_SEARCH_DISPLAY, Settings.WALK_MARGIN, Settings.WALK_LAYER2, Settings.WALK_LAYER2_DISPLAY,
+                Settings.WALK_ELYTRA_HOPS})
             assertEquals(Settings.Section.WALK, o.section);
         // the section switch and the all-features switch reach every one, each keeping its own setting
         Settings.setSectionOn(Settings.Section.WALK, false);
         assertFalse(Settings.walkPathfinder);
         assertFalse(Settings.walkPathDisplay);
         assertFalse(Settings.walkSearchDisplay);
+        assertFalse(Settings.walkLayer2);
         assertEquals(0, Settings.walkMargin);
         assertEquals(1, Settings.WALK_PATHFINDER.value());
         Settings.setSectionOn(Settings.Section.WALK, true);

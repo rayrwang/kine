@@ -70,12 +70,18 @@ public final class Planner {
 
     private static long ids = 0;
 
-    /** Start a job: from floor `start` to column (gx, gz). */
-    public static Job plan(View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint, long budgetNanos) {
+    /** Start a job: from floor `start` to column (gx, gz); with gap jumps when layer 2 will walk it. */
+    public static Job plan(View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint, boolean gaps,
+                           long budgetNanos) {
+        return plan(view, start, gx, gz, costs, margin, canSprint, gaps, false, budgetNanos);
+    }
+
+    public static Job plan(View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint, boolean gaps,
+                           boolean glides, long budgetNanos) {
         Job job = new Job(++ids);
         WORKER.submit(() -> {
             try {
-                run(job, view, start, gx, gz, costs, margin, canSprint, budgetNanos);
+                run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budgetNanos);
             } catch (Throwable t) {
                 Kine.LOGGER.warn("Kine walk: search failed", t);
                 job.failure = "search error";
@@ -88,9 +94,9 @@ public final class Planner {
     }
 
     private static void run(Job job, View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint,
-                            long budget) {
+                            boolean gaps, boolean glides, long budget) {
         long t0 = System.nanoTime(), deadline = t0 + budget;
-        PathSearch search = new PathSearch(view, costs).canSprint(canSprint);
+        PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(gaps).glides(glides);
         double bestCost = Double.MAX_VALUE;
         int prevExpanded = 0;
         for (int pass = 0; pass < WEIGHTS.length && !job.cancelled; pass++) {

@@ -21,9 +21,24 @@ import java.util.Locale;
 public final class Traces {
     private Traces() {}
 
-    /** One tick as the game played it. */
+    /** One tick as the game played it: keys, rotation sent, the state after it (older files have no pitch and no
+     *  water flags: pitch 0, flags not compared). */
     public record Tick(int keys, float yaw, double x, double y, double z, double vx, double vy, double vz,
-                       boolean onGround, boolean sprinting) {}
+                       boolean onGround, boolean sprinting, float pitch, int water) {
+        public Tick(int keys, float yaw, double x, double y, double z, double vx, double vy, double vz, boolean onGround,
+                    boolean sprinting) {
+            this(keys, yaw, x, y, z, vx, vy, vz, onGround, sprinting, 0.0F, -1);
+        }
+        /** The water flags packed (in water 1, swimming 2, swimming pose 4, eyes in water 8), -1 when not recorded. */
+        public static int water(boolean inWater, boolean swimming, boolean swimPose, boolean eyes) {
+            return (inWater ? 1 : 0) | (swimming ? 2 : 0) | (swimPose ? 4 : 0) | (eyes ? 8 : 0);
+        }
+
+        /** The water flags and the glide's (gliding 16, the glide pose 32), with 64 to say the glide's are recorded. */
+        public static int flags(MoveState s) {
+            return water(s.inWater, s.swimming, s.swimPose, s.eyesInWater) | (s.fallFlying ? 16 : 0) | (s.glidePose ? 32 : 0) | 64;
+        }
+    }
 
     /** A run: the state it started from and its ticks. */
     public record Run(String name, MoveState start, List<Tick> ticks) {}
@@ -40,13 +55,15 @@ public final class Traces {
         int flag = -1, worst = -1;
         for (int i = 0; i < run.ticks().size(); i++) {
             Tick t = run.ticks().get(i);
-            phys.step(s, t.keys(), t.yaw());
+            phys.step(s, t.keys(), t.yaw(), t.pitch());
             double dp = Math.max(Math.abs(s.x - t.x()), Math.max(Math.abs(s.y - t.y()), Math.abs(s.z - t.z())));
             double dv = Math.max(Math.abs(s.vx - t.vx()), Math.max(Math.abs(s.vy - t.vy()), Math.abs(s.vz - t.vz())));
             if (dp > pos || dv > vel) worst = i;
             pos = Math.max(pos, dp);
             vel = Math.max(vel, dv);
-            if (flag < 0 && (s.onGround != t.onGround() || s.sprinting != t.sprinting())) flag = i;
+            int mask = (t.water() & 64) != 0 ? 0x7F : 0x0F;
+            boolean waterDiff = t.water() >= 0 && (Tick.flags(s) & mask) != (t.water() & mask);
+            if (flag < 0 && (s.onGround != t.onGround() || s.sprinting != t.sprinting() || waterDiff)) flag = i;
         }
         return new Diff(pos, vel, flag, worst);
     }
@@ -57,6 +74,9 @@ public final class Traces {
         w.printf(Locale.ROOT, "body %s %s %s %s %s %s %s %s %s %s %s %s %d %s %s%n", f(b.walkSpeed), f(b.sprintSpeed), f(b.sneakSpeed),
             f(b.jumpStrength), f(b.jumpBoost), d(b.gravity), f(b.stepHeight), f(b.movementEfficiency), f(b.width), f(b.height),
             f(b.crouchHeight), b.canSprint, b.sprintWindow, b.canGlide, d(b.knockbackResistance));
+        w.printf(Locale.ROOT, "body2 %s %s %s %s %s %b%n", f(b.swimHeight), f(b.eyeHeight), f(b.crouchEyeHeight), f(b.swimEyeHeight),
+            f(b.waterMovementEfficiency), b.dolphinsGrace);
+        w.printf(Locale.ROOT, "body3 %b %d%n", b.glide, b.glideLandTicks);
         w.printf(Locale.ROOT, "grid %d %d %d %d %d %d%n", g.x0, g.y0, g.z0, g.nx, g.ny, g.nz);
         List<BlockInfo> kinds = g.kinds();
         for (int i = 0; i < kinds.size(); i++) {
@@ -78,6 +98,7 @@ public final class Traces {
                 for (boolean x : s.full) sb.append(x ? '1' : '0');
             }
             w.println(sb);
+            if (k.fluid != BlockInfo.NO_FLUID) w.printf(Locale.ROOT, "fluid %d %d %s%n", i, k.fluid, f(k.fluidHeight));
         }
         StringBuilder cells = new StringBuilder("cells");
         int last = -2, count = 0;
@@ -99,11 +120,18 @@ public final class Traces {
             d(s.x), d(s.y), d(s.z), d(s.vx), d(s.vy), d(s.vz), s.onGround, s.horizontalCollision, s.minorHorizontalCollision,
             s.sprinting, s.crouching, s.crouchPose, s.sprintTriggerTime, s.noJumpDelay, d(s.fallDistance), s.hasSupport,
             s.onGroundNoBlocks, s.supX, s.supY, s.supZ, s.lastKeys, f(s.lastMoveForward));
+        w.printf(Locale.ROOT, "start2 %b %b %b %b %s%n", s.swimPose, s.swimming, s.inWater, s.eyesInWater, d(s.waterHeight));
+        w.printf(Locale.ROOT, "start3 %b %b %d%n", s.fallFlying, s.glidePose, s.glideGroundTicks);
     }
 
     public static void writeTick(PrintWriter w, Tick t) {
-        w.printf(Locale.ROOT, "tick %d %s %s %s %s %s %s %s %b %b%n", t.keys(), f(t.yaw()), d(t.x()), d(t.y()), d(t.z()),
-            d(t.vx()), d(t.vy()), d(t.vz()), t.onGround(), t.sprinting());
+        if (t.water() < 0) {
+            w.printf(Locale.ROOT, "tick %d %s %s %s %s %s %s %s %b %b%n", t.keys(), f(t.yaw()), d(t.x()), d(t.y()), d(t.z()),
+                d(t.vx()), d(t.vy()), d(t.vz()), t.onGround(), t.sprinting());
+        } else {
+            w.printf(Locale.ROOT, "tick %d %s %s %s %s %s %s %s %b %b %s %d%n", t.keys(), f(t.yaw()), d(t.x()), d(t.y()), d(t.z()),
+                d(t.vx()), d(t.vy()), d(t.vz()), t.onGround(), t.sprinting(), f(t.pitch()), t.water());
+        }
     }
 
     // exact text: the bits of the double or float in hex, so nothing is lost
@@ -153,6 +181,31 @@ public final class Traces {
                         ? BlockInfo.AIR : new BlockInfo(s, pf(p[2]), pf(p[3]), pf(p[4]), Integer.parseInt(p[5]));
                     kinds.add(b);
                 }
+                case "fluid" -> {
+                    int i = Integer.parseInt(p[1]);
+                    BlockInfo k = kinds.get(i);
+                    kinds.set(i, new BlockInfo(k.shape, k.friction, k.speedFactor, k.jumpFactor, k.flags,
+                        Integer.parseInt(p[2]), pf(p[3])));
+                }
+                case "body2" -> {
+                    body.swimHeight = pf(p[1]); body.eyeHeight = pf(p[2]); body.crouchEyeHeight = pf(p[3]);
+                    body.swimEyeHeight = pf(p[4]); body.waterMovementEfficiency = pf(p[5]);
+                    body.dolphinsGrace = Boolean.parseBoolean(p[6]);
+                }
+                case "body3" -> {
+                    body.glide = Boolean.parseBoolean(p[1]); body.glideLandTicks = Integer.parseInt(p[2]);
+                }
+                case "start3" -> {
+                    MoveState s = run.start();
+                    s.fallFlying = Boolean.parseBoolean(p[1]); s.glidePose = Boolean.parseBoolean(p[2]);
+                    s.glideGroundTicks = Integer.parseInt(p[3]);
+                }
+                case "start2" -> {
+                    MoveState s = run.start();
+                    s.swimPose = Boolean.parseBoolean(p[1]); s.swimming = Boolean.parseBoolean(p[2]);
+                    s.inWater = Boolean.parseBoolean(p[3]); s.eyesInWater = Boolean.parseBoolean(p[4]);
+                    s.waterHeight = pd(p[5]);
+                }
                 case "cells" -> {
                     int idx = 0;
                     for (int j = 1; j < p.length; j++) {
@@ -177,7 +230,8 @@ public final class Traces {
                     s.lastKeys = Integer.parseInt(p[21]); s.lastMoveForward = pf(p[22]);
                 }
                 case "tick" -> run.ticks().add(new Tick(Integer.parseInt(p[1]), pf(p[2]), pd(p[3]), pd(p[4]), pd(p[5]), pd(p[6]),
-                    pd(p[7]), pd(p[8]), Boolean.parseBoolean(p[9]), Boolean.parseBoolean(p[10])));
+                    pd(p[7]), pd(p[8]), Boolean.parseBoolean(p[9]), Boolean.parseBoolean(p[10]),
+                    p.length > 11 ? pf(p[11]) : 0.0F, p.length > 12 ? Integer.parseInt(p[12]) : -1));
                 default -> {}
             }
         }

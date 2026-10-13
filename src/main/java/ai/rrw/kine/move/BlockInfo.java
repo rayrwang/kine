@@ -26,17 +26,38 @@ public final class BlockInfo {
      *  scaffolding and powder snow (shape depends on the player), bubble columns, portals. */
     public static final int SPECIAL = 128;
 
+    /** A climbable block (BlockTags.CLIMBABLE, scaffolding aside): LivingEntity.onClimbable. Also SPECIAL, as before,
+     *  for the combat model, which leaves climbing out. */
+    public static final int CLIMBABLE = 256;
+    /** Water that may flow (not a source, or falling): its current is not copied, a plan touching it is marked. */
+    public static final int CURRENT = 512;
+    /** Only in MoveState.touched: the plan met movement the copy leaves out (a current, slime, honey, cobwebs,
+     *  scaffolding, the edge of the snapshot), as SPECIAL but without ladders and vines, which are copied now. */
+    public static final int UNCOPIED = 1024;
+
+    /** The fluid in the block (FluidState): none, water or lava; and its own height (FluidState.getOwnHeight: amount /
+     *  9, a source 8/9). The height the player meets is 1 where the same fluid is above (FlowingFluid.getHeight). */
+    public static final int NO_FLUID = 0, WATER_FLUID = 1, LAVA_FLUID = 2;
+    public final int fluid;
+    public final float fluidHeight;
+
     public static final BlockInfo AIR = new BlockInfo(Shape.EMPTY, 0.6F, 1.0F, 1.0F, 0);
     /** Outside the snapshot: solid, so nothing walks off the known world, and flagged so a plan that reaches it is
      *  marked. */
     public static final BlockInfo UNKNOWN = new BlockInfo(Shape.BLOCK, 0.6F, 1.0F, 1.0F, SPECIAL);
 
     public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags) {
+        this(shape, friction, speedFactor, jumpFactor, flags, NO_FLUID, 0.0F);
+    }
+
+    public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags, int fluid, float fluidHeight) {
         this.shape = shape;
         this.friction = friction;
         this.speedFactor = speedFactor;
         this.jumpFactor = jumpFactor;
         this.flags = flags;
+        this.fluid = fluid;
+        this.fluidHeight = fluidHeight;
     }
 
     /** Whether it has any of these flags. */

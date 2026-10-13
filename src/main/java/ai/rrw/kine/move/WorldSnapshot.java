@@ -92,7 +92,13 @@ public final class WorldSnapshot {
                 || st.is(Blocks.COBWEB) || st.is(Blocks.SCAFFOLDING) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.BUBBLE_COLUMN)
                 || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL) || st.is(Blocks.END_GATEWAY))
                 flags |= BlockInfo.SPECIAL;
-            return new BlockInfo(shape, b.getFriction(), b.getSpeedFactor(), b.getJumpFactor(), flags);
+            if (st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= BlockInfo.CLIMBABLE;
+            var fs = st.getFluidState();
+            int fluid = fs.isEmpty() ? BlockInfo.NO_FLUID : fs.is(net.minecraft.tags.FluidTags.WATER) ? BlockInfo.WATER_FLUID
+                : fs.is(net.minecraft.tags.FluidTags.LAVA) ? BlockInfo.LAVA_FLUID : BlockInfo.NO_FLUID;
+            if (fluid != BlockInfo.NO_FLUID && !fs.isSource()) flags |= BlockInfo.CURRENT;
+            return new BlockInfo(shape, b.getFriction(), b.getSpeedFactor(), b.getJumpFactor(), flags, fluid,
+                fluid == BlockInfo.NO_FLUID ? 0.0F : fs.getOwnHeight());
         });
     }
 
@@ -150,6 +156,12 @@ public final class WorldSnapshot {
         for (EquipmentSlot slot : EquipmentSlot.VALUES) glider |= LivingEntity.canGlideUsing(p.getItemBySlot(slot), slot);
         b.canGlide = glider;
         b.knockbackResistance = p.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE);
+        b.swimHeight = p.getDimensions(Pose.SWIMMING).height();
+        b.eyeHeight = p.getDimensions(Pose.STANDING).eyeHeight();
+        b.crouchEyeHeight = p.getDimensions(Pose.CROUCHING).eyeHeight();
+        b.swimEyeHeight = p.getDimensions(Pose.SWIMMING).eyeHeight();
+        b.waterMovementEfficiency = (float) p.getAttributeValue(Attributes.WATER_MOVEMENT_EFFICIENCY);
+        b.dolphinsGrace = p.hasEffect(MobEffects.DOLPHINS_GRACE);
         return b;
     }
 
@@ -165,6 +177,13 @@ public final class WorldSnapshot {
         s.sprinting = p.isSprinting();
         s.crouching = p.isCrouching();
         s.crouchPose = p.getPose() == Pose.CROUCHING;
+        s.swimPose = p.getPose() == Pose.SWIMMING;
+        s.swimming = p.isSwimming();
+        s.inWater = p.isInWater();
+        s.eyesInWater = p.isEyeInFluid(net.minecraft.tags.FluidTags.WATER);
+        s.waterHeight = p.getFluidHeight(net.minecraft.tags.FluidTags.WATER);
+        s.fallFlying = p.isFallFlying();
+        s.glidePose = p.getPose() == Pose.FALL_FLYING;
         s.sprintTriggerTime = ((MoveLocalPlayerAccessor) p).kine$sprintTriggerTime();
         s.noJumpDelay = ((MoveLivingAccessor) p).kine$noJumpDelay();
         s.fallDistance = p.fallDistance;

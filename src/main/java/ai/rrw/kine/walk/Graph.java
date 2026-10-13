@@ -19,17 +19,17 @@ package ai.rrw.kine.walk;
  *   <li>JUMP: straight up onto a floor more than a step and at most 1.25 above;</li>
  *   <li>WATER_IN, SWIM, WATER_OUT: into deep water from a bank (any height), across its top with jump held, and out
  *       onto a bank at most a quarter block above the water's top;</li>
- *   <li>CLIMB_ON, CLIMB_UP, CLIMB_DOWN, CLIMB_OFF: walking into a ladder, up and down it, and off it sideways or at
- *       its top;</li>
+ *   <li>CLIMB_ON, CLIMB_UP, CLIMB_DOWN, CLIMB_OFF: walking (or swimming) into a ladder, up and down it, and off it
+ *       sideways or at its top;</li>
  *   <li>EXIT: from a floor at the edge of what is loaded to a goal beyond it, the rest charged as a straight sprint
  *       over open ground.</li>
  * </ul>
  */
 final class Graph {
     static final int WALK = 0, WADE = 1, DROP = 2, JUMP = 3, WATER_IN = 4, SWIM = 5, WATER_OUT = 6,
-        CLIMB_ON = 7, CLIMB_UP = 8, CLIMB_DOWN = 9, CLIMB_OFF = 10, EXIT = 11, START = 12;
+        CLIMB_ON = 7, CLIMB_UP = 8, CLIMB_DOWN = 9, CLIMB_OFF = 10, EXIT = 11, START = 12, GAP = 13, GLIDE = 14;
     static final String[] NAMES = {"walk", "wade", "drop", "jump", "water-in", "swim", "water-out",
-        "climb-on", "climb-up", "climb-down", "climb-off", "exit", "start"};
+        "climb-on", "climb-up", "climb-down", "climb-off", "exit", "start", "gap", "glide"};
 
     // 8 neighbours, then 8 knight's moves
     static final int[] DX = {1, 0, -1, 0, 1, -1, -1, 1, 1, 2, 2, 1, -1, -2, -2, -1};
@@ -43,6 +43,11 @@ final class Graph {
     final Costs c;
     final Sweep sweep;
     boolean canSprint = true;
+    /** Offer jumps over gaps (GAP): only when layer 2 walks, which finds how to make them in the movement copy; the
+     *  layer 1 follower has no way to. */
+    boolean gaps = false;
+    /** Offer glides off drops with an elytra (layer 2 with elytra hops on, a glider worn). */
+    boolean glides = false;
     /** The goal column, and whether the goal lies beyond the loaded area (then edge floors get an EXIT move). */
     int goalX, goalZ;
     boolean goalUnknown;
@@ -128,6 +133,8 @@ final class Graph {
                 }
             }
         }
+        if (gaps && type == ChunkFloors.GROUND) gapMoves(a, ai, x, z);
+        if (glides && type == ChunkFloors.GROUND) glideMoves(a, ai, x, z);
         if (edge && goalUnknown) {
             double gx = goalX + 0.5 - (x + 0.5), gz = goalZ + 0.5 - (z + 0.5);
             add(Long.MIN_VALUE, Math.sqrt(gx * gx + gz * gz) * c.sprint, EXIT);
@@ -199,6 +206,12 @@ final class Graph {
             if (!plain(b, bj)) return;
             if (dh > 0 && a.cellTop(ai) + a.cellClear(ai) < bh + H - 1e-4) return;
             add(target, len * c.water + c.jumpPenalty, WATER_OUT);
+        } else if (btype == ChunkFloors.CLIMB && straight) {
+            // onto a ladder from the water (out of a channel whose banks are too high to climb out onto): a rung at
+            // most a quarter block above the water's top and at most one below it
+            if (dh > 0.25 + 1e-5 || dh < -1.0 - 1e-5) return;
+            if (bh + b.head(bj) < Math.max(ah, bh) + H - 1e-4) return;
+            add(target, len * c.water + c.jumpPenalty, CLIMB_ON);
         }
     }
 
@@ -218,6 +231,133 @@ final class Graph {
         if (ah + a.head(ai) < top + H - 1e-4) return;
         if (b.head(bj) < H - 1e-4 || !plain(b, bj)) return;
         add(target, c.walk + (dh > STEP ? c.jumpPenalty : 0), CLIMB_OFF);
+    }
+
+    /** The widest gap jumped (empty columns between the two floors), on the level or down; one less going up. */
+    static final int GAP_MAX = 3;
+    /** Room above the take-off, the gap and the landing for the jump's arc (the feet rise 1.25 at most). */
+    static final double ARC = H + 1.25;
+
+    /**
+     * GAP: straight over 1 to GAP_MAX columns with no floor to walk on at this height (a pit, a ravine, lava, a
+     * channel) to a plain floor from 2 below to 1 above (a block up over a gap of at most 2), with room for the jump's
+     * arc all the way. Whether and how it can be made (a run-up, a sprint-jump at the edge) is layer 2's to find in the
+     * movement copy; the cost is the sprint over the distance and a jump's penalty.
+     */
+    private void gapMoves(ChunkFloors a, int ai, int x, int z) {
+        if (!plain(a, ai)) return;
+        float ah = a.h(ai);
+        if (a.cellTop(ai) + a.cellClear(ai) < ah + ARC - 1e-4) return;
+        for (int d = 0; d < 4; d++) {
+            for (int k = 1; k <= GAP_MAX + 1; k++) {
+                int cx = x + DX[d] * k, cz = z + DZ[d] * k;
+                ChunkFloors b = v.chunk(cx, cz);
+                if (b == null) break;
+                int lx = cx & 15, lz = cz & 15, cnt = b.count(lx, lz);
+                if (k >= 2) {
+                    // a landing in this column?
+                    boolean landed = false;
+                    for (int j = 0; j < cnt; j++) {
+                        int bj = b.index(lx, lz, j);
+                        if (b.type(bj) != ChunkFloors.GROUND || !plain(b, bj)) continue;
+                        float bh = b.h(bj), dh = bh - ah;
+                        if (dh < -2.0 - 1e-4 || dh > 1.0 + 1e-4) continue;
+                        if (dh > STEP && k - 1 > GAP_MAX - 1) continue;
+                        if ((b.flags(bj) & ChunkFloors.WADE) != 0) continue;
+                        if (b.cellTop(bj) + b.cellClear(bj) < Math.max(ah, bh) + H - 1e-4) continue;
+                        if (b.head(bj) < H - 1e-4) continue;
+                        add(View.node(cx, cz, j), k * c.sprint + c.gapPenalty + hazardCost(b, bj, cx, cz), GAP);
+                        landed = true;
+                    }
+                    if (landed) break;
+                }
+                if (k > GAP_MAX) break;
+                // this column is crossed in the air: nothing to walk on near this height, and room for the arc
+                if (!gapColumn(b, lx, lz, cx, cz, ah)) break;
+            }
+        }
+    }
+
+    /** A column jumped over: no floor within a step of the take-off's height, and free of collisions, water and
+     *  hazards from the take-off's height to the top of the arc. */
+    private boolean gapColumn(ChunkFloors b, int lx, int lz, int cx, int cz, float ah) {
+        int cnt = b.count(lx, lz);
+        // free from the take-off's height to the arc's top: inside the free space over one of its floors, or a column
+        // with no floor at all (nothing in it to stand on anywhere: open to the void)
+        boolean free = cnt == 0;
+        for (int j = 0; j < cnt; j++) {
+            int bj = b.index(lx, lz, j);
+            float h = b.h(bj);
+            if (Math.abs(h - ah) <= STEP + 1e-5) return false;
+            if (b.type(bj) == ChunkFloors.SWIM && h > ah - 1e-4) return false;
+            if (b.type(bj) == ChunkFloors.CLIMB) continue;
+            if (b.cellTop(bj) <= ah + 1e-4 && b.cellTop(bj) + b.cellClear(bj) >= ah + ARC - 1e-4) free = true;
+        }
+        if (!free) return false;
+        return !v.hazardIn(cx, cz, (int) Math.floor(ah + 1e-4), (int) Math.floor(ah + ARC - 1e-4));
+    }
+
+    /** How far a glide is offered, blocks; and the least drop for one (less is a drop or a gap's job). */
+    static final double GLIDE_REACH = 24.0, GLIDE_MIN_DROP = 2.0;
+
+    /**
+     * GLIDE (elytra hops on): off an edge with a drop of more than a safe fall in front, along one of the eight
+     * directions, to a plain floor at least 2 below and within reach of a glide: no farther than 2 + 2.5 times the drop
+     * (measured on the copy: from 30 up a glide carries over 100 blocks; this keeps well inside), over columns whose
+     * floors all lie half a block under the straight line from the take-off to the landing. How (the jump, opening the
+     * glider, the pitch) is layer 2's to find.
+     */
+    private void glideMoves(ChunkFloors a, int ai, int x, int z) {
+        if (!plain(a, ai)) return;
+        float ah = a.h(ai);
+        if (a.cellTop(ai) + a.cellClear(ai) < ah + ARC - 1e-4) return;
+        for (int d = 0; d < 8; d++) {
+            // the first column must fall away: no floor from a safe fall below the take-off up to a jump above it
+            ChunkFloors f = v.chunk(x + DX[d], z + DZ[d]);
+            if (f == null || highestBelow(f, x + DX[d], z + DZ[d], ah + JUMP_MAX) > ah - c.maxFall - 1e-4) continue;
+            for (int k = 2; k * LEN[d] <= GLIDE_REACH; k++) {
+                int cx = x + DX[d] * k, cz = z + DZ[d] * k;
+                ChunkFloors b = v.chunk(cx, cz);
+                if (b == null) break;
+                int lx = cx & 15, lz = cz & 15, cnt = b.count(lx, lz);
+                double dist = k * LEN[d];
+                for (int j = 0; j < cnt; j++) {
+                    int bj = b.index(lx, lz, j);
+                    if (b.type(bj) != ChunkFloors.GROUND || !plain(b, bj)) continue;
+                    float bh = b.h(bj);
+                    double drop = ah - bh;
+                    if (drop < GLIDE_MIN_DROP || dist > 2.0 + 2.5 * drop) continue;
+                    if (b.cellTop(bj) + b.cellClear(bj) < bh + H - 1e-4) continue;
+                    if (!glideClear(x, z, d, k, ah, bh)) continue;
+                    add(View.node(cx, cz, j), c.glideCost(dist) + hazardCost(b, bj, cx, cz), GLIDE);
+                }
+            }
+        }
+    }
+
+    /** The highest floor of column (x, z) at or below `y`, or -infinity. */
+    private static float highestBelow(ChunkFloors c, int x, int z, double y) {
+        int lx = x & 15, lz = z & 15, n = c.count(lx, lz);
+        float best = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < n; i++) {
+            float h = c.h(c.index(lx, lz, i));
+            if (h <= y && h > best) best = h;
+        }
+        return best;
+    }
+
+    /** The columns between take-off and landing all lie half a block under the straight glide line (any floor in
+     *  them, which is the top of whatever stands there). */
+    private boolean glideClear(int x, int z, int d, int k, float ah, float bh) {
+        for (int i = 1; i < k; i++) {
+            int cx = x + DX[d] * i, cz = z + DZ[d] * i;
+            ChunkFloors c = v.chunk(cx, cz);
+            if (c == null) return false;
+            double line = ah + 0.5 - (ah + 0.5 - bh) * i / (double) k;
+            int lx = cx & 15, lz = cz & 15, n = c.count(lx, lz);
+            for (int j = 0; j < n; j++) if (c.h(c.index(lx, lz, j)) > line - 0.5) return false;
+        }
+        return true;
     }
 
     /** A floor whose top covers its cell and whose cell is as free as its middle. */
