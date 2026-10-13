@@ -2,6 +2,8 @@ package ai.rrw.kine.walk;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static ai.rrw.kine.walk.TestWorld.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -54,6 +56,70 @@ public class RailPathTest {
             }
         System.out.printf("KINEMEASURE rails bend: closest a rail comes to the centreline %.2f%n", inner);
         assertTrue(worstTurn < 20, "turns in steps of " + worstTurn);
+        sameWidthAndHeight(rp);
+    }
+
+    /** RW 2026-10-13: the rails always the same distance apart, at one height, never below the centreline. */
+    static void sameWidthAndHeight(RailPath rp) {
+        for (int i = 0; i < rp.n; i++) {
+            assertEquals(2 * RailPath.HALF, rp.leftOff[i] + rp.rightOff[i], 1e-9, "the rails' spacing at " + i);
+            assertEquals(rp.leftY[i], rp.rightY[i], 1e-12, "the rails' heights differ at " + i);
+            assertTrue(rp.leftY[i] >= rp.y[i] - 1e-9, "a rail below the centreline at " + i);
+        }
+    }
+
+    static final Kind SNOW_1 = Palette.add("snow_layer_1", List.of(), 0.6F, 1.0F, 0, 0.125F);
+
+    @Test
+    void theRailsLieOnTheWaterNotOnTheFloorUnderIt() {
+        // water one deep over the floor, right across: the route wades through it
+        TestWorld w = blocks(0, 0, 31, 15).floor(10);
+        w.fill(6, 11, 0, 14, 11, 15, TestWorld.WATER);
+        RailPath rp = rails(w, 1, 7, 24, 7);
+        int on = 0;
+        for (int i = 0; i < rp.n; i++) {
+            if (rp.x[i] < 7 || rp.x[i] > 14) continue;   // a block in from the shores, where the ramp is done
+            on++;
+            assertEquals(11 + 8 / 9.0 + RailPath.LIFT, rp.leftY[i], 1e-6, "rail at " + rp.x[i]);
+            assertEquals(rp.leftY[i], rp.y[i], 1e-6, "centreline at " + rp.x[i]);
+        }
+        assertTrue(on > 10, "points on the water " + on);
+        sameWidthAndHeight(rp);
+    }
+
+    @Test
+    void theRailsLieOnSnowLayersNotOnTheGrassUnderThem() {
+        // one snow layer: no collision, drawn an eighth high
+        TestWorld w = blocks(0, 0, 31, 15).floor(10);
+        w.fill(6, 11, 0, 14, 11, 15, SNOW_1);
+        RailPath rp = rails(w, 1, 7, 24, 7);
+        int on = 0;
+        for (int i = 0; i < rp.n; i++) {
+            if (rp.x[i] < 6.5 || rp.x[i] > 14.5) continue;
+            on++;
+            assertEquals(11.125 + RailPath.LIFT, rp.leftY[i], 1e-6, "rail at " + rp.x[i]);
+        }
+        assertTrue(on > 10, "points on the snow " + on);
+        sameWidthAndHeight(rp);
+    }
+
+    @Test
+    void whereOneSideDropsBothRailsKeepTheHigherSide() {
+        // a raised strip, z from 0 to 8 a block up; a straight route along its edge at z = 7.7 (feet at 12), built by
+        // hand: the left rail (z 7.25) lies over the strip, the right one (z 8.15) over the ground a block lower; both
+        // keep the strip's height
+        TestWorld w = blocks(0, 0, 31, 15).floor(10);
+        w.fill(0, 11, 0, 31, 11, 7, STONE);
+        View v = w.view();
+        Route r = new Route(new double[]{1.5, 28.5}, new double[]{12, 12}, new double[]{7.7, 7.7},
+            new byte[]{(byte) Route.START, (byte) Route.WALK}, 2, false, 28, 7);
+        r.gx = new float[]{1.5F, 28.5F}; r.gy = new float[]{12, 12}; r.gz = new float[]{7.7F, 7.7F}; r.gn = 2;
+        RailPath rp = new RailPath(v, r);
+        assertTrue(rp.n > 100);
+        assertEquals(11, RailPath.surface(v, rp.x[50] - rp.ax[50] * rp.rightOff[50], rp.z[50] - rp.az[50] * rp.rightOff[50], 12), 1e-9,
+            "the right rail is over the low side");
+        for (int i = 0; i < rp.n; i++) assertEquals(12 + RailPath.LIFT, rp.leftY[i], 1e-9, "rail at " + i);
+        sameWidthAndHeight(rp);
     }
 
     @Test
@@ -81,6 +147,7 @@ public class RailPathTest {
         }
         System.out.printf("KINEMEASURE rails stairs: largest rise between neighbouring points %.3f (points %.2f apart)%n", worstStep, RailPath.STEP);
         assertTrue(worstStep <= RailPath.SLOPE * RailPath.STEP * 1.6 + 1e-6, "steps of " + worstStep);
+        sameWidthAndHeight(rp);
     }
 
     @Test

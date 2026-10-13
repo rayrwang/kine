@@ -36,17 +36,22 @@ public final class Palette {
 
     /** A new kind from boxes (tests, stand-ins). */
     public static Kind add(String name, List<double[]> boxes, float friction, float speedFactor, int flags) {
+        return add(name, boxes, friction, speedFactor, flags, Float.NaN);
+    }
+
+    /** The same, drawn up to `drawnTop` (block-local) above its collision (a snow layer's). */
+    public static Kind add(String name, List<double[]> boxes, float friction, float speedFactor, int flags, float drawnTop) {
         synchronized (LOCK) {
-            Kind k = Kind.of(kinds.length, name, boxes, friction, speedFactor, flags);
+            Kind k = Kind.of(kinds.length, name, boxes, friction, speedFactor, flags, drawnTop);
             append(k);
             return k;
         }
     }
 
     /** A new kind from the movement copy's block info and the game shape's boxes (McKinds). */
-    static Kind add(String name, BlockInfo info, List<double[]> boxes, int flags) {
+    static Kind add(String name, BlockInfo info, List<double[]> boxes, int flags, float drawnTop) {
         synchronized (LOCK) {
-            Kind k = new Kind(kinds.length, name, info, boxes, flags);
+            Kind k = new Kind(kinds.length, name, info, boxes, flags, drawnTop);
             append(k);
             return k;
         }

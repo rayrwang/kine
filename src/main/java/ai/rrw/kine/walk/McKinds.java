@@ -3,6 +3,7 @@ package ai.rrw.kine.walk;
 import ai.rrw.kine.move.BlockInfo;
 import ai.rrw.kine.move.WorldSnapshot;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.EmptyBlockGetter;
@@ -71,6 +72,15 @@ public final class McKinds {
         Block b = st.getBlock();
         if (b instanceof DoorBlock || b instanceof TrapDoorBlock || b instanceof FenceGateBlock) flags |= Kind.DOOR;
         if (b.getSpeedFactor() < 1.0F) flags |= Kind.SLOW;
-        return Palette.add(st.toString(), info, boxes, flags);
+        // what is drawn above the collision: a snow layer is drawn a layer higher than you stand (one layer: no
+        // collision at all), soul sand and mud a full block; plants have no collision and stay out, so the rails go
+        // under grass and flowers, which really are drawn over them
+        float drawnTop = Float.NaN;
+        VoxelShape drawn = st.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
+        if (!drawn.isEmpty() && (st.is(Blocks.SNOW) || !vs.isEmpty())) {
+            double top = drawn.max(Direction.Axis.Y);
+            if (vs.isEmpty() || top > vs.max(Direction.Axis.Y) + 1e-6) drawnTop = (float) top;
+        }
+        return Palette.add(st.toString(), info, boxes, flags, drawnTop);
     }
 }

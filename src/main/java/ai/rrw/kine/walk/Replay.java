@@ -112,8 +112,7 @@ final class Replay {
         }
         for (int k = 1; k < m; k++)
             grid.add(px[k - 1], py[k - 1] + 0.06, pz[k - 1], px[k], py[k] + 0.06, pz[k], 0xDCF0F0F0, GRID_W);
-        for (int k = 1; k < rails.n; k++) {
-            if (Math.abs(rails.y[k] - rails.y[k - 1]) > 1.2) continue;
+        for (int k = 1; k < rails.n; k++) {   // no breaks: drops and ladders as steep pieces, like the rails
             route.add(rails.x[k - 1], rails.y[k - 1] + 0.04, rails.z[k - 1], rails.x[k], rails.y[k] + 0.04, rails.z[k], HudColors.MAGENTA, ROUTE_W);
         }
         if (rt.viaExit) {

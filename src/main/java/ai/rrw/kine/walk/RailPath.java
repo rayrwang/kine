@@ -8,11 +8,16 @@ package ai.rrw.kine.walk;
  *   <li>The route's ground points are resampled evenly (every STEP blocks across the ground) and the centreline is
  *       their running average over a window either side, so a bend of the route becomes an arc instead of a kink and
  *       straight runs stay straight; its ends stay where they are.</li>
- *   <li>Each point's across direction is square to the centreline there, and the rails lie HALF either side along it;
- *       consecutive pieces of a rail share their edge points, so a rail has no gaps or overlaps, at bends included.</li>
- *   <li>Each rail point's height is the top of whatever is right under it (the table's blocks, found near the
- *       walker's height), and the rail runs along the upper envelope of those tops with slopes of at most SLOPE: over
- *       stairs and steps it ramps like a handrail instead of stepping, and it never dips into a block.</li>
+ *   <li>Each point's across direction is square to the centreline there, and the rails lie HALF either side along it,
+ *       always 2 x HALF apart: where one would be in a wall (an inside corner the averaged centreline cuts) the pair
+ *       slides across together, eased along the route, rather than one drawing in. Consecutive pieces of a rail share
+ *       their edge points, so a rail has no gaps or overlaps, at bends included.</li>
+ *   <li>Heights are what you see on top: a collision top, a snow layer's or soul sand's drawn top, or the surface of
+ *       water or lava over it (not the floor under it). The centreline runs along the upper envelope of the surface
+ *       under it with slopes of at most SLOPE, ramping over stairs like a handrail; both rails share one height, the
+ *       same envelope over the highest of the centre's and both rails' surfaces, so they never dip below the
+ *       centreline, never part in height where one side drops, and never sink into a block. Plants are drawn over
+ *       them.</li>
  * </ul>
  * Plain arrays and no Minecraft class: WalkRender streams the part near the player each frame, fading it by distance
  * along the centreline.
@@ -23,13 +28,14 @@ public final class RailPath {
     static final double HALF = 0.45;      // rails this far either side of the centreline
     static final double SLOPE = 1.0;      // the steepest a rail ramps (blocks up a block along)
     static final double LIFT = 0.04;      // above the surface
-    static final double MIN_OFF = 0.12;   // the closest a rail is drawn in toward the centreline
+    static final double SHIFT_STEP = 0.05;   // the pair slides across in these steps, up to HALF
 
     /** Points: the centreline (x, z), its height, the across direction (unit, pointing left of travel), the distance
      *  along it, and each rail's height (left = +across, right = -across). */
     public final int n;
     public final double[] x, z, y, ax, az, along, leftY, rightY;
-    /** Each rail's distance from the centreline, point by point (HALF unless a wall is closer). */
+    /** Each rail's distance from the centreline, point by point: HALF, or HALF plus and minus the pair's slide away
+     *  from a wall (they always add up to 2 x HALF). */
     public double[] leftOff, rightOff;
 
     RailPath(View view, Route r) {
@@ -81,59 +87,94 @@ public final class RailPath {
         // a bend's points before the first move along it take the first direction
         for (int i = 0; i < n && ax[i] == 0 && az[i] == 0; i++) { ax[i] = hz; az[i] = -hx; }
 
-        // 4. each rail's distance from the centreline: HALF, drawn in where that would put it in a wall (the route
-        //    hugs inside corners at the safety margin, and the averaged centreline cuts them a little more); then eased:
-        //    the smallest within a few points either side, averaged, so it bends in and out instead of stepping
+        // 4. the rails' slide across: none, or the least that takes both out of the walls (the route hugs inside
+        //    corners at the safety margin, and the averaged centreline cuts them a little more); then eased: the
+        //    largest within a few points either side, averaged, so the pair slides over and back instead of stepping
         Sweep probe = new Sweep(view, Costs.BARITONE, 0);
-        leftOff = offsets(probe, sy, 1);
-        rightOff = offsets(probe, sy, -1);
+        double[] shift = shifts(probe, sy);
+        for (int i = 0; i < n; i++) { leftOff[i] = HALF + shift[i]; rightOff[i] = HALF - shift[i]; }
 
-        // 5. heights: the surface right under each rail point and under the centre, then the upper envelope
-        double[] sl = new double[n], sr = new double[n], sc = new double[n];
+        // 5. heights: what you see on top under the centre and under each rail; the centreline on the envelope of its
+        //    own, both rails on the envelope of the highest of the three
+        double[] sc = new double[n], sh = new double[n];
         for (int i = 0; i < n; i++) {
             double base = sy[i];
-            sc[i] = surface(probe, x[i], z[i], base);
-            sl[i] = surface(probe, x[i] + ax[i] * leftOff[i], z[i] + az[i] * leftOff[i], base);
-            sr[i] = surface(probe, x[i] - ax[i] * rightOff[i], z[i] - az[i] * rightOff[i], base);
+            sc[i] = surface(view, x[i], z[i], base);
+            double sl = surface(view, x[i] + ax[i] * leftOff[i], z[i] + az[i] * leftOff[i], base);
+            double sr = surface(view, x[i] - ax[i] * rightOff[i], z[i] - az[i] * rightOff[i], base);
+            sh[i] = Math.max(sc[i], Math.max(sl, sr));
         }
         envelope(sc, y);
-        envelope(sl, leftY);
-        envelope(sr, rightY);
-        for (int i = 0; i < n; i++) { y[i] += LIFT; leftY[i] += LIFT; rightY[i] += LIFT; }
+        envelope(sh, leftY);
+        for (int i = 0; i < n; i++) { y[i] += LIFT; leftY[i] += LIFT; rightY[i] = leftY[i]; }
     }
 
-    /** One rail's distances from the centreline (side 1 left, -1 right). */
-    private double[] offsets(Sweep probe, double[] sy, int side) {
-        double[] off = new double[n];
+    /** How far the rail pair slides toward the left (negative: right) at each point, eased. */
+    private double[] shifts(Sweep probe, double[] sy) {
+        double[] s = new double[n];
         for (int i = 0; i < n; i++) {
-            double o = HALF;
-            while (o > MIN_OFF) {
-                double px = x[i] + side * ax[i] * o, pz = z[i] + side * az[i] * o;
-                if (probe.clear(px, pz, 0.06, sy[i] + 0.6, sy[i] + 1.5)) break;
-                o -= 0.05;
+            if (pairClear(probe, i, 0, sy[i])) continue;
+            for (double d = SHIFT_STEP; d <= HALF + 1e-9; d += SHIFT_STEP) {
+                if (pairClear(probe, i, d, sy[i])) { s[i] = d; break; }
+                if (pairClear(probe, i, -d, sy[i])) { s[i] = -d; break; }
             }
-            off[i] = Math.max(MIN_OFF, o);
         }
-        double[] lo = new double[n];
+        double[] big = new double[n];
         for (int i = 0; i < n; i++) {
-            double m = off[i];
-            for (int j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) m = Math.min(m, off[j]);
-            lo[i] = m;
+            double m = s[i];
+            for (int j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) if (Math.abs(s[j]) > Math.abs(m)) m = s[j];
+            big[i] = m;
         }
         double[] out = new double[n];
         for (int i = 0; i < n; i++) {
             int w = Math.min(2, Math.min(i, n - 1 - i));
             double sum = 0;
-            for (int j = i - w; j <= i + w; j++) sum += lo[j];
+            for (int j = i - w; j <= i + w; j++) sum += big[j];
             out[i] = sum / (2 * w + 1);
         }
         return out;
     }
 
-    /** The highest top under a small square at (px, pz) from 3 below to a step above `base`; `base` if nothing. */
-    private static double surface(Sweep probe, double px, double pz, double base) {
-        double g = probe.ground(px, pz, 0.04, base + 0.6, base - 3.0);
-        return Double.isNaN(g) ? base : g;
+    /** Both rails out of the walls with the pair slid `d` toward the left: nothing solid where each lies, from above a
+     *  step (so a slab or a stair beside is fine, the rail lies on it) to body height. */
+    private boolean pairClear(Sweep probe, int i, double d, double base) {
+        for (int side = -1; side <= 1; side += 2) {
+            double o = side * HALF + d;
+            if (!probe.clear(x[i] + ax[i] * o, z[i] + az[i] * o, 0.06, base + 0.6, base + 1.5)) return false;
+        }
+        return true;
+    }
+
+    /** What you see on top under a small square at (px, pz), from 3 below to a step above `base`: in each column the
+     *  first thing from above, a collision top or a drawn top (a snow layer, soul sand), or the surface of water or
+     *  lava (followed up while the same fluid is above); the highest over the square's columns, `base` if nothing. */
+    static double surface(View v, double px, double pz, double base) {
+        double half = 0.04, top = base + 0.6, lowest = base - 3.0;
+        int xa = (int) Math.floor(px - half), xb = (int) Math.floor(px + half - 1e-9);
+        int za = (int) Math.floor(pz - half), zb = (int) Math.floor(pz + half - 1e-9);
+        int ya = (int) Math.floor(lowest), yb = (int) Math.floor(top);
+        double best = Double.NaN;
+        for (int bx = xa; bx <= xb; bx++)
+            for (int bz = za; bz <= zb; bz++)
+                for (int y = yb; y >= ya; y--) {
+                    Kind k = v.block(bx, y, bz);
+                    if (k == Palette.UNKNOWN) break;
+                    double t = k.topWithin(px - half - bx, px + half - bx, pz - half - bz, pz + half - bz, top - y);
+                    if (!Float.isNaN(k.drawnTop) && k.drawnTop <= top - y + 1e-9) t = Double.isNaN(t) ? k.drawnTop : Math.max(t, k.drawnTop);
+                    double h = Double.isNaN(t) ? Double.NaN : y + t;
+                    int fluid = k.flags & (Kind.WATER | Kind.LAVA);
+                    if (fluid != 0) {
+                        int fy = y;
+                        while (fy < y + 8 && (v.block(bx, fy + 1, bz).flags & fluid) != 0) fy++;
+                        float fh = v.block(bx, fy, bz).info.fluidHeight;   // a source's own height, 8/9 (tests: none set)
+                        double surf = fy + (fh > 0 ? fh : 8 / 9.0);
+                        h = Double.isNaN(h) ? surf : Math.max(h, surf);
+                    }
+                    if (Double.isNaN(h) || h < lowest) continue;
+                    if (Double.isNaN(best) || h > best) best = h;
+                    break;   // lower blocks in this column are under this one
+                }
+        return Double.isNaN(best) ? base : best;
     }
 
     /** out[i] = the largest of h[j] - SLOPE * (distance from i to j), j within the reach of a full ramp: a rail over

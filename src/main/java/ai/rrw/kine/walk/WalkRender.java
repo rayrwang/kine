@@ -374,7 +374,7 @@ public final class WalkRender {
             if (rp.along[i - 1] > to) break;
             for (int side = -1; side <= 1; side += 2) {
                 double[] ry = side > 0 ? rp.leftY : rp.rightY, off = side > 0 ? rp.leftOff : rp.rightOff;
-                if (Math.abs(ry[i] - ry[i - 1]) > 1.2) continue;   // a cliff or a ladder: the rail breaks there
+                // no breaks: down a drop or up a ladder the rail runs on as a steep piece
                 double a1 = side * (off[i - 1] - RAIL_W / 2), a2 = side * (off[i - 1] + RAIL_W / 2);
                 double b1 = side * (off[i] - RAIL_W / 2), b2 = side * (off[i] + RAIL_W / 2);
                 int c0 = railColor(rp.along[i - 1] - here, ry[i - 1], cam, strength);

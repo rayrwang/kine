@@ -46,10 +46,18 @@ public final class Kind {
     /** The shape's top face covers the whole cell at cellTop (a full block, a slab, a carpet; not stairs or a fence). */
     public final boolean topFull;
     public final int flags;
+    /** Where the block is drawn higher than its collision reaches (snow layers, soul sand, mud), the drawn top,
+     *  block-local; NaN otherwise. The walking rails lie on what you see. */
+    public final float drawnTop;
     /** The shape's boxes, block-local {minX, minY, minZ, maxX, maxY, maxZ} each. */
     final double[][] boxes;
 
     Kind(int id, String name, BlockInfo info, List<double[]> boxes, int flags) {
+        this(id, name, info, boxes, flags, Float.NaN);
+    }
+
+    Kind(int id, String name, BlockInfo info, List<double[]> boxes, int flags, float drawnTop) {
+        this.drawnTop = drawnTop;
         this.id = id;
         this.name = name;
         this.info = info;
@@ -107,13 +115,18 @@ public final class Kind {
 
     /** A kind described by boxes, for tests and for the table's own stand-ins. */
     static Kind of(int id, String name, List<double[]> boxes, float friction, float speedFactor, int flags) {
+        return of(id, name, boxes, friction, speedFactor, flags, Float.NaN);
+    }
+
+    /** The same, drawn up to `drawnTop` (block-local) above its collision. */
+    static Kind of(int id, String name, List<double[]> boxes, float friction, float speedFactor, int flags, float drawnTop) {
         Shape shape = ShapeProbe.fromBoxes(boxes);
         int moveFlags = 0;
         if ((flags & WATER) != 0) moveFlags |= BlockInfo.WATER | BlockInfo.FLUID;
         if ((flags & LAVA) != 0) moveFlags |= BlockInfo.FLUID | BlockInfo.HAZARD;
         if ((flags & (HAZARD | FLOOR_HAZARD)) != 0) moveFlags |= BlockInfo.HAZARD;
         if ((flags & (CLIMB | AVOID)) != 0) moveFlags |= BlockInfo.SPECIAL;
-        return new Kind(id, name, new BlockInfo(shape, friction, speedFactor, 1.0F, moveFlags), boxes, flags);
+        return new Kind(id, name, new BlockInfo(shape, friction, speedFactor, 1.0F, moveFlags), boxes, flags, drawnTop);
     }
 
     @Override
