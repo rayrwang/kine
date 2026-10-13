@@ -141,7 +141,7 @@ public final class Planner {
             if (job.latest.get() == null || r.found && c <= bestCost + 1e-6) {
                 Route route = new Tighten(view, costs, margin, canSprint).route(r, gx, gz);
                 RailPath rails = new RailPath(view, route);
-                Replay replay = new Replay(r, route, rails);
+                Replay replay = new Replay(r, route, rails, ai.rrw.kine.Settings.walkSearchDetailed);
                 r.tree = null;   // drawn from the replay now; let the record go
                 job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails));
                 if (r.found) bestCost = c;

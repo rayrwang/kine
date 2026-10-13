@@ -20,28 +20,37 @@ import org.joml.Matrix4f;
 import java.util.Optional;
 
 /**
- * The walking pathfinder in the world. Layer 1's search takes milliseconds, too fast to watch, so each search is
- * replayed after it ends:
+ * The walking pathfinder in the world. Layer 1's search takes milliseconds, too fast to watch, so a search is replayed
+ * after it ends, on a walk's first plan and on replans that change the way (a routine refresh toward a far goal only
+ * cross-fades the route) (RW, 2026-10-13, agreed: "one color ... for the search, then magnetia for the tighneing stage
+ * until it setltes into the final magneta"):
  * <ol>
- *   <li>0 to 2 s: the search tree grows from the player in the order the search expanded it, one short line per floor
- *       from the floor it was reached from, coloured by the cost so far (cyan near the start, violet, rose far out); the
- *       open frontier bright, the expanded floors dim under it;</li>
- *   <li>then the stepped grid path as a thin white line, then the tightened route in magenta over it, so the corner cutting
- *       shows;</li>
- *   <li>then the tree and the grid path fade, and the route stays as rails on the ground near the player (his rail
- *       colours, blue seen from above, orange from below), with a thin line on along the rest of the route and past the
- *       loaded area to the goal.</li>
+ *   <li>0 to 1 s, the search in orange: the feeler, the best way so far (Replay), growing from the player toward the
+ *       goal, probing and pulling back in a maze; under it the area searched so far, outlined faintly on the ground,
+ *       spreading from the player and bending round obstacles;</li>
+ *   <li>then the tightening in magenta: the feeler's last state, the grid path, turns into a magenta staircase that
+ *       pulls taut a leg at a time from the player outward, settling into the route;</li>
+ *   <li>then the route stays as rails on the ground near the player (blue), with a thin magenta line along the rest of
+ *       the route and on past the loaded area to the goal; the last route's rails stay until the new ones come in.</li>
  * </ol>
- * A replan's tree replays the same way while the old route fades. Everything is depth-tested, with a faint copy drawn
- * through terrain first (as the elytra destination pillar does), so it reads behind hills. The tree and the lines are
- * built once per search into GPU buffers (LineSet) and drawn with one call each per frame; only the rails near the
- * player, a few hundred quads, are streamed per frame. A layer 2 view (candidate runs as lines of simulated feet
- * positions, jumps as arcs, the chosen plan bold) would be more LineSets on the same frame.
+ * The detailed setting shows the old display instead of the first two stages: every floor the search saw, one short
+ * line from the floor it was reached from, coloured by cost so far, then the grid path in white and the route over it.
+ * Everything but the rails and the outline is built once per search into GPU buffers (LineSet) and drawn with one call
+ * each per frame (a replay's steps are ranges of one buffer); the rails near the player and the outline are streamed
+ * per frame, a few hundred to a few thousand quads. Depth-tested, with a faint copy of the lines drawn through terrain
+ * first (as the elytra destination pillar is), so they read behind hills.
  */
 public final class WalkRender {
     private WalkRender() {}
 
+    // the detailed display's timeline (s from a plan's arrival)
     static final double REPLAY_S = 2.0, GRID_AT = 2.1, ROUTE_AT = 2.6, FADE_AT = 3.4, FADE_S = 1.2;
+    // the display's: the search to SEARCH_S, the feeler turning magenta over MORPH_S, the tightening over TAUT_S, then
+    // the route and the rails in over SETTLE_S; the outline fades over OUTLINE_FADE_S after the search
+    static final double SEARCH_S = 1.0, MORPH_S = 0.15, TAUT_S = 0.7, SETTLE_S = 0.25, OUTLINE_FADE_S = 0.6;
+    static final double TAUT_AT = SEARCH_S + MORPH_S, ROUTE_IN = TAUT_AT + TAUT_S;
+    static final double OUTLINE_W = 0.07;
+    private static final int OUTLINE = 0x8C << 24 | (Replay.ORANGE & 0xFFFFFF);
     static final double RAIL_W = 0.1;
     static final double RAIL_NEAR = 32, RAIL_FAR = 48;     // rails full to RAIL_NEAR along the route, gone by RAIL_FAR
     static final double RAIL_BEHIND = 2.0;                 // and from this far behind the player, fading in
@@ -70,13 +79,15 @@ public final class WalkRender {
 
     /** One plan's drawing: its replay (uploaded on first draw) and when it arrived. */
     private static final class Shown {
-        final Planner.Plan plan;
+        Planner.Plan plan;
         final long start = System.nanoTime();
-        LineSet bright, dim, grid, route, beyond;
+        /** Replayed (a walk's first plan, a replan that changes the way, a preview), else the route cross-fades in. */
+        final boolean replay;
+        LineSet bright, dim, grid, route, beyond, feel, taut;
         boolean built = false;
-        long fadeFrom = -1;     // when a newer plan replaced it
+        long fadeFrom = -1;     // when it fades (a newer plan replaced it; in the future while the newer one replays)
         int railHint = -1;      // the rails' last nearest segment
-        Shown(Planner.Plan plan) { this.plan = plan; }
+        Shown(Planner.Plan plan, boolean replay) { this.plan = plan; this.replay = replay; }
 
         void build() {
             if (built) return;
@@ -87,13 +98,31 @@ public final class WalkRender {
             grid = r.grid.build("grid");
             route = r.route.build("route");
             beyond = r.beyond.build("beyond");
+            if (replay) {
+                feel = r.feel.build("feeler");
+                taut = r.taut.build("tightening");
+            }
+        }
+
+        /** A finer pass of the same search arrived while the search part plays: show it instead, on the same clock. */
+        void swap(Planner.Plan p) {
+            close();
+            bright = dim = grid = route = beyond = feel = taut = null;
+            built = false;
+            plan = p;
         }
 
         void close() {
-            for (LineSet s : new LineSet[]{bright, dim, grid, route, beyond}) if (s != null) s.close();
+            for (LineSet s : new LineSet[]{bright, dim, grid, route, beyond, feel, taut}) if (s != null) s.close();
         }
 
         double age() { return (System.nanoTime() - start) / 1e9; }
+
+        /** When the route and its rails come in, s from the arrival. */
+        double routeAt() {
+            if (!replay || !Settings.walkSearchDisplay) return 0;
+            return Settings.walkSearchDetailed ? ROUTE_AT : ROUTE_IN;
+        }
     }
 
     private static Shown current = null, old = null;
@@ -124,19 +153,43 @@ public final class WalkRender {
         LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(WalkRender::render);
     }
 
-    /** A new plan arrived (client thread). */
+    /** A new plan arrived (client thread): replayed. */
     static void newPlan(Planner.Plan p) {
+        newPlan(p, true);
+    }
+
+    /** A new plan arrived (client thread): replayed, or (a routine refresh) its route cross-faded in. */
+    static void newPlan(Planner.Plan p, boolean replay) {
+        if (current != null && current.plan.id == p.id && current.replay && replay) {
+            if (current.age() < SEARCH_S) {
+                current.swap(p);
+                lastTreeSegments = p.replay.seenAt.length + p.replay.feel.n;
+                return;
+            }
+            replay = false;   // a finer pass after the search part: its route cross-fades in
+        }
         if (old != null) old.close();
         old = current;
-        if (old != null) old.fadeFrom = System.nanoTime();
-        current = new Shown(p);
-        lastTreeSegments = p.replay.seenAt.length;
+        current = new Shown(p, replay && Settings.walkSearchDisplay);
+        // the last route stays till the new one comes in
+        if (old != null) old.fadeFrom = System.nanoTime() + (long) (current.routeAt() * 1e9);
+        lastTreeSegments = p.replay.seenAt.length + p.replay.feel.n;
+        replays += current.replay ? 1 : 0;
+        refreshes += current.replay ? 0 : 1;
     }
+
+    /** Seconds since the plan on show arrived (for tests), -1 if none. */
+    public static double shownAge() {
+        return current == null ? -1 : current.age();
+    }
+
+    /** Plans shown with a replay, and routes cross-faded in without one (for tests). */
+    public static int replays = 0, refreshes = 0;
 
     /** The replay in progress, 0 to 1, or -1 when none (for tests). */
     public static double replayProgress() {
-        if (current == null) return -1;
-        return Math.min(1.0, current.age() / REPLAY_S);
+        if (current == null || !current.replay) return -1;
+        return Math.min(1.0, current.age() / (Settings.walkSearchDetailed ? REPLAY_S : ROUTE_IN));
     }
 
     private static void render(LevelRenderContext ctx) {
@@ -160,14 +213,17 @@ public final class WalkRender {
 
         // faint copies through terrain first, then depth-tested
         long a = System.nanoTime();
-        if (searchOn && current != null) drawTree(current, pose, cam, true);
+        if (searchOn && current != null && current.replay) drawSearch(current, pose, cam, true);
         long b = System.nanoTime();
         if (pathOn) {
             if (old != null) drawRoute(old, pose, cam, true);
             if (current != null) drawRoute(current, pose, cam, true);
         }
         long c = System.nanoTime();
-        if (searchOn && current != null) drawTree(current, pose, cam, false);
+        if (searchOn && current != null && current.replay) {
+            drawSearch(current, pose, cam, false);
+            if (!Settings.walkSearchDetailed) outline(ctx, current, pose, cam);
+        }
         long d0 = System.nanoTime();
         if (pathOn) {
             if (old != null) drawRoute(old, pose, cam, false);
@@ -175,9 +231,10 @@ public final class WalkRender {
         }
         long e = System.nanoTime();
         if (pathOn) {
-            // a replan: the old rails fade out while the new fade in (a walk's first plan shows at once)
-            float in = current == null ? 0 : old == null || old.fadeFrom < 0 ? 1.0F
-                : (float) Math.min(1, (System.nanoTime() - old.fadeFrom) / 1e9 / RAIL_SWAP);
+            // the new rails fade in when the route comes in (at once for a refresh, after the replay for a replay) while
+            // the old fade out
+            float in = current == null ? 0 : (float) Math.min(1, Math.max(0, (current.age() - current.routeAt()) / RAIL_SWAP));
+            if (current != null && current.routeAt() == 0 && (old == null || old.fadeFrom < 0)) in = 1.0F;
             if (old != null && old.fadeFrom > 0) rails(ctx, old, p, pose, cam, Math.min(1 - in, fade(old)));
             if (current != null) rails(ctx, current, p, pose, cam, current.fadeFrom > 0 ? fade(current) : in);
         }
@@ -198,7 +255,64 @@ public final class WalkRender {
         maxFrameNanos = Math.max(maxFrameNanos, d);
     }
 
-    /** The tree replay and the grid and tightened paths of the search display. */
+    /** The search display: the feeler, then the tightening (or the detailed display's tree and grid path). */
+    private static void drawSearch(Shown s, Matrix4f pose, Vec3 cam, boolean faint) {
+        if (Settings.walkSearchDetailed) { drawTree(s, pose, cam, faint); return; }
+        double t = s.age();
+        Replay r = s.plan.replay;
+        float k = (faint ? FAINT * 1.6F : 1.0F) * (s.fadeFrom > 0 ? fade(s) : 1.0F);
+        RenderPipeline pipe = faint ? LINES_THROUGH : LINES;
+        if (t < TAUT_AT && s.feel != null) {
+            int step = r.feelStep(t / SEARCH_S);
+            float a = t < SEARCH_S ? 1.0F : (float) Math.max(0, 1 - (t - SEARCH_S) / MORPH_S);
+            s.feel.drawRange(pipe, pose, cam, r.feelFrom[step], r.feelCount[step], a * k);
+        }
+        if (t >= SEARCH_S && s.taut != null) {
+            float a = (float) Math.min(1, (t - SEARCH_S) / MORPH_S);
+            if (t > ROUTE_IN) a *= (float) Math.max(0, 1 - (t - ROUTE_IN) / SETTLE_S);
+            int f = r.tautStep((t - TAUT_AT) / TAUT_S);
+            s.taut.drawRange(pipe, pose, cam, r.tautFrom[f], r.tautCount[f], a * k);
+        }
+    }
+
+    /**
+     * The area searched so far, outlined on the ground: each side of an expanded column whose neighbour isn't expanded
+     * yet, a thin strip just inside it, so the outline spreads from the player and bends round obstacles. Streamed per
+     * frame while it shows (the search part and its fade); a few thousand quads at most.
+     */
+    private static void outline(LevelRenderContext ctx, Shown s, Matrix4f pose, Vec3 cam) {
+        Replay r = s.plan.replay;
+        if (r.cellOrder == null) return;
+        double t = s.age();
+        float a = t < SEARCH_S ? 1.0F : (float) Math.max(0, 1 - (t - SEARCH_S) / OUTLINE_FADE_S);
+        if (s.fadeFrom > 0) a = Math.min(a, fade(s));
+        if (a <= 0.01F) return;
+        int e = (int) Math.round(r.expansions * Math.min(1.0, t / SEARCH_S));
+        int n = r.cellsBy(e);
+        if (n == 0) return;
+        int color = ((int) ((OUTLINE >>> 24) * a) << 24) | (OUTLINE & 0xFFFFFF);
+        VertexConsumer vc = ctx.bufferSource().getBuffer(RAILS);
+        int w = r.cellW, h = r.cellH;
+        for (int j = 0; j < n; j++) {
+            int idx = r.cellOrder[j], cx = idx % w, cz = idx / w;
+            double x = r.cellX0 + cx, z = r.cellZ0 + cz, y = r.cellY[idx] + 0.03;
+            if (cx == 0 || r.cellAt[idx - 1] >= e) quad(vc, pose, cam, x, y, z, x + OUTLINE_W, z + 1, color);
+            if (cx == w - 1 || r.cellAt[idx + 1] >= e) quad(vc, pose, cam, x + 1 - OUTLINE_W, y, z, x + 1, z + 1, color);
+            if (cz == 0 || r.cellAt[idx - w] >= e) quad(vc, pose, cam, x, y, z, x + 1, z + OUTLINE_W, color);
+            if (cz == h - 1 || r.cellAt[idx + w] >= e) quad(vc, pose, cam, x, y, z + 1 - OUTLINE_W, x + 1, z + 1, color);
+        }
+        ctx.bufferSource().endBatch(RAILS);
+    }
+
+    /** A flat quad at height y over x0..x1, z0..z1. */
+    private static void quad(VertexConsumer vc, Matrix4f pose, Vec3 cam, double x0, double y, double z0, double x1, double z1, int argb) {
+        vertex(vc, pose, cam, x0, y, z0, argb);
+        vertex(vc, pose, cam, x0, y, z1, argb);
+        vertex(vc, pose, cam, x1, y, z1, argb);
+        vertex(vc, pose, cam, x1, y, z0, argb);
+    }
+
+    /** The detailed display: the tree replay and the grid and tightened paths. */
     private static void drawTree(Shown s, Matrix4f pose, Vec3 cam, boolean faint) {
         double t = s.age();
         Replay r = s.plan.replay;
@@ -223,18 +337,18 @@ public final class WalkRender {
 
     /** The route: magenta during the replay, then a thin line on past the rails, and on past the loaded area. */
     private static void drawRoute(Shown s, Matrix4f pose, Vec3 cam, boolean faint) {
-        double t = s.age();
-        boolean searchOn = Settings.walkSearchDisplay;
-        float a = searchOn ? (float) Math.min(1, Math.max(0, (t - ROUTE_AT) / 0.3)) : 1.0F;
+        double t = s.age(), at = s.routeAt();
+        float a = at == 0 ? 1.0F : (float) Math.min(1, Math.max(0, (t - at) / (Settings.walkSearchDetailed ? 0.3 : SETTLE_S)));
         if (s.fadeFrom > 0) a = Math.min(a, fade(s));
         float k = faint ? FAINT * 1.6F : 1.0F;
         RenderPipeline pipe = faint ? LINES_THROUGH : LINES;
-        if (s.route != null) s.route.draw(pipe, pose, cam, s.route.lines, a * k * (t > FADE_AT + 1.0 || !searchOn ? 0.75F : 1.0F));
+        boolean settled = at == 0 || t > at + (Settings.walkSearchDetailed ? 1.8 : 1.0);
+        if (s.route != null) s.route.draw(pipe, pose, cam, s.route.lines, a * k * (settled ? 0.75F : 1.0F));
         if (s.beyond != null) s.beyond.draw(pipe, pose, cam, s.beyond.lines, a * k);
     }
 
     private static float fade(Shown s) {
-        return (float) Math.max(0, 1 - (System.nanoTime() - s.fadeFrom) / 1e9 / FADE_S);
+        return (float) Math.max(0, Math.min(1, 1 - (System.nanoTime() - s.fadeFrom) / 1e9 / FADE_S));
     }
 
     /**

@@ -77,6 +77,9 @@ public final class Walk {
     /** Route length gained that clears the count of no-progress replans: "stuck" is several of them in a row. */
     static final double REAL_PROGRESS = 8.0;
     private static boolean handBack = false;
+    // whether the search display replays the plan in flight: a walk's first plan and replans that change the way do;
+    // routine refreshes toward a far goal only cross-fade the route (RW, 2026-10-13)
+    private static boolean jobReplay = true, replayNext = true;
     private static int settleWaits = 0;
     /** Why the last replans happened (for tests and the report). */
     public static final java.util.List<String> replanWhy = new java.util.ArrayList<>();
@@ -204,6 +207,7 @@ public final class Walk {
         bestLeft = Double.MAX_VALUE;
         bestLeftTick = tick;
         Layer2.reset();
+        replayNext = true;
         replan(mc, FIRST_BUDGET);
     }
 
@@ -289,6 +293,8 @@ public final class Walk {
         boolean canSprint = p.getFoodData().getFoodLevel() > 6;
         boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
         job = Planner.plan(view, start, d[0], d[1], costs(), margin(), canSprint, Settings.walkLayer2, glides, budget);
+        jobReplay = replayNext;
+        replayNext = true;
         lastPlanTick = tick;
         plans++;
     }
@@ -456,7 +462,7 @@ public final class Walk {
                 bestLeftTick = tick;
                 state = State.WALKING;
                 message = np.route.viaExit ? "Walking toward the edge of what's loaded" : "Walking";
-                WalkRender.newPlan(np);
+                WalkRender.newPlan(np, jobReplay);
             } else if (job.done && job.failure != null && (plan == null || job.latest.get() == null)) {
                 if (plan == null) { fail("No path: " + job.failure); measure(t0); return; }
             }
@@ -501,9 +507,9 @@ public final class Walk {
         } else if (idle && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
             replanFor("off the route", mc);
         } else if (idle && (r.viaExit || plan.result.partial) && left < 24 && tick - lastPlanTick > 20) {
-            replanFor(r.viaExit ? "near the loaded edge" : "near a partial route's end", mc);
+            replanFor(r.viaExit ? NEAR_EDGE : NEAR_END, mc);
         } else if (idle && (r.viaExit || plan.result.partial) && tick - lastPlanTick > 100) {
-            replanFor("every 5 s toward a far goal", mc);
+            replanFor(EVERY_5S, mc);
         } else if (idle && tick - lastCheckTick > 20) {
             lastCheckTick = tick;
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
@@ -512,7 +518,11 @@ public final class Walk {
         measure(t0);
     }
 
+    /** Replans that only refresh the route toward a far goal (no replay): the reasons below. */
+    static final String EVERY_5S = "every 5 s toward a far goal", NEAR_EDGE = "near the loaded edge", NEAR_END = "near a partial route's end";
+
     private static void replanFor(String why, Minecraft mc) {
+        replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END));
         replans++;
         if (replanWhy.size() < 200) replanWhy.add(tick + ": " + why);
         replan(mc, REPLAN_BUDGET);

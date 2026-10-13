@@ -57,7 +57,8 @@ public final class Settings {
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
-    public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops;
+    public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
+        walkSearchDetailed;
     /** The walking route's safety margin, hundredths of a block. */
     public static int walkMargin;
     public static Show displaySpeed, displayGroundSpeed,
@@ -183,7 +184,8 @@ public final class Settings {
 
     public static final Option WALK_PATHFINDER            = toggle("walkPathfinder", WALK, true, v -> walkPathfinder = v);
     public static final Option WALK_PATH_DISPLAY          = toggle("walkPathDisplay", WALK, true, v -> walkPathDisplay = v);
-    public static final Option WALK_SEARCH_DISPLAY        = toggle("walkSearchDisplay", WALK, true, v -> walkSearchDisplay = v);
+    public static final Option WALK_SEARCH_DISPLAY        = toggle("walkSearchDisplay", WALK, false, v -> walkSearchDisplay = v);
+    public static final Option WALK_SEARCH_DETAILED       = toggle("walkSearchDetailed", WALK, false, v -> walkSearchDetailed = v);
     public static final Option WALK_MARGIN                = level("walkSafetyMargin", WALK, 20, 50, v -> walkMargin = v);
     public static final Option WALK_LAYER2                = toggle("walkLayer2", WALK, true, v -> walkLayer2 = v);
     public static final Option WALK_LAYER2_DISPLAY        = toggle("walkLayer2Display", WALK, true, v -> walkLayer2Display = v);

@@ -141,8 +141,12 @@ public class KineSettingsScreen extends Screen {
         "Draws the walking route: rails on the ground near you, a thin line further on and past what's loaded, and the "
         + "destination as a green pillar. Faint through terrain.";
     private static final String DESC_WALK_SEARCH =
-        "Replays each search in the world over about two seconds: the paths it tried spreading out from you, coloured "
-        + "by cost so far, then the grid path and the tightened route.";
+        "Replays the search when a walk starts or its way changes, in about two seconds: in orange the best way so far "
+        + "reaching out toward the destination and the area searched outlined on the ground, then in magenta the grid "
+        + "path pulled taut into the route.";
+    private static final String DESC_WALK_SEARCH_DETAILED =
+        "The search display shows every place the search looked at instead, one short line each from where it was "
+        + "reached, coloured by cost so far, then the grid path in white and the route over it.";
     private static final String DESC_WALK_LAYER2 =
         "How the walk moves along the route. On: each tick it tries runs of your movement keys in a copy of the game's "
         + "own movement and presses the fastest, so it sprint-jumps, swims under the top, climbs out of water and jumps "
@@ -309,6 +313,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Pathfinder", DESC_WALK_PATHFINDER, Settings.WALK_PATHFINDER),
             Opt.of("Path display", DESC_WALK_PATH, Settings.WALK_PATH_DISPLAY),
             Opt.of("Search display", DESC_WALK_SEARCH, Settings.WALK_SEARCH_DISPLAY),
+            Opt.of("Detailed search display", DESC_WALK_SEARCH_DETAILED, Settings.WALK_SEARCH_DETAILED, () -> Settings.walkSearchDisplay, null),
             Opt.of("Movement search", DESC_WALK_LAYER2, Settings.WALK_LAYER2),
             Opt.of("Movement search display", DESC_WALK_LAYER2_DISPLAY, Settings.WALK_LAYER2_DISPLAY),
             Opt.of("Elytra hops", DESC_WALK_ELYTRA_HOPS, Settings.WALK_ELYTRA_HOPS),

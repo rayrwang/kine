@@ -40,7 +40,7 @@ public final class PathSearch {
      *  expansion counts at which it was first seen and at which it was expanded (Integer.MAX_VALUE if never). */
     public static final class Tree {
         public int n;
-        public float[] x, y, z, g;
+        public float[] x, y, z, g, h;
         public int[] parent, born, closed;
         public int expansions;
     }
@@ -388,7 +388,7 @@ public final class PathSearch {
         Tree t = new Tree();
         t.n = count;
         t.expansions = expansions;
-        t.x = new float[count]; t.y = new float[count]; t.z = new float[count]; t.g = new float[count];
+        t.x = new float[count]; t.y = new float[count]; t.z = new float[count]; t.g = new float[count]; t.h = new float[count];
         t.parent = Arrays.copyOf(parent, count);
         t.born = Arrays.copyOf(born, count);
         t.closed = Arrays.copyOf(closedAt, count);
@@ -399,6 +399,7 @@ public final class PathSearch {
             t.z[i] = View.nodeZ(k) + 0.5F;
             t.y[i] = fy[i];
             t.g[i] = (float) g[i];
+            t.h[i] = (float) hEst[i];
         }
         return t;
     }

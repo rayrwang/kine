@@ -157,10 +157,12 @@ class SettingsTest {
 
     @Test
     void walkingSectionDefaultsAndSwitches() throws Exception {
-        // Claude's defaults, RW's call: the pathfinder on (it acts only when started from the Walk tab), both displays on
+        // the pathfinder on (it acts only when started from the Walk tab) and its path display on; both layer 1 search
+        // displays off (RW 2026-10-13: "have both eh alyer 1 ones off and layer 2 on")
         assertTrue(Settings.walkPathfinder);
         assertTrue(Settings.walkPathDisplay);
-        assertTrue(Settings.walkSearchDisplay);
+        assertFalse(Settings.walkSearchDisplay);
+        assertFalse(Settings.walkSearchDetailed);
         assertEquals(20, Settings.walkMargin, "0.20 blocks");
         // layer 2 (the movement search) and its display on: it presses only the game's own keys
         assertTrue(Settings.walkLayer2);
@@ -191,11 +193,11 @@ class SettingsTest {
         Settings.WALK_SEARCH_DISPLAY.cycle();
         String saved = Files.readString(file);
         assertTrue(saved.contains("\"walkSafetyMargin\": 35"), saved);
-        assertTrue(saved.contains("\"walkSearchDisplay\": false"), saved);
+        assertTrue(saved.contains("\"walkSearchDisplay\": true"), saved);
         assertTrue(saved.contains("\"sectionWalk\": true"), saved);
         Settings.resetDefaults();
         load(saved);
         assertEquals(35, Settings.walkMargin);
-        assertFalse(Settings.walkSearchDisplay);
+        assertTrue(Settings.walkSearchDisplay);
     }
 }

@@ -100,8 +100,13 @@ final class LineSet implements AutoCloseable {
 
     /** Draw the first `count` segments with this pipeline, faded by alpha (render thread, during the level render). */
     void draw(RenderPipeline pipeline, Matrix4f pose, Vec3 cam, int count, float alpha) {
-        if (closed || count <= 0 || alpha <= 0.003F) return;
-        count = Math.min(count, lines);
+        drawRange(pipeline, pose, cam, 0, count, alpha);
+    }
+
+    /** Draw `count` segments from segment `first` (a step of a replay kept in one buffer). */
+    void drawRange(RenderPipeline pipeline, Matrix4f pose, Vec3 cam, int first, int count, float alpha) {
+        if (closed || count <= 0 || alpha <= 0.003F || first < 0 || first >= lines) return;
+        count = Math.min(count, lines - first);
         Matrix4f mv = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(pose)
             .translate((float) (ox - cam.x), (float) (oy - cam.y), (float) (oz - cam.z));
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms()
@@ -121,7 +126,7 @@ final class LineSet implements AutoCloseable {
             pass.setUniform("DynamicTransforms", transforms);
             pass.setVertexBuffer(0, buffer);
             pass.setIndexBuffer(ib, indices.type());
-            pass.drawIndexed(0, 0, indexCount, 1);
+            pass.drawIndexed(first * 4, 0, indexCount, 1);   // four vertices a segment
         }
     }
 
