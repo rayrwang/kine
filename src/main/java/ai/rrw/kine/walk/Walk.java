@@ -478,7 +478,11 @@ public final class Walk {
         // a plan in: the first one starts the walk; later ones replace the route
         if (job != null) {
             Planner.Plan np = job.latest.get();
-            if (np != null && (np.id != planId || np.pass != planPass)) {
+            // a routine refresh of a route still being walked takes only what its job ends with: the quick first
+            // pass (the weighted search) can leave the loaded area by another way out, which flashed up as a stray
+            // route at an angle for a moment every few seconds while the route dimmed (RW, 2026-10-13)
+            boolean waitForBest = !jobReplay && plan != null && !job.done;
+            if (np != null && !waitForBest && (np.id != planId || np.pass != planPass)) {
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
                 planId = np.id;
