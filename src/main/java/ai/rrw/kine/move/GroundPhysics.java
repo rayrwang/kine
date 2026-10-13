@@ -79,6 +79,7 @@ public final class GroundPhysics {
         // ---- Entity.baseTick (from LivingEntity.tick, before aiStep): the eyes as they were, the water now, swimming
         boolean wasEyeInWater = s.eyesInWater;
         updateFluid(s);
+        air(s, wasEyeInWater);
         if (s.swimming) s.swimming = s.sprinting && s.inWater;
         else s.swimming = s.sprinting && wasEyeInWater && s.inWater
             && grid.get(GameMath.floor(s.x), GameMath.floor(s.y), GameMath.floor(s.z)).fluid == BlockInfo.WATER_FLUID;
@@ -199,6 +200,35 @@ public final class GroundPhysics {
     }
 
     static final int POSE_STAND = 0, POSE_CROUCH = 1, POSE_SWIM = 2, POSE_GLIDE = 3;
+
+    /**
+     * LivingEntity.baseTick's air, the server's (it runs there, on the position the client sent, a tick behind the
+     * client's own; the client hears the value in its entity data): with the eyes in water and no water breathing a
+     * point less a tick (Respiration keeps it with chance 1 - 1 / (bonus + 1), counted here as its expected drain), at
+     * -20 drowning damage 2 and the air back to 0; with water breathing, or the eyes out, 4 more a tick up to the most.
+     * A turtle helmet gives 10 s of water breathing whenever the eyes are out (Player.tick's turtleHelmetTick). The
+     * server sees the eyes Body.airEyeLag ticks after the client does (measured: 2), and a breathing effect a tick
+     * longer than the client's count of it (so it lasts while the count is 0 too; none is -1).
+     */
+    private void air(MoveState s, boolean wasEyeInWater) {
+        if (s.eyesHistory == MoveState.UNSET) s.eyesHistory = wasEyeInWater ? 0x3FFFFFFF : 0;
+        s.eyesHistory = ((s.eyesHistory << 1) | (s.eyesInWater ? 1 : 0)) & 0x3FFFFFFF;
+        boolean eyes = ((s.eyesHistory >> body.airEyeLag) & 1) != 0;   // the eyes as the server sees them
+        boolean breathing = s.waterBreathingTicks >= 0;
+        if (eyes && !breathing) {
+            s.air -= body.oxygenBonus > 0.0 ? 1.0 / (body.oxygenBonus + 1.0) : 1.0;
+            if (s.air <= -20.0) {
+                s.air = 0.0;
+                s.drownDamage += 2.0;
+            }
+        } else if (s.air < body.maxAir) {
+            s.air = Math.min(s.air + 4.0, body.maxAir);
+        }
+        if (s.waterBreathingTicks >= 0) s.waterBreathingTicks--;
+        // turtleHelmetTick: Water Breathing for 200 ticks from the last tick the eyes were out (as the server sees them;
+        // the count runs out at -1 here, so 199)
+        if (!eyes && body.turtleHelmet) s.waterBreathingTicks = 199;
+    }
 
     /** LivingEntity.travelFallFlying (the server's damage for flying into a wall marked as a hazard). */
     private void travelFallFlying(MoveState s, int keys, boolean jumping) {

@@ -29,6 +29,16 @@ public final class MoveState {
      *  on the ground since the glide touched down (the server ends it; the client hears a tick or more later). */
     public boolean fallFlying, glidePose;
     public int glideGroundTicks;
+    /** The air supply (Entity.getAirSupply: 300 full, down a point a tick with the eyes in water, drowning at -20), a
+     *  double so Respiration's chance to keep a point can be counted as its expected drain; the ticks of water breathing
+     *  left (an effect, or a turtle helmet's 10 s); and the drowning damage taken so far (for the planner). */
+    public double air = 300.0;
+    public int waterBreathingTicks = -1;
+    public double drownDamage;
+    /** The eyes in water over the last ticks (bit 0 the newest), for the server's air rule, which sees them late;
+     *  UNSET until the first tick fills it from the start. */
+    public int eyesHistory = UNSET;
+    public static final int UNSET = Integer.MIN_VALUE;
     public int sprintTriggerTime, noJumpDelay;
     public double fallDistance;
     /** Entity.mainSupportingBlockPos, and onGroundNoBlocks. */
@@ -57,6 +67,7 @@ public final class MoveState {
         sprinting = o.sprinting; crouching = o.crouching; crouchPose = o.crouchPose;
         swimPose = o.swimPose; swimming = o.swimming; inWater = o.inWater; eyesInWater = o.eyesInWater; waterHeight = o.waterHeight;
         fallFlying = o.fallFlying; glidePose = o.glidePose; glideGroundTicks = o.glideGroundTicks;
+        air = o.air; waterBreathingTicks = o.waterBreathingTicks; drownDamage = o.drownDamage; eyesHistory = o.eyesHistory;
         sprintTriggerTime = o.sprintTriggerTime; noJumpDelay = o.noJumpDelay;
         fallDistance = o.fallDistance;
         hasSupport = o.hasSupport; onGroundNoBlocks = o.onGroundNoBlocks;

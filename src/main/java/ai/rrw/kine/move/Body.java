@@ -29,6 +29,15 @@ public final class Body {
     /** Ticks on the ground before a landed glide ends on the client (the server ends it on landing and tells the
      *  client: measured in a lockstep test; on a real server add the ping). */
     public int glideLandTicks = 3;
+    /** Air: the most (Entity.getMaxAirSupply), Respiration's oxygen bonus (Attributes.OXYGEN_BONUS: a point of air is
+     *  kept with chance 1 - 1 / (bonus + 1)), and a turtle helmet worn (water breathing for 10 s after the head was out
+     *  of water). */
+    public int maxAir = 300;
+    public double oxygenBonus = 0.0;
+    public boolean turtleHelmet = false;
+    /** Ticks the server's air rule sees the eyes late by, against the client's own eyes test (measured in a lockstep
+     *  test: coming up, the air starts to refill this many ticks after the client's eyes are out). */
+    public int airEyeLag = 2;
     public double knockbackResistance = 0.0;
 
     /** The defaults of a plain survival player. */

@@ -42,6 +42,15 @@ import java.util.SplittableRandom;
 final class RunModel implements Model<RunWorld> {
     static final float TURN = 29.5F;
     static final double UNSAFE = 1000.0, UNCOPIED = 40.0, OFF_FIELD = 300.0;
+    /** Air (RW, 2026-10-12: "ti donst take into acount my air bubles ... the serach shoudl also acocutn for hte air
+     *  bubles/damage"): drowning damage costs DROWN_COST ticks a point of health; a run that ends with the eyes under
+     *  water must leave the air to reach air again (the ticks to the nearest open water top, straight up or a few blocks
+     *  across) with AIR_RESERVE to spare, the shortfall counted as the drowning it would bring; and each tick with the
+     *  eyes under water costs AIR_TICK, so of two equal ways the one breathing wins (a sprint swim held at the top with
+     *  the eyes out is as fast as one under it). */
+    static final double DROWN_COST = 60.0, AIR_RESERVE = 30.0, AIR_TICK = 0.02, RISE_TICKS = 8.0;
+    /** Count the air (on; off only to measure what it changes). */
+    boolean airAware = true;
     /** The segment length in water: a sprint swim pays only after sinking until the eyes are under, about 35 ticks
      *  from floating at the top (measured on the copy), so the horizon there is 5 segments of 8 ticks. */
     static final int WATER_HOLD = 8;
@@ -99,7 +108,7 @@ final class RunModel implements Model<RunWorld> {
         w.segPitch = pitch(a, s.inWater);
         turn(w);
         int keys = keys(a, w.segYaw, w.sentYaw, s.inWater, s.onGround, s.fallFlying, s.lastKeys);
-        double y0 = s.y, fall0 = s.fallDistance;
+        double y0 = s.y, fall0 = s.fallDistance, drowned0 = s.drownDamage;
         boolean air0 = !s.onGround;
         phys.step(s, keys, w.sentYaw, w.sentPitch);
         w.lastKeys = keys;
@@ -107,14 +116,22 @@ final class RunModel implements Model<RunWorld> {
         w.ticks++;
         w.record();
         double c = 1.0 + marks(s, air0, y0, fall0) + (s.fallFlying ? GLIDE_WEAR : 0.0);
+        if (airAware) {
+            c += (s.drownDamage - drowned0) * DROWN_COST;
+            if (s.eyesInWater && s.waterBreathingTicks < 0) c += AIR_TICK;
+        }
         if (arrived(s)) w.arrived = true;
         return c;
     }
 
     /** In water the sprint-jump gait swims up: sprint with the pitch this far up, and no jump (a jump at the top
-     *  ends the swim). Measured on the copy: sprint swimming keeps 0.196 blocks a tick at any pitch (level, or along
-     *  the top with the pitch up), against 0.116 swimming along the top with W and jump. */
-    static final float SWIM_UP_PITCH = -25f;
+     *  ends the swim). Measured on the copy: sprint swimming keeps 0.196 blocks a tick at any pitch, against 0.116
+     *  swimming along the top with W and jump; held at the top with the pitch 25 to 40 up the body floats with the eyes
+     *  just out of the water (no gravity while sprinting in water), breathing at full speed (RW: "its possble to still
+     *  rpint , just with yrou palyer a bit hgiher so yorue also briehating"); 30 up leaves the eyes 0.15 clear. */
+    static final float SWIM_UP_PITCH = -30f;
+    /** The swim-up pitch in use: SWIM_UP_PITCH (Layer2AirTest sets the old -25 for a moment to measure the old way). */
+    static float swimUpPitch = SWIM_UP_PITCH;
 
     /** The pitch sent for an action: in water level, or up for the swim-up gait; a glide's own; else the view's. */
     float pitch(int a, boolean inWater) {
@@ -125,7 +142,7 @@ final class RunModel implements Model<RunWorld> {
         int g = a == STOP ? -1 : gait(a);
         if (g >= GLIDE && !inWater) return GLIDE_PITCH[g - GLIDE];
         if (!inWater) return viewPitch;
-        return g == SPRINT_JUMP ? SWIM_UP_PITCH : 0f;
+        return g == SPRINT_JUMP ? swimUpPitch : 0f;
     }
 
     /** The keys for an action with this heading at the rotation sent, from the state now (in water, on the ground,
@@ -234,9 +251,55 @@ final class RunModel implements Model<RunWorld> {
             }
             s = r;
         }
+        if (airAware) extra += airShort(s);
         double v = field.at(s.x, s.y, s.z);
         if (Double.isNaN(v)) return extra + OFF_FIELD + Math.hypot(goalX - s.x, goalZ - s.z) * field.rate;
         return extra + v;
+    }
+
+    /** With the eyes under water: the drowning a shortfall of air would bring, as cost (none while there's the air to
+     *  reach air again with the reserve to spare). The air lasts until it reaches -20. */
+    double airShort(MoveState s) {
+        if (!s.eyesInWater || s.waterBreathingTicks >= 0) return 0.0;
+        double need = ticksToAir(s) + AIR_RESERVE;
+        double have = s.air + 20.0;
+        if (need <= have) return 0.0;
+        return DROWN_COST * 2.0 * (need - have) / 20.0;
+    }
+
+    /** Ticks to get the eyes out of water: up to the open top of the water in this column, or, under a ceiling, across
+     *  to the nearest column within 3 that has one (a sprint swim's 5.1 ticks a block across, RISE_TICKS a block up);
+     *  200 if none. */
+    double ticksToAir(MoveState s) {
+        double eyeY = s.y + (s.swimPose || s.glidePose ? phys.body().swimEyeHeight : s.crouchPose ? phys.body().crouchEyeHeight
+            : phys.body().eyeHeight);
+        int bx = GameMath.floor(s.x), bz = GameMath.floor(s.z), by = GameMath.floor(eyeY);
+        double best = Double.MAX_VALUE;
+        for (int r = 0; r <= 3 && best == Double.MAX_VALUE; r++)
+            for (int dx = -r; dx <= r; dx++)
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    double top = openTop(bx + dx, by, bz + dz);
+                    if (Double.isNaN(top)) continue;
+                    double t = 3.0 + Math.hypot(dx, dz) * 5.1 + Math.max(0.0, top + 0.05 - eyeY) * RISE_TICKS;
+                    best = Math.min(best, t);
+                }
+        return best == Double.MAX_VALUE ? 200.0 : best;
+    }
+
+    /** The height of the water's top in column (x, z) above block y, where air is over it; NaN under a ceiling or
+     *  with no water top within 16. */
+    private double openTop(int x, int y, int z) {
+        BlockInfo b = phys.grid().get(x, y, z);
+        if (b.fluid != BlockInfo.WATER_FLUID) return b.shape.empty ? y : Double.NaN;   // eyes' block not water: there
+        for (int k = 1; k <= 16; k++) {
+            BlockInfo up = phys.grid().get(x, y + k, z);
+            if (up.fluid == BlockInfo.WATER_FLUID) continue;
+            if (!up.shape.empty || up.is(BlockInfo.SPECIAL)) return Double.NaN;   // a ceiling (or the snapshot's edge)
+            BlockInfo top = phys.grid().get(x, y + k - 1, z);
+            return y + k - 1 + top.fluidHeight;
+        }
+        return Double.NaN;
     }
 
     /**

@@ -162,7 +162,22 @@ public final class WorldSnapshot {
         b.swimEyeHeight = p.getDimensions(Pose.SWIMMING).eyeHeight();
         b.waterMovementEfficiency = (float) p.getAttributeValue(Attributes.WATER_MOVEMENT_EFFICIENCY);
         b.dolphinsGrace = p.hasEffect(MobEffects.DOLPHINS_GRACE);
+        b.maxAir = p.getMaxAirSupply();
+        b.oxygenBonus = p.getAttributeValue(Attributes.OXYGEN_BONUS);
+        b.turtleHelmet = p.getItemBySlot(EquipmentSlot.HEAD).is(net.minecraft.world.item.Items.TURTLE_HELMET);
         return b;
+    }
+
+    /** Ticks of water breathing left: the longest of Water Breathing and Conduit Power (and the Breath of the
+     *  Nautilus), endless counting as a day. */
+    static int breathingTicks(LocalPlayer p) {
+        int best = -1;   // none (the client's duration; the server's runs a tick longer: breathing while 0 too)
+        for (var e : new net.minecraft.core.Holder[]{MobEffects.WATER_BREATHING, MobEffects.CONDUIT_POWER, MobEffects.BREATH_OF_THE_NAUTILUS}) {
+            @SuppressWarnings("unchecked")
+            var inst = p.getEffect((net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect>) e);
+            if (inst != null) best = Math.max(best, inst.isInfiniteDuration() ? 24000 : inst.getDuration());
+        }
+        return best;
     }
 
     /** The player's movement state now (between ticks). */
@@ -183,6 +198,8 @@ public final class WorldSnapshot {
         s.eyesInWater = p.isEyeInFluid(net.minecraft.tags.FluidTags.WATER);
         s.waterHeight = p.getFluidHeight(net.minecraft.tags.FluidTags.WATER);
         s.fallFlying = p.isFallFlying();
+        s.air = p.getAirSupply();
+        s.waterBreathingTicks = breathingTicks(p);
         s.glidePose = p.getPose() == Pose.FALL_FLYING;
         s.sprintTriggerTime = ((MoveLocalPlayerAccessor) p).kine$sprintTriggerTime();
         s.noJumpDelay = ((MoveLivingAccessor) p).kine$noJumpDelay();

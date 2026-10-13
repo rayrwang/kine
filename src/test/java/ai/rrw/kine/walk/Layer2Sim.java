@@ -76,6 +76,8 @@ final class Layer2Sim {
     int gaits = RunModel.GAITS;
     /** Elytra hops: a glider worn, glides copied and offered (layer 1's glide moves, layer 2's glide gaits). */
     boolean glides = false;
+    /** Count the air in the search (off only to measure what it changes). */
+    boolean airAware = true;
     int glideTicks = 0;
 
     Layer2Sim(TestWorld w) {
@@ -132,6 +134,7 @@ final class Layer2Sim {
             }
             RunModel model = new RunModel(phys, f, gx, gz, 0f, costs.maxFall);
             model.gaits = glides ? RunModel.GLIDE_GAITS : gaits;
+            model.airAware = airAware;
             RecedingSearch<RunWorld> rs = new RecedingSearch<>(model);
             RunWorld root = new RunWorld(s.copy(), sentYaw, sentPitch);
             long t0 = System.nanoTime();
@@ -152,7 +155,8 @@ final class Layer2Sim {
             s = w.s;
             if (s.fallFlying) glideTicks++;
             sentYaw = w.sentYaw; sentPitch = w.sentPitch;
-            path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0), w.lastKeys});
+            path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
+                w.lastKeys, s.air, s.drownDamage});
             if (w.arrived) return new Outcome(true, t + 1, jumps, replans, worst, sum / replans, path, "");
         }
         return new Outcome(false, maxTicks, jumps, replans, worst, sum / replans, path, "out of ticks");

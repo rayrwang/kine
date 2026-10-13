@@ -24,10 +24,18 @@ public final class Traces {
     /** One tick as the game played it: keys, rotation sent, the state after it (older files have no pitch and no
      *  water flags: pitch 0, flags not compared). */
     public record Tick(int keys, float yaw, double x, double y, double z, double vx, double vy, double vz,
-                       boolean onGround, boolean sprinting, float pitch, int water) {
+                       boolean onGround, boolean sprinting, float pitch, int water, int air) {
+        /** No air recorded. */
+        public static final int NO_AIR = Integer.MIN_VALUE;
+
         public Tick(int keys, float yaw, double x, double y, double z, double vx, double vy, double vz, boolean onGround,
                     boolean sprinting) {
-            this(keys, yaw, x, y, z, vx, vy, vz, onGround, sprinting, 0.0F, -1);
+            this(keys, yaw, x, y, z, vx, vy, vz, onGround, sprinting, 0.0F, -1, NO_AIR);
+        }
+
+        public Tick(int keys, float yaw, double x, double y, double z, double vx, double vy, double vz, boolean onGround,
+                    boolean sprinting, float pitch, int water) {
+            this(keys, yaw, x, y, z, vx, vy, vz, onGround, sprinting, pitch, water, NO_AIR);
         }
         /** The water flags packed (in water 1, swimming 2, swimming pose 4, eyes in water 8), -1 when not recorded. */
         public static int water(boolean inWater, boolean swimming, boolean swimPose, boolean eyes) {
@@ -77,6 +85,7 @@ public final class Traces {
         w.printf(Locale.ROOT, "body2 %s %s %s %s %s %b%n", f(b.swimHeight), f(b.eyeHeight), f(b.crouchEyeHeight), f(b.swimEyeHeight),
             f(b.waterMovementEfficiency), b.dolphinsGrace);
         w.printf(Locale.ROOT, "body3 %b %d%n", b.glide, b.glideLandTicks);
+        w.printf(Locale.ROOT, "body4 %d %s %b%n", b.maxAir, d(b.oxygenBonus), b.turtleHelmet);
         w.printf(Locale.ROOT, "grid %d %d %d %d %d %d%n", g.x0, g.y0, g.z0, g.nx, g.ny, g.nz);
         List<BlockInfo> kinds = g.kinds();
         for (int i = 0; i < kinds.size(); i++) {
@@ -122,10 +131,14 @@ public final class Traces {
             s.onGroundNoBlocks, s.supX, s.supY, s.supZ, s.lastKeys, f(s.lastMoveForward));
         w.printf(Locale.ROOT, "start2 %b %b %b %b %s%n", s.swimPose, s.swimming, s.inWater, s.eyesInWater, d(s.waterHeight));
         w.printf(Locale.ROOT, "start3 %b %b %d%n", s.fallFlying, s.glidePose, s.glideGroundTicks);
+        w.printf(Locale.ROOT, "start4 %s %d%n", d(s.air), s.waterBreathingTicks);
     }
 
     public static void writeTick(PrintWriter w, Tick t) {
-        if (t.water() < 0) {
+        if (t.air() != Tick.NO_AIR) {
+            w.printf(Locale.ROOT, "tick %d %s %s %s %s %s %s %s %b %b %s %d %d%n", t.keys(), f(t.yaw()), d(t.x()), d(t.y()), d(t.z()),
+                d(t.vx()), d(t.vy()), d(t.vz()), t.onGround(), t.sprinting(), f(t.pitch()), t.water(), t.air());
+        } else if (t.water() < 0) {
             w.printf(Locale.ROOT, "tick %d %s %s %s %s %s %s %s %b %b%n", t.keys(), f(t.yaw()), d(t.x()), d(t.y()), d(t.z()),
                 d(t.vx()), d(t.vy()), d(t.vz()), t.onGround(), t.sprinting());
         } else {
@@ -192,6 +205,13 @@ public final class Traces {
                     body.swimEyeHeight = pf(p[4]); body.waterMovementEfficiency = pf(p[5]);
                     body.dolphinsGrace = Boolean.parseBoolean(p[6]);
                 }
+                case "start4" -> {
+                    MoveState s = run.start();
+                    s.air = pd(p[1]); s.waterBreathingTicks = Integer.parseInt(p[2]);
+                }
+                case "body4" -> {
+                    body.maxAir = Integer.parseInt(p[1]); body.oxygenBonus = pd(p[2]); body.turtleHelmet = Boolean.parseBoolean(p[3]);
+                }
                 case "body3" -> {
                     body.glide = Boolean.parseBoolean(p[1]); body.glideLandTicks = Integer.parseInt(p[2]);
                 }
@@ -231,7 +251,8 @@ public final class Traces {
                 }
                 case "tick" -> run.ticks().add(new Tick(Integer.parseInt(p[1]), pf(p[2]), pd(p[3]), pd(p[4]), pd(p[5]), pd(p[6]),
                     pd(p[7]), pd(p[8]), Boolean.parseBoolean(p[9]), Boolean.parseBoolean(p[10]),
-                    p.length > 11 ? pf(p[11]) : 0.0F, p.length > 12 ? Integer.parseInt(p[12]) : -1));
+                    p.length > 11 ? pf(p[11]) : 0.0F, p.length > 12 ? Integer.parseInt(p[12]) : -1,
+                    p.length > 13 ? Integer.parseInt(p[13]) : Tick.NO_AIR));
                 default -> {}
             }
         }
