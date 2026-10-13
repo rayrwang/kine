@@ -46,6 +46,7 @@ class PhantomModelTest {
                 plan = r.plan();
                 a = plan == null ? Moves.HOLD : plan[0];
                 if (a != Moves.HOLD) w.segmentYaw = FightModel.headingFor(w, Moves.direction(a));
+                w.planHeading = a == Moves.HOLD ? Float.NaN : w.segmentYaw;   // the real aura's sprint out reads it
             }
             w.tick(phys, FightModel.chooser(w, a, false), real);
         }

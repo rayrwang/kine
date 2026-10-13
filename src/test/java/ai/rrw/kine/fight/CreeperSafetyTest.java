@@ -45,6 +45,7 @@ class CreeperSafetyTest {
                 plan = r.plan();
                 a = plan == null ? Moves.HOLD : plan[0];
                 if (a != Moves.HOLD) w.segmentYaw = FightModel.headingFor(w, Moves.direction(a));
+                w.planHeading = a == Moves.HOLD ? Float.NaN : w.segmentYaw;   // the real aura's sprint out reads it
             }
             w.tick(phys, FightModel.chooser(w, a, false), real);
         }
@@ -86,5 +87,39 @@ class CreeperSafetyTest {
         } finally {
             System.clearProperty("creepers");
         }
+    }
+
+    /** RW's sprint out (2026-10-13): walking out of a lit creeper the aura lets it go and turns toward the way out, so
+     *  the player sprints. A creeper lit 3.5 blocks off, the aura on, survive: the player sprints, is past the turn-back
+     *  distance well before the fuse ends, and the creeper doesn't blow. */
+    @Test
+    void theWalkOutOfALitCreeperIsASprint() {
+        GroundPhysics phys = new GroundPhysics(FightBench.flat(40), new Body());
+        FightWorld w = scene(true, 5);
+        w.mobs[0].x = 0.5 + 3.5;
+        w.aura.k = 100;
+        FightModel model = new FightModel(phys, 0.0);
+        RecedingSearch<FightWorld> rs = new RecedingSearch<>(model);
+        RecedingSearch.Effort e = new RecedingSearch.Effort();
+        e.beam = 3; e.depth = 4; e.hold = CombatMovement.CREEPER_HOLD; e.draws = 2; e.budgetNanos = 1_000_000_000L;
+        SplittableRandom real = new SplittableRandom(1);
+        int[] plan = null;
+        boolean sprinted = false;
+        int outAt = -1;
+        for (int t = 0; t < 40 && w.alive() > 0; t++) {
+            RecedingSearch.Result r = rs.plan(w, plan, plan == null ? 0 : 1, e, 7919L + t);
+            plan = r.plan();
+            int a = plan == null ? Moves.HOLD : plan[0];
+            if (a != Moves.HOLD) w.segmentYaw = FightModel.headingFor(w, Moves.direction(a));
+            w.planHeading = a == Moves.HOLD ? Float.NaN : w.segmentYaw;
+            w.tick(phys, FightModel.chooser(w, a, false), real);
+            sprinted |= w.player.sprinting;
+            MobSim c = w.mobs[0];
+            if (outAt < 0 && Math.hypot(c.x - w.player.x, c.z - w.player.z) > MobSim.SWELL_BACK) outAt = t;
+        }
+        System.out.printf("sprint out: sprinted %b, past 7.15 at tick %d, creeper exploded %b%n", sprinted, outAt, w.mobs[0].exploded);
+        assertTrue(sprinted, "sprinted");
+        assertTrue(outAt >= 0 && outAt < 20, "out at " + outAt);
+        assertFalse(w.mobs[0].exploded, "blew up");
     }
 }

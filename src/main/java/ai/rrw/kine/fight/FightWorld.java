@@ -56,6 +56,8 @@ public final class FightWorld {
     public double extraNow;
     /** Ticks since a mob in the fight last lost health, at the snapshot (the idle cost grows with it). */
     public int lull;
+    /** This tick's heading in the plan (FightModel.step), NaN when it holds still: the aura's sprint out reads it. */
+    public float planHeading = Float.NaN;
     /** The ticks of a creeper's fuse a plan wants left over when it has walked out of it (FightModel.copy sets it from the
      *  slider and the lag; FightModel.creepersDanger). */
     public int fuseMargin;
@@ -114,6 +116,8 @@ public final class FightWorld {
     public double[] tick(GroundPhysics phys, Keys chooser, SplittableRandom rnd) {
         if (kbIn > 0 && --kbIn == 0) { player.vx = kbx; player.vy = kby; player.vz = kbz; }
         if (pushIn > 0 && --pushIn == 0) { player.vx += pushX; player.vy += pushY; player.vz += pushZ; }
+        aura.fleeing = AuraSim.fleeing(mobs, player.x, player.y, player.z, planHeading);   // the sprint out
+        aura.fleeYaw = planHeading;
         double dealtNow = aura.tick(player, pdx, pdz, phys.body().walkSpeed, mobs);
         int keys = chooser.at(aura.sentYaw);
         // pushes: each mob whose box meets the player's pushes it away (Entity.push, by the mob's client copy)

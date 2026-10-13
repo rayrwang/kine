@@ -1,6 +1,7 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.mixin.PlayerAccessor;
@@ -296,9 +297,13 @@ public final class KillAura {
         Vec3 eye = p.getEyePosition();
         AABB area = p.getBoundingBox().inflate(reach + 1.0);
 
+        // combat movement walking you out of lit creepers (RW's sprint out): not targets, and the rotation goes toward
+        // the way out instead of your view, so the walk out can be a sprint
+        CombatMovement.Escape esc = CombatMovement.escape(p);
+        if (esc != null) view = new float[]{esc.yaw(), viewPitch};
         List<LivingEntity> found = new ArrayList<>();
         for (Entity e : mc.level.getEntities(p, area, x -> isTarget(x, p)))
-            if (eyeToBox(eye, e.getBoundingBox()) <= reach) found.add((LivingEntity) e);
+            if (eyeToBox(eye, e.getBoundingBox()) <= reach && (esc == null || !esc.flees(e))) found.add((LivingEntity) e);
         if (found.isEmpty()) return view;
         found.sort(Comparator.comparingDouble(t -> eye.distanceToSqr(t.getBoundingBox().getCenter())));   // the plan's list order
 

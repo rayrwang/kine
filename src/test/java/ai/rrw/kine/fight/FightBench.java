@@ -121,6 +121,7 @@ public final class FightBench {
                 plan = r.plan();
                 int action = plan == null ? Moves.HOLD : plan[0];
                 if (action != Moves.HOLD) truth.segmentYaw = FightModel.headingFor(truth, Moves.direction(action));
+                truth.planHeading = action == Moves.HOLD ? Float.NaN : truth.segmentYaw;   // the real aura's sprint out reads it
                 final int act = action;
                 truth.tick(phys, FightModel.chooser(truth, act, ideal), real);
             } else {

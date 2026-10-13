@@ -247,4 +247,23 @@ class MobModelTest {
         assertTrue(v[0] < 1e-4, "vex " + v[0]);
         assertEquals(0.0, v[2], "vex hits");
     }
+
+    /** mob_traces_breeze.txt.gz: run trace8_breeze (lockstep, no lag): a breeze 9 blocks from a still player and from
+     *  one strafing. Every wind charge leaves 16 ticks after the SHOOTING pose (the copy's 15, a tick early), flies
+     *  within 1e-4 of the copy, and the copy's hit matched the player's loss for all but one of fifteen. */
+    @Test
+    void breezesShootAsTheRealOnes() throws Exception {
+        Map<String, MobCheck.Scene> sc;
+        try (InputStream in = new GZIPInputStream(MobModelTest.class.getResourceAsStream("/move/mob_traces_breeze.txt.gz"))) {
+            sc = MobCheck.read(in);
+        }
+        double wrong = 0;
+        for (String name : new String[]{"br_still", "br_side"}) {
+            double[] r = MobCheck.breezes(sc.get(name));
+            assertTrue(r[0] < 1e-4, name + ": flight " + r[0]);
+            assertEquals(0.0, r[1], name + ": launch ticks");
+            wrong += r[2];
+        }
+        assertTrue(wrong <= 1, "hits wrong " + wrong);
+    }
 }

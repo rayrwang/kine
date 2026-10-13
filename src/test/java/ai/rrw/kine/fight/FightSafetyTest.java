@@ -88,6 +88,7 @@ class FightSafetyTest {
             plan = r.plan();
             int a = plan == null ? Moves.HOLD : plan[0];
             if (a != Moves.HOLD) truth.segmentYaw = FightModel.headingFor(truth, Moves.direction(a));
+            truth.planHeading = a == Moves.HOLD ? Float.NaN : truth.segmentYaw;   // the real aura's sprint out reads it
             truth.tick(phys, FightModel.chooser(truth, a, false), real);
             lowest = Math.min(lowest, truth.player.y);
             maxX = Math.max(maxX, truth.player.x);

@@ -103,7 +103,7 @@ public final class FightModel implements Model<FightWorld> {
         return (int) Math.round(2.0 + w.lag + FUSE_MARGIN * (1.0 - slider));
     }
 
-    static final double FUSE_MARGIN = Double.parseDouble(System.getProperty("kine.fuseMargin", "4"));
+    static final double FUSE_MARGIN = 4.0;
 
     /** How much further than SWELL_BACK a survive plan has to be from a lit creeper for its fuse to wind down: in a
      *  lockstep run the plan held the player 6.7 to 7.3 blocks off (the model's edge) and the real creepers blew up with
@@ -116,6 +116,7 @@ public final class FightModel implements Model<FightWorld> {
     public double step(FightWorld w, int action, int tickInSegment, SplittableRandom rnd) {
         if (action != Moves.HOLD && (tickInSegment == 0 || Float.isNaN(w.segmentYaw)))
             w.segmentYaw = headingFor(w, Moves.direction(action));
+        w.planHeading = action == Moves.HOLD ? Float.NaN : w.segmentYaw;
         double wh = wHealth(w);   // before this tick's loss
         // the nearest live mob before the move: the idle cost asks whether the player backs away from it
         MobSim near = null;
@@ -461,6 +462,11 @@ public final class FightModel implements Model<FightWorld> {
         }
         if (n == 0) return 0.0;
         double slack = w.fuseMargin;
+        // the aura lets a lit creeper go while the player walks out of it (the sprint out) unless another mob is in
+        // its reach to face
+        boolean sprintOut = true;
+        for (MobSim m : w.mobs)
+            if (m.alive && m.kind != MobSim.Kind.CREEPER && Math.hypot(m.x - p.x, m.z - p.z) < w.aura.reach + 1.0) sprintOut = false;
         double best = Double.MAX_VALUE;
         for (int k = 0; k <= 16 && best > 0; k++) {
             double ux, uz;
@@ -475,17 +481,17 @@ public final class FightModel implements Model<FightWorld> {
             for (MobSim c : w.mobs) {
                 if (!threat(w, c, margin)) continue;
                 int left = c.maxSwell - c.swell;
-                // the time along the way out until beyond swellBack of this one: |r + u v t| = R
+                // the way along the way out until beyond swellBack of this one: |r + u s| = R, then its ticks
                 double rx = p.x - c.x, ry = p.y - c.y, rz = p.z - c.z;
-                double b = (rx * ux + rz * uz) * ESCAPE_SPEED, a = ESCAPE_SPEED * ESCAPE_SPEED;
+                double b = rx * ux + rz * uz;
                 double cc = rx * rx + ry * ry + rz * rz - w.swellBack * w.swellBack;
                 if (cc > 0) continue;   // out already: its fuse winds down from the next tick
-                double t = (-b + Math.sqrt(Math.max(0.0, b * b - a * cc))) / a;
+                double t = escapeTicks(-b + Math.sqrt(Math.max(0.0, b * b - cc)), sprintOut);
                 if (t + slack < left) continue;
                 // the share of the margin the way out eats into: none with the whole margin left, all with none
                 double share = Math.min(1.0, (t + slack - left) / Math.max(1.0, slack));
-                double at = Math.max(0, left - 1);
-                double ex = rx + ux * ESCAPE_SPEED * at, ez = rz + uz * ESCAPE_SPEED * at;
+                double at = Math.max(0, left - 1), gone = escapeWay(at, sprintOut);
+                double ex = rx + ux * gone, ez = rz + uz * gone;
                 cost += share * (w.scale(blastAt(c, Math.min(Math.sqrt(ex * ex + ry * ry + ez * ez), w.swellBack))) + blastCost());
                 if (cost >= best) break;
             }
@@ -495,33 +501,27 @@ public final class FightModel implements Model<FightWorld> {
     }
 
     /**
-     * Below kill fast, a tick in a creeper's middle band, too far to hit it and too near to be safe from it: one not lit
-     * between the aura's reach and FUSE + 2.5 (it may walk in and light), one lit between the reach and the plan's
-     * swellBack (its fuse runs on). RW, verbatim: "it shoudl go in, hit and come back out with both going in far, and
-     * coming out far, rahter than huanging out int eh idddle which is bad both bc ccan' thit the creperm, and if it
-     * litghts not far enoguh away to defuse it". Passing through is free (in toward one not lit, out from a lit one,
-     * at BAND_PACE or more). In health before the weight, a tick.
+     * Below kill fast, a tick in a lit creeper's middle band: too far to hit it (beyond the aura's reach) and too near
+     * for its fuse to wind down (inside the plan's swellBack). RW, verbatim: "it shoudl go in, hit and come back out
+     * with both going in far, and coming out far, rahter than huanging out int eh idddle which is bad both bc ccan' thit
+     * the creperm, and if it litghts not far enoguh away to defuse it". Walking out at BAND_PACE or more is free. (A
+     * band for creepers not lit was tried too: it kept the player out and slowed the kills.) In health before the
+     * weight, a tick.
      */
     double creeperBand(FightWorld w) {
         if (slider >= 1.0) return 0.0;
         double c = 0;
         for (MobSim m : w.mobs) {
-            if (!m.alive || m.kind != MobSim.Kind.CREEPER) continue;
+            if (!m.alive || m.kind != MobSim.Kind.CREEPER || !(m.swellDir > 0 || m.swelling)) continue;
             double dx = m.x - w.player.x, dy = m.y - w.player.y, dz = m.z - w.player.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            double reach = w.aura.reach + m.width / 2;
-            boolean lit = m.swellDir > 0 || m.swelling;
-            if (!lit && !UNLIT_BAND) continue;
-            if (d <= reach || d >= (lit ? w.swellBack : FUSE + 2.5)) continue;
-            // passing through is free: going in toward one not lit, or out from a lit one, at a good pace
-            double ux = dx / d, uz = dz / d, toward = w.pdx * ux + w.pdz * uz;
-            if (lit ? toward < -BAND_PACE : toward > BAND_PACE) continue;
+            if (d <= w.aura.reach + m.width / 2 || d >= w.swellBack) continue;
+            if (w.pdx * dx / d + w.pdz * dz / d < -BAND_PACE) continue;   // on its way out
             c += BAND_COST * (1.0 - slider);
         }
         return c;
     }
 
-    static final double BAND_COST = Double.parseDouble(System.getProperty("kine.band", "0.5")), BAND_PACE = 0.15;
-    static final boolean UNLIT_BAND = Boolean.parseBoolean(System.getProperty("kine.unlitBand", "false"));
+    static final double BAND_COST = 0.5, BAND_PACE = 0.15;
 
     /** Below kill fast, each creeper still alive at the plan's end: a lasting danger, so a plan that hits it is worth
      *  more (CREEPER_LEFT for one at full health, a quarter of it at none). */
@@ -534,7 +534,7 @@ public final class FightModel implements Model<FightWorld> {
         return c;
     }
 
-    static final double CREEPER_LEFT = Double.parseDouble(System.getProperty("kine.creeperLeft", "10"));
+    static final double CREEPER_LEFT = 10.0;
 
     /** Below kill fast, creepers on more than one side: within 8 blocks, the widest way out between them (the largest
      *  gap in their directions from the player) under 180 degrees costs a share of a blast, all of it with no gap at
@@ -561,9 +561,23 @@ public final class FightModel implements Model<FightWorld> {
     /** The share of a blast for creepers all around the player. */
     static final double AROUND_SHARE = 0.5;
 
-    /** How fast the player gets away from creepers: a walk (the aura turns the player toward a mob, and sprinting
-     *  needs W within 67.5 degrees of that). */
-    static final double ESCAPE_SPEED = 0.216;
+    /** How fast the player gets away from creepers: a walk (0.216 a tick) while the aura faces a mob, since sprinting
+     *  needs W within 67.5 degrees of the rotation; with the sprint out (the aura turning to the way out at up to 30
+     *  degrees a tick once a lit creeper is let go) a walk for ESCAPE_TURN ticks, then a sprint (0.28). */
+    static final double ESCAPE_SPEED = 0.216, ESCAPE_SPRINT = 0.28;
+    static final int ESCAPE_TURN = 5;
+
+    /** Ticks to go `way` blocks on the way out. */
+    static double escapeTicks(double way, boolean sprint) {
+        if (!sprint || way <= ESCAPE_TURN * ESCAPE_SPEED) return way / ESCAPE_SPEED;
+        return ESCAPE_TURN + (way - ESCAPE_TURN * ESCAPE_SPEED) / ESCAPE_SPRINT;
+    }
+
+    /** Blocks gone on the way out in `ticks` ticks. */
+    static double escapeWay(double ticks, boolean sprint) {
+        if (!sprint || ticks <= ESCAPE_TURN) return ticks * ESCAPE_SPEED;
+        return ESCAPE_TURN * ESCAPE_SPEED + (ticks - ESCAPE_TURN) * ESCAPE_SPRINT;
+    }
 
     /** A creeper whose fuse runs, or that is within its fuse distance plus the margin (about to start). */
     private static boolean threat(FightWorld w, MobSim c, double margin) {

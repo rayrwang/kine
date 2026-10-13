@@ -212,6 +212,33 @@ public final class CombatMovement {
         job = null;
     }
 
+    /** A way out of lit creepers this tick: the heading, and the creepers fled (entity ids). */
+    public record Escape(float yaw, java.util.Set<Integer> ids) {
+        public boolean flees(net.minecraft.world.entity.Entity e) { return ids.contains(e.getId()); }
+    }
+
+    /**
+     * RW's sprint out (2026-10-13, his "ok"): while combat movement walks you away from lit creepers (it moved you last
+     * tick, and its plan's action now heads away from every lit creeper within 8 blocks: AuraSim.fleeing), the way out
+     * and the creepers fled, else null. The kill aura then neither swings at nor faces them, and with nothing else in
+     * reach turns toward the way out (within its turn a tick), so the walk out can be a sprint. Read by KillAura before
+     * the keybinds, so it goes by the plan in hand.
+     */
+    public static Escape escape(LocalPlayer p) {
+        RecedingSearch.Result r = lastResult;
+        FightSnapshot.Shot shot = lastShot;
+        if (!Settings.combatMovement || !controlling || r == null || r.plan() == null || shot == null) return null;
+        int at = Math.max(0, tick - lastResultTick);
+        if (at >= r.plan().length || r.plan()[at] == Moves.HOLD) return null;
+        float heading = FightModel.headingFor(shot.world(), Moves.direction(r.plan()[at]));
+        MobSim[] mobs = shot.world().mobs;
+        boolean[] f = AuraSim.fleeing(mobs, p.getX(), p.getY(), p.getZ(), heading);
+        if (f == null) return null;
+        java.util.Set<Integer> ids = new java.util.HashSet<>();
+        for (int i = 0; i < mobs.length; i++) if (f[i]) ids.add(mobs[i].id);
+        return new Escape(heading, ids);
+    }
+
     /**
      * Where the movement keys are read (VanillaActions.adjustInput, right after the kill aura's swap of your keys):
      * your keys if you press any or it has nothing to do, else the keys of the plan's first action at this tick's

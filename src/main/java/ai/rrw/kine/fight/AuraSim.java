@@ -29,9 +29,41 @@ public final class AuraSim {
     public double turnBudget = 29.5;
     /** Swings made in the simulation so far. */
     public int swings = 0;
-    /** A plan's caution (FightModel.copy, below the middle of the slider): a lit creeper is never killed by the plan's
-     *  aura, it keeps 1 health, so the plan walks out of every fuse rather than count on the kill landing in time. */
+    /** A plan's caution (FightModel.copy, below the middle of the slider): a lit creeper past LIT_KILL_SWELL is never
+     *  killed by the plan's aura, it keeps 1 health, so the plan walks out of the fuse rather than count on the kill
+     *  landing in its last ticks. */
     public boolean noLitKill = false;
+    /** How far a lit creeper's fuse may have run for a cautious plan still to count on killing it: early in the fuse a
+     *  missed kill leaves time to walk out. In a lockstep run a creeper on 4 health was never finished off: the plan
+     *  could not count on the kill and kept the player just out of its fuse range. */
+    static final int LIT_KILL_SWELL = 12;
+
+    /** This tick's way out of a lit creeper (FightWorld sets it from the plan's heading, as CombatMovement.escape does
+     *  for the real aura), NaN if not walking out; and which mobs are being fled. The aura neither swings at nor faces
+     *  a creeper being fled, and with nothing else in reach turns toward the way out, so the player can sprint. */
+    public float fleeYaw = Float.NaN;
+    public boolean[] fleeing;
+
+    /** RW's sprint out (2026-10-13): the lit creepers within FLEE_RANGE (3D) of the player when the heading points away
+     *  from every one of them (within FLEE_COS of straight away), else null: no lit creeper near, or the heading isn't
+     *  away from one, and the aura behaves as always. */
+    public static boolean[] fleeing(MobSim[] mobs, double px, double py, double pz, float heading) {
+        if (Float.isNaN(heading)) return null;
+        double r = Math.toRadians(heading), hx = -Math.sin(r), hz = Math.cos(r);
+        boolean[] f = null;
+        for (int i = 0; i < mobs.length; i++) {
+            MobSim m = mobs[i];
+            if (!m.alive || m.kind != MobSim.Kind.CREEPER || !(m.swellDir > 0 || m.swelling)) continue;
+            double dx = px - m.x, dy = py - m.y, dz = pz - m.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz), flat = Math.hypot(dx, dz);
+            if (d > FLEE_RANGE) continue;
+            if (flat < 1e-6 || (hx * dx + hz * dz) / flat < FLEE_COS) return null;   // not away from this one
+            if (f == null) f = new boolean[mobs.length];
+            f[i] = true;
+        }
+        return f;
+    }
+
+    static final double FLEE_RANGE = 8.0, FLEE_COS = 0.5;
 
     public AuraSim copy() {
         AuraSim a = new AuraSim();
@@ -49,8 +81,13 @@ public final class AuraSim {
         if (!on) { sentYaw = viewYaw; return 0.0; }
         double ex = p.x, ey = p.y + eyeHeight, ez = p.z;
         List<MobSim> found = new ArrayList<>();
-        for (MobSim m : mobs) if (m.alive && eyeToBox(ex, ey, ez, m, m.seen()) <= reach) found.add(m);
-        if (found.isEmpty()) { turnToward(viewYaw); return 0.0; }
+        for (int i = 0; i < mobs.length; i++) {
+            MobSim m = mobs[i];
+            if (fleeing != null && fleeing[i]) continue;   // a lit creeper being walked out of
+            if (m.alive && eyeToBox(ex, ey, ez, m, m.seen()) <= reach) found.add(m);
+        }
+        float rest = fleeing != null ? fleeYaw : viewYaw;   // where the rotation goes with nothing to aim at
+        if (found.isEmpty()) { turnToward(rest); return 0.0; }
         found.sort((a, b) -> Double.compare(d2(ex, ey, ez, a), d2(ex, ey, ez, b)));
         boolean canSweep = p.onGround && !p.sprinting && pdx * pdx + pdz * pdz < moveSpeed * 2.5 * moveSpeed * 2.5 && weapon.sword();
         List<SwingPlan.Mob> plan = new ArrayList<>(found.size());
@@ -95,7 +132,7 @@ public final class AuraSim {
             double[] at = m.seen();
             turnToward((float) yawTo(ex, ez, at[0], at[2]));
         } else {
-            turnToward(viewYaw);
+            turnToward(rest);
         }
         return 0.0;
     }
@@ -153,7 +190,8 @@ public final class AuraSim {
             m.freshIn = SwingPlan.WINDOW;
         }
         double taken = Math.min(m.health, SwingPlan.afterArmour(through, m.armour, m.toughness));
-        if (noLitKill && m.kind == MobSim.Kind.CREEPER && (m.swellDir > 0 || m.swelling)) taken = Math.min(taken, Math.max(0.0, m.health - 1.0));
+        if (noLitKill && m.kind == MobSim.Kind.CREEPER && (m.swellDir > 0 || m.swelling) && m.swell > LIT_KILL_SWELL)
+            taken = Math.min(taken, Math.max(0.0, m.health - 1.0));
         m.health -= taken;
         if (m.health <= 1e-9) { m.alive = false; m.health = 0; }
         if (m.kind == MobSim.Kind.PHANTOM && taken > 0) m.swoop = false;   // hurt, it breaks off the swoop
