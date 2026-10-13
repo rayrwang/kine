@@ -24,6 +24,8 @@ final class Layer2View {
     static final double FADE_S = 1.0;
     // colours: candidates from violet (scored worst) to cyan (best), the kept ones pale cyan, the chosen plan gold
     static final int WORST = 0x5A3CC8, BEST = 0x3CDCFF, KEPT = 0xB4F5FF, CHOSEN = 0xFFD24A;
+    /** The chosen plan's line width. */
+    static final float CHOSEN_W = 10.0F;
 
     /** The colour between a and b, t from 0 (a) to 1 (b). */
     static int mix(int a, int b, float t) {
@@ -87,7 +89,7 @@ final class Layer2View {
                 n++;
             }
             if (r.plan() != null) {
-                run(model, root, r.plan(), hold, true, b, 0xF8 << 24 | CHOSEN, 6.0F);
+                run(model, root, r.plan(), hold, true, b, 0xF8 << 24 | CHOSEN, CHOSEN_W);
                 n++;
             }
             return new Frame(b, n);

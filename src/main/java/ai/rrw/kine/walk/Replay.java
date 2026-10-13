@@ -23,7 +23,7 @@ import java.util.Arrays;
 final class Replay {
     /** At most this many tree segments are drawn in the detailed display (the first seen). */
     static final int MAX_SEGMENTS = 60_000;
-    static final float TREE_W = 2.5F, GRID_W = 2.0F, ROUTE_W = 3.5F, BEYOND_W = 1.5F, FEEL_W = 4.0F, TAUT_W = 3.5F;
+    static final float TREE_W = 2.5F, GRID_W = 2.0F, ROUTE_W = 7.0F, BEYOND_W = 1.5F, FEEL_W = 4.0F, TAUT_W = 7.0F;
     /** The feeler's steps over the replay, and the tightening's keyframes. */
     static final int FEEL_STEPS = 72, TAUT_STEPS = 24;
     /** The search's colour (red is kine's warning colour, gold layer 2's chosen run, magenta the route, cyan the walk's
