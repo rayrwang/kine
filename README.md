@@ -77,6 +77,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Rarely stuck at the top of steep drops
 		- Long-range search display needs rework
 		- Rails still a bit rough
+	- Kill aura turning to hit while the pathfinder walks puts the walk's keys off its heading (up to 22.5 degrees, sprint drops)
 	- Aimbot:
 		- A held target out of reach blocks the others until the mouse moves
 		- Check auto aim's turns for the same stutter
