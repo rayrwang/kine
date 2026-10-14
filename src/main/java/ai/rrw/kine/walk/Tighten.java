@@ -185,6 +185,21 @@ final class Tighten {
     }
 
     /** The ground along the route for drawing, the route's length and its time from the blocks underfoot. */
+    /** A straight route of two points, floor a to floor b (walking without a route: the way between is layer 2's). */
+    Route straight(long a, long b, int goalX, int goalZ) {
+        double[] x = {View.nodeX(a) + 0.5, View.nodeX(b) + 0.5}, z = {View.nodeZ(a) + 0.5, View.nodeZ(b) + 0.5};
+        double[] y = {height(a), height(b)};
+        Route r = new Route(x, y, z, new byte[]{(byte) Graph.START, (byte) Graph.WALK}, 2, false, goalX, goalZ);
+        r.straightLength = r.gridLength = Math.hypot(x[1] - x[0], z[1] - z[0]);
+        groundAndTime(r);
+        return r;
+    }
+
+    private double height(long key) {
+        ChunkFloors ch = v.chunk(View.nodeX(key), View.nodeZ(key));
+        return ch.h(v.index(key));
+    }
+
     private void groundAndTime(Route r) {
         List<float[]> g = new ArrayList<>();
         sweep.record = true;

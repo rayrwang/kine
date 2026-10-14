@@ -35,6 +35,9 @@ public final class ChunkFloors {
     /** A plain floor: the floor block's top covers the whole cell at the floor's height, and the whole cell is as free
      *  above it as the footprint is. Links between plain floors need no sweep. */
     public static final int SIMPLE = 8;
+    /** Plain but for a climbable without a collision at the feet (a vine hanging over the grass): a jump up onto it or
+     *  a drop down into it is as plain a move as onto a plain floor. */
+    public static final int CLIMB_PLAIN = 16;
 
     public static final int WINDOW = 4;
     /** Free heights are measured up to this far above a floor (a fall into water can be longer than a safe fall). */

@@ -157,6 +157,17 @@ public class KineSettingsScreen extends Screen {
     private static final String DESC_WALK_LAYER2_DISPLAY =
         "Shows the runs the movement search tries as thin lines of where your feet would go, jumps as arcs, the ones it "
         + "kept brighter and the one it chose in gold; they fade over a second.";
+    private static final String DESC_WALK_PARKOUR =
+        "Lets the walk jump across gaps (pits, ravines, lava) where the jump is faster than the way round. Off by "
+        + "default: a jump that falls short lands in the gap. Off, the walk goes round, and the movement search never "
+        + "jumps a gap it would fall into.";
+    private static final String DESC_WALK_DIRECT =
+        "When the pathfinder finds no way to a destination within 48 blocks, the movement search tries on its own, "
+        + "heading for the destination in its copy of the game's movement (it may find a way the route planner has no "
+        + "move for). It keeps Parkour's setting. Off: the walk stops with no path.";
+    private static final String DESC_WALK_FREE_JUMPS =
+        "With Parkour on, near a jump the movement search also tries any heading to the degree and the jump on any tick, "
+        + "turning in the air toward the landing, with or without a 45 strafe, beside its usual moves.";
     private static final String DESC_WALK_ELYTRA_HOPS =
         "With an elytra worn, the movement search may open it in the air to glide short hops, off ledges and over gaps "
         + "where that is faster. Off by default: gliding wears the elytra (a point of durability a second).";
@@ -324,6 +335,9 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Detailed search display", DESC_WALK_SEARCH_DETAILED, Settings.WALK_SEARCH_DETAILED, () -> Settings.walkSearchDisplay, null),
             Opt.of("Movement search", DESC_WALK_LAYER2, Settings.WALK_LAYER2),
             Opt.of("Movement search display", DESC_WALK_LAYER2_DISPLAY, Settings.WALK_LAYER2_DISPLAY),
+            Opt.of("Parkour", DESC_WALK_PARKOUR, Settings.WALK_PARKOUR),
+            Opt.of("Movement search without a route", DESC_WALK_DIRECT, Settings.WALK_DIRECT),
+            Opt.of("Free moves near jumps", DESC_WALK_FREE_JUMPS, Settings.WALK_FREE_JUMPS, () -> Settings.walkParkour, null),
             Opt.of("Elytra hops", DESC_WALK_ELYTRA_HOPS, Settings.WALK_ELYTRA_HOPS),
             Opt.of("Distance and ETA", DESC_WALK_READOUTS, Settings.WALK_READOUTS),
             Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,

@@ -51,6 +51,8 @@ final class RunModel implements Model<RunWorld> {
     static final double DROWN_COST = 60.0, AIR_RESERVE = 30.0, AIR_TICK = 0.02, RISE_TICKS = 8.0;
     /** Count the air (on; off only to measure what it changes). */
     boolean airAware = true;
+    /** Parkour (the setting): off, a run that crosses a gap in the air and lands on its far side is UNSAFE (gapCheck). */
+    boolean parkour = true;
     /** The segment length in water: a sprint swim pays only after sinking until the eyes are under, about 35 ticks
      *  from floating at the top (measured on the copy), so the horizon there is 5 segments of 8 ticks. */
     static final int WATER_HOLD = 8;
@@ -70,9 +72,42 @@ final class RunModel implements Model<RunWorld> {
     /** Actions: 0 is no keys; then gait-major, a = 1 + gait * DIRS + dir, so a model with fewer gaits is a prefix. */
     static final int STOP = 0, COUNT = 1 + DIRS * GAITS;
 
-    static int dir(int a) { return a == STOP ? -1 : (a - 1) % DIRS; }
-    static int gait(int a) { return a == STOP ? -1 : (a - 1) / DIRS; }
+    static int dir(int a) { return a == STOP ? -1 : isFree(a) ? -1 : (a - 1) % DIRS; }
+    static int gait(int a) { return a == STOP ? -1 : isFree(a) ? freeGait(a) : (a - 1) / DIRS; }
     static int action(int dir, int gait) { return 1 + gait * DIRS + dir; }
+
+    /**
+     * Free actions, near a jump (RW, 2026-10-13: layer 2 "only has sdicrete angles ... maybe nee dmore ocntinous"): any
+     * heading to the degree, or toward the jump's landing recomputed every tick, with a gait and a strafe (the view
+     * turned 45 degrees off the heading, the 45 strafe); turning every tick, so a jump can start on any tick and turn in
+     * the air. Not in the beam's own set: offered as whole plans when a jump is ahead (plan).
+     */
+    static final int FREE_BASE = 1000, FREE_TOWARD = 360;
+    static boolean isFree(int a) { return a >= FREE_BASE; }
+    static int free(int gait, int strafe, int headingCode) { return FREE_BASE + ((gait * 3 + strafe + 1) * 361) + headingCode; }
+    static int freeGait(int a) { return (a - FREE_BASE) / 361 / 3; }
+    static int freeStrafe(int a) { return (a - FREE_BASE) / 361 % 3 - 1; }
+    static int freeCode(int a) { return (a - FREE_BASE) % 361; }
+    static int headingCode(float yaw) { return Math.floorMod(Math.round(yaw) + 180, 360); }
+
+    /** The jump ahead the free actions aim at (the landing's centre and floor), or NaN when none. */
+    double targetX = Double.NaN, targetY, targetZ;
+    /** Replans that offered free plans (for tests). */
+    int freeSeeds;
+    /** The free search's memory toward this landing (kept by the caller between replans; null: none), and the tick
+     *  on the walk's clock. */
+    FreeMemory freeMemory;
+    int now;
+    /** The time the free plans took to score, and how many were scored (all replans of this model). */
+    long freeNanos;
+    int freeRollouts;
+
+    /** A free action's movement heading from where the run is. */
+    float freeHeading(int a, MoveState s) {
+        int c = freeCode(a);
+        if (c == FREE_TOWARD && !Double.isNaN(targetX)) return yawTo(s, targetX, targetZ);
+        return c == FREE_TOWARD ? descent(s) : c - 180f;
+    }
 
     final GroundPhysics phys;
     final Field field;
@@ -104,18 +139,30 @@ final class RunModel implements Model<RunWorld> {
     public double step(RunWorld w, int a, int tickInSegment, SplittableRandom rnd) {
         if (w.arrived) return 0.0;
         MoveState s = w.s;
-        if (tickInSegment == 0 || Float.isNaN(w.segYaw)) w.segYaw = a == STOP ? w.sentYaw : heading(s, dir(a));
+        if (isFree(a)) {
+            // every tick: the heading, and the view 45 degrees off it for a strafe
+            w.segHeading = freeHeading(a, s);
+            w.segYaw = w.segHeading - freeStrafe(a) * 45f;
+        } else {
+            if (tickInSegment == 0 || Float.isNaN(w.segYaw)) w.segYaw = a == STOP ? w.sentYaw : heading(s, dir(a));
+            w.segHeading = Float.NaN;
+        }
         w.segPitch = pitch(a, s.inWater);
         turn(w);
-        int keys = keys(a, w.segYaw, w.sentYaw, s.inWater, s.onGround, s.fallFlying, s.lastKeys);
+        int keys = keys(a, isFree(a) ? w.segHeading : w.segYaw, w.sentYaw, s.inWater, s.onGround, s.fallFlying, s.lastKeys);
         double y0 = s.y, fall0 = s.fallDistance, drowned0 = s.drownDamage;
         boolean air0 = !s.onGround;
         phys.step(s, keys, w.sentYaw, w.sentPitch);
         w.lastKeys = keys;
-        if (w.ticks == 0) { w.firstYaw = w.segYaw; w.firstPitch = w.segPitch; w.firstKeys = keys; }
+        if (w.ticks == 0) { w.firstYaw = w.segYaw; w.firstPitch = w.segPitch; w.firstKeys = keys; w.firstHeading = w.segHeading; }
         w.ticks++;
         w.record();
         double c = 1.0 + marks(s, air0, y0, fall0) + (s.fallFlying ? GLIDE_WEAR : 0.0);
+        if (!parkour) {
+            double[] g = {w.takeoffY, w.gapFloor, w.gapValue};
+            c += gapCheck(s, g);
+            w.takeoffY = g[0]; w.gapFloor = g[1]; w.gapValue = g[2];
+        }
         if (airAware) {
             c += (s.drownDamage - drowned0) * DROWN_COST;
             if (s.eyesInWater && s.waterBreathingTicks < 0) c += AIR_TICK;
@@ -175,8 +222,12 @@ final class RunModel implements Model<RunWorld> {
     /** Whether the walk would count the player as arrived. */
     boolean arrived(MoveState s) {
         double dx = goalX - s.x, dz = goalZ - s.z;
-        return dx * dx + dz * dz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s));
+        return dx * dx + dz * dz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s))
+            && (Double.isNaN(goalY) || Math.abs(s.y - goalY) < 0.6);
     }
+
+    /** The destination's Y (feet): only that floor of the goal column is arriving (within 0.6); NaN: any floor. */
+    double goalY = Double.NaN;
 
     /** This tick's marks: a hurting landing, hurting blocks, a glide, movement the copy leaves out. */
     private double marks(MoveState s, boolean air0, double y0, double fall0) {
@@ -222,6 +273,55 @@ final class RunModel implements Model<RunWorld> {
         return !s.onGround && !s.inWater && !phys.onClimbable(s);
     }
 
+    /**
+     * Parkour off: a jump across a gap. In the air, the column under the player is a gap when its floor is more than
+     * a jump (1.25) below the take-off, or it holds something that hurts (lava, fire), or nothing at all within 5
+     * below; water under it is safe to fall into and not a gap. Landing on the ground more than a jump above the
+     * lowest gap floor crossed is a crossing: UNSAFE (less than that, the lower floor is a step down the slope, not a
+     * gap: a drop down a hillside sails over the next ledge below and lands on this one). Landing in the gap is a drop
+     * (the fall's own mark applies). Nor is it a gap when the floor crossed is on the way as much as the landing is
+     * (its time left in the field no more than the landing's): a steep slope of drops, the arc down over the next ledge
+     * to the one above it, lands no worse off than falling short would have. g: {take-off height, lowest gap floor
+     * (NaN for none), its time left (NaN: not in the field)}, updated; the take-off is the root's floor (Layer2: the
+     * last height the player stood at), never a height in the air.
+     */
+    double gapCheck(MoveState s, double[] g) {
+        if (s.onGround || s.inWater || phys.onClimbable(s)) {
+            double c = 0.0;
+            if (!Double.isNaN(g[1]) && s.onGround && s.y > g[1] + Graph.JUMP_MAX + 1e-4) {
+                double landing = field == null ? Double.NaN : field.at(s.x, s.y, s.z);
+                boolean onTheWay = !Double.isNaN(g[2]) && !Double.isNaN(landing) && g[2] <= landing + 1e-6;
+                if (!onTheWay) c = UNSAFE;
+            }
+            g[0] = s.y;
+            g[1] = Double.NaN;
+            g[2] = Double.NaN;
+            return c;
+        }
+        if (Double.isNaN(g[0])) g[0] = s.y;
+        double floor = floorUnder(s.x, s.y, s.z, g[0]);
+        if (floor < g[0] - Graph.JUMP_MAX - 1e-3 && (Double.isNaN(g[1]) || floor < g[1])) {
+            g[1] = floor;
+            g[2] = Double.isInfinite(floor) || field == null ? Double.NaN : field.at(s.x, floor, s.z);
+        }
+        return 0.0;
+    }
+
+    /** The floor under (x, z) below the feet at y: the top of the first block with a collision, scanning down to 5
+     *  below the take-off; water there counts as a floor at the take-off's height (safe to fall into), something that
+     *  hurts as no floor; NEGATIVE_INFINITY when there is none. */
+    private double floorUnder(double x, double y, double z, double takeoff) {
+        int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
+        int top = (int) Math.floor(y), bottom = (int) Math.floor(takeoff) - 5;
+        for (int by = top; by >= bottom; by--) {
+            ai.rrw.kine.move.BlockInfo b = phys.grid().get(bx, by, bz);
+            if ((b.flags & ai.rrw.kine.move.BlockInfo.HAZARD) != 0) return Double.NEGATIVE_INFINITY;
+            if ((b.flags & ai.rrw.kine.move.BlockInfo.WATER) != 0) return takeoff;
+            if (!b.shape.empty && by + b.shape.top() <= y + 1e-6) return by + b.shape.top();
+        }
+        return Double.NEGATIVE_INFINITY;
+    }
+
     /** Ticks on a ladder before a run carried on to its landing counts as caught by it. */
     static final int CAUGHT = 8;
 
@@ -235,35 +335,51 @@ final class RunModel implements Model<RunWorld> {
     public double estimate(RunWorld w) {
         if (w.arrived) return 0.0;
         MoveState s = w.s;
-        double extra = 0;
         if (airborne(phys, s) || phys.onClimbable(s) && !s.onGround && (Math.abs(s.vx) > 0.15 || Math.abs(s.vz) > 0.15)) {
-            // carried on until it lands: the same keys without jump, the rotation going on toward the heading
-            MoveState r = scratch;
-            r.set(s);
+            // carried on until it lands: the same keys without jump, the rotation going on toward the heading; or with
+            // the keys let go, whichever comes down better (a run's next segment can let go: off a ledge with a steep
+            // slope below, walking on carries past the next step to a fall that hurts, letting go lands on it; scored
+            // as walking on, the walk off the ledge lost to standing at its top, which stood for good)
             int keys = w.lastKeys & ~MoveState.JUMP;
-            float yaw = w.sentYaw, pitch = w.sentPitch;
-            int t = 0, held = 0;
-            // on a ladder it lets go of the keys (it slides down, held in the ladder's cell); caught once it has been on
-            // one for CAUGHT ticks (a jump through a ladder's cell at speed can fly on out of it and fall)
-            while (unsettled(r, held) && t < (r.fallFlying ? 60 : 40)) {
-                double y0 = r.y, fall0 = r.fallDistance;
-                boolean ladder = phys.onClimbable(r);
-                phys.step(r, ladder ? 0 : keys, yaw, pitch);
-                held = phys.onClimbable(r) ? held + 1 : 0;
-                t++;
-                extra += 1.0 + marks(r, true, y0, fall0);
-                if (arrived(r)) return extra;
-                float dy = GameMath.wrapDegrees(w.segYaw - yaw);
-                yaw += Math.max(-TURN, Math.min(TURN, dy));
-            }
-            if (unsettled(r, held)) {
-                if (!r.fallFlying) return extra + UNSAFE;
-                // still gliding: count from the floor it is over, a tick a block of height to come down
-                int j = field.below(r.x, r.y, r.z);
-                return j < 0 ? extra + OFF_FIELD : extra + field.value(j) + (r.y - field.y(j));
-            }
-            s = r;
+            double on = carriedOn(w, keys);
+            return keys == 0 ? on : Math.min(on, carriedOn(w, 0));
         }
+        return settled(w.s, 0.0);
+    }
+
+    /** The time left once a run in the air (or swinging on a ladder) comes down, carried on with these keys. */
+    private double carriedOn(RunWorld w, int keys) {
+        MoveState r = scratch;
+        r.set(w.s);
+        double extra = 0;
+        float yaw = w.sentYaw, pitch = w.sentPitch;
+        int t = 0, held = 0;
+        double[] gap = {w.takeoffY, w.gapFloor, w.gapValue};
+        // on a ladder it lets go of the keys (it slides down, held in the ladder's cell); caught once it has been on
+        // one for CAUGHT ticks (a jump through a ladder's cell at speed can fly on out of it and fall)
+        while (unsettled(r, held) && t < (r.fallFlying ? 60 : 40)) {
+            double y0 = r.y, fall0 = r.fallDistance;
+            boolean ladder = phys.onClimbable(r);
+            phys.step(r, ladder ? 0 : keys, yaw, pitch);
+            held = phys.onClimbable(r) ? held + 1 : 0;
+            t++;
+            extra += 1.0 + marks(r, true, y0, fall0);
+            if (!parkour) extra += gapCheck(r, gap);
+            if (arrived(r)) return extra;
+            float dy = GameMath.wrapDegrees(w.segYaw - yaw);
+            yaw += Math.max(-TURN, Math.min(TURN, dy));
+        }
+        if (unsettled(r, held)) {
+            if (!r.fallFlying) return extra + UNSAFE;
+            // still gliding: count from the floor it is over, a tick a block of height to come down
+            int j = field.below(r.x, r.y, r.z);
+            return j < 0 ? extra + OFF_FIELD : extra + field.value(j) + (r.y - field.y(j));
+        }
+        return settled(r, extra);
+    }
+
+    /** The time left from a state on the ground (or in water): the field's, and the air short. */
+    private double settled(MoveState s, double extra) {
         if (airAware) extra += airShort(s);
         double v = field.at(s.x, s.y, s.z);
         if (Double.isNaN(v)) return extra + OFF_FIELD + Math.hypot(goalX - s.x, goalZ - s.z) * field.rate;
@@ -316,13 +432,15 @@ final class RunModel implements Model<RunWorld> {
     }
 
     /**
-     * One replan: the beam search, started from the best of the last plan (shifted by the ticks since) and each gait
-     * held the whole horizon toward the field's way on and toward the shortcut. The search keeps that line and can only
+     * One replan: the beam search, started from the best of the last plan (shifted by the ticks since), each gait held
+     * the whole horizon toward the field's way on and the shortcut, and each jump held in every heading. The search
+     * keeps that line and can only
      * improve on it, so a plan whose gain shows only after a few ticks (sinking until the eyes are under water, then
      * sprint swimming) isn't lost to the beam's short view at its first depths.
      */
     static RecedingSearch.Result plan(RunModel model, RecedingSearch<RunWorld> rs, RunWorld root, int[] previous, int shift,
                                       RecedingSearch.Effort e, long seed) {
+        long t0 = System.nanoTime();
         int h = e.horizon();
         int[] best = null;
         double bestScore = Double.POSITIVE_INFINITY;
@@ -332,9 +450,14 @@ final class RunModel implements Model<RunWorld> {
             double sc = rs.score(root, p, e, seed);
             if (sc < bestScore) { bestScore = sc; best = p; }
         }
+        // each gait held the whole horizon toward the way on and the shortcut; and every jump in every direction: the
+        // beam scores a first move by where it is 4 ticks on, and drops a jump that pays only when it lands (one up off
+        // to the side under a tree's leaves, half way and still under them at 4 ticks: the benchmark's seed 369819014
+        // stood for good), so each goes in whole, scored to the end
         int gaits = model.gaits;
-        for (int d = 0; d < 2; d++)
+        for (int d = 0; d < DIRS; d++)
             for (int g = 0; g < gaits; g++) {
+                if (d >= 2 && g != SPRINT_JUMP && g != JUMP) continue;
                 int[] p = new int[h];
                 java.util.Arrays.fill(p, action(d, g));
                 double sc = rs.score(root, p, e, seed);
@@ -353,11 +476,200 @@ final class RunModel implements Model<RunWorld> {
                     double sc = rs.score(root, p, e, seed);
                     if (sc < bestScore - 1e-9) { bestScore = sc; best = p; }
                 }
-        return rs.plan(root, best, 0, e, seed);
+        if (!Double.isNaN(model.targetX)) {
+            long f0 = System.nanoTime();
+            Free f = new Free(model, rs, root, e, seed, h, t0 + e.budgetNanos / 2);
+            f.search(model.freeMemory, model.now);
+            if (f.score < Free.MISSES && f.score < bestScore - 1e-9) { bestScore = f.score; best = f.plan; }
+            model.freeSeeds++;
+            model.freeRollouts += f.rollouts;
+            model.freeNanos += System.nanoTime() - f0;
+        }
+        // one budget for the whole replan: the beam gets what the plans above left (a quarter of it at least)
+        RecedingSearch.Effort eb = e.copy();
+        eb.budgetNanos = Math.max(e.budgetNanos / 4, e.budgetNanos - (System.nanoTime() - t0));
+        return rs.plan(root, best, 0, eb, seed);
+    }
+
+    /**
+     * What the free search keeps between replans toward one landing: the best plans it found (the heading, the jump's
+     * tick on the walk's clock, the gait, the strafe) and how far through its grid it got.
+     */
+    static final class FreeMemory {
+        static final int KEEP = 3;
+        final long target;
+        final float[] yaw = new float[KEEP];
+        final int[] jumpAt = new int[KEEP], gait = new int[KEEP], strafe = new int[KEEP];
+        int n, cursor;
+
+        FreeMemory(long target) { this.target = target; }
+
+        static long key(double x, double y, double z) {
+            return ((long) Math.floor(x) << 40) ^ ((long) Math.floor(z) << 16) ^ (long) Math.floor(y);
+        }
+    }
+
+    /**
+     * A jump ahead: free plans (any heading near the landing's bearing, the jump on any tick, then toward the landing,
+     * every tick), scored whole. In the air: toward the landing with each strafe, or a heading held a few ticks first.
+     * On the ground: the best plans the last replans found (at their ticks now), a slice of the grid (walking or
+     * sprinting, a heading every 6 degrees over 30 either way, the jump on each tick to 7: 176 plans, GRID_SLICE a
+     * replan, spread over it, so the whole grid is tried every few ticks), then round the best (each strafe, a degree
+     * or two either side, the jump a tick either side). Stops at its deadline with the best so far.
+     */
+    static final class Free {
+        static final int GRID_SLICE = 60, GRID = 2 * 11 * 8;
+        final RunModel model;
+        final RecedingSearch<RunWorld> rs;
+        final RunWorld root;
+        final RecedingSearch.Effort e;
+        final long seed, deadline;
+        final int h, jMax;
+        final float bearing;
+        int[] plan;
+        double score = Double.POSITIVE_INFINITY;
+        float yaw;
+        int j, gait = SPRINT, strafe, rollouts;
+        boolean late;
+        /** This replan's best few, for the memory. */
+        final double[] topScore = new double[FreeMemory.KEEP];
+        final float[] topYaw = new float[FreeMemory.KEEP];
+        final int[] topJ = new int[FreeMemory.KEEP], topGait = new int[FreeMemory.KEEP], topStrafe = new int[FreeMemory.KEEP];
+        int topN;
+
+        Free(RunModel model, RecedingSearch<RunWorld> rs, RunWorld root, RecedingSearch.Effort e, long seed, int h, long deadline) {
+            this.model = model; this.rs = rs; this.root = root; this.e = e; this.seed = seed; this.h = h; this.deadline = deadline;
+            this.jMax = Math.min(h - 1, 7);
+            this.bearing = yawTo(root.s, model.targetX, model.targetZ);
+            this.yaw = bearing;
+        }
+
+        /** What a plan that never stands on the landing pays in this search's ranking: such a plan is not offered
+         *  (toward a landing behind a wall it would only press into the wall), only searched round. */
+        static final double MISSES = 1e4;
+        private final boolean[] hit = new boolean[1];
+        private final java.util.function.Consumer<RunWorld> onLanding = this::seen;
+
+        private void seen(RunWorld w) {
+            if (hit[0]) return;
+            MoveState q = w.s;
+            hit[0] = w.arrived || q.onGround && Math.abs(q.y - model.targetY) < 0.1
+                && Math.abs(q.x - model.targetX) < 0.8 && Math.abs(q.z - model.targetZ) < 0.8;
+        }
+
+        /** A plan's score in this search: its score, plus MISSES if it never stands on the landing. */
+        double scoreOf(int[] p) {
+            hit[0] = false;
+            double sc = rs.score(root, p, e, seed, onLanding);
+            return hit[0] ? sc : sc + MISSES;
+        }
+
+        /** Score one free plan before its jump; false once past the deadline. */
+        boolean tryJump(float y, int jt, int g, int st) {
+            if (late || System.nanoTime() > deadline) { late = true; return false; }
+            rollouts++;
+            int[] p = freeJump(h, g, st, y, jt);
+            double sc = scoreOf(p);
+            if (sc < score - 1e-9) { score = sc; plan = p; yaw = y; j = jt; gait = g; strafe = st; }
+            keep(sc, y, jt, g, st);
+            return true;
+        }
+
+        /** Among this replan's best few (one entry for each heading, jump tick, gait and strafe). */
+        void keep(double sc, float y, int jt, int g, int st) {
+            for (int k = 0; k < topN; k++)
+                if (topYaw[k] == y && topJ[k] == jt && topGait[k] == g && topStrafe[k] == st) return;
+            int at = topN < FreeMemory.KEEP ? topN++ : FreeMemory.KEEP - 1;
+            if (at == FreeMemory.KEEP - 1 && topN == FreeMemory.KEEP && sc >= topScore[at]) return;
+            topScore[at] = sc; topYaw[at] = y; topJ[at] = jt; topGait[at] = g; topStrafe[at] = st;
+            for (int k = at; k > 0 && topScore[k] < topScore[k - 1]; k--) {
+                double ts = topScore[k]; topScore[k] = topScore[k - 1]; topScore[k - 1] = ts;
+                float ty = topYaw[k]; topYaw[k] = topYaw[k - 1]; topYaw[k - 1] = ty;
+                int t = topJ[k]; topJ[k] = topJ[k - 1]; topJ[k - 1] = t;
+                t = topGait[k]; topGait[k] = topGait[k - 1]; topGait[k - 1] = t;
+                t = topStrafe[k]; topStrafe[k] = topStrafe[k - 1]; topStrafe[k - 1] = t;
+            }
+        }
+
+        void search(FreeMemory mem, int now) {
+            if (!root.s.onGround) {
+                for (int st = -1; st <= 1; st++) if (!tryAir(st, Float.NaN, 0)) return;
+                for (int k = 2; k <= 6; k += 2)
+                    for (float off = -30f; off <= 30f; off += 10f)
+                        if (off != 0f && !tryAir(0, bearing + off, k)) return;
+                return;
+            }
+            search:
+            {
+                // what the last replans found, at their ticks now
+                if (mem != null)
+                    for (int k = 0; k < mem.n; k++) {
+                        int jt = mem.jumpAt[k] - now;
+                        if (jt >= 0 && jt <= jMax && !tryJump(mem.yaw[k], jt, mem.gait[k], mem.strafe[k])) break search;
+                    }
+                // a slice of the grid, spread over it, from where the last replan stopped
+                int from = mem != null ? mem.cursor : 0;
+                for (int i = 0; i < GRID_SLICE; i++) {
+                    int c = (int) ((from + i) * 61L % GRID);
+                    int g = c / 88 == 0 ? SPRINT : WALK, off = (c % 88) / 8, jt = c % 8;
+                    if (jt > jMax) continue;
+                    if (!tryJump(bearing - 30f + 6f * off, jt, g, 0)) break search;
+                    if (mem != null) mem.cursor = (from + i + 1) % GRID;
+                }
+                // round the best
+                float y0 = yaw;
+                int j0 = j, g0 = gait;
+                for (int st = -1; st <= 1; st++)
+                    for (float off = -2f; off <= 2f; off += 1f)
+                        for (int jt = Math.max(0, j0 - 1); jt <= Math.min(jMax, j0 + 1); jt++)
+                            if (!tryJump(y0 + off, jt, g0, st)) break search;
+            }
+            if (mem != null) {
+                mem.n = topN;
+                for (int k = 0; k < topN; k++) {
+                    mem.yaw[k] = topYaw[k]; mem.jumpAt[k] = topJ[k] + now; mem.gait[k] = topGait[k]; mem.strafe[k] = topStrafe[k];
+                }
+            }
+        }
+
+        boolean tryAir(int st, float y, int k) {
+            if (late || System.nanoTime() > deadline) { late = true; return false; }
+            rollouts++;
+            int[] p = freeAir(h, st, y, k);
+            double sc = scoreOf(p);
+            if (sc < score - 1e-9) { score = sc; plan = p; }
+            return true;
+        }
+    }
+
+    /** A free plan in the air: the heading yaw held k ticks (none if NaN), then toward the landing, at a sprint. */
+    static int[] freeAir(int h, int strafe, float yaw, int k) {
+        int[] p = new int[h];
+        int code = Float.isNaN(yaw) ? FREE_TOWARD : headingCode(yaw);
+        for (int i = 0; i < h; i++) p[i] = free(SPRINT, strafe, i < k ? code : FREE_TOWARD);
+        return p;
+    }
+
+    /** A free plan: the gait toward yaw for j ticks, the jump on tick j, then toward the landing at a sprint. */
+    static int[] freeJump(int h, int g, int strafe, float yaw, int j) {
+        int[] p = new int[h];
+        int code = headingCode(yaw);
+        for (int i = 0; i < h; i++) {
+            if (i < j) p[i] = free(g, strafe, code);
+            else if (i == j) p[i] = free(g == WALK ? JUMP : SPRINT_JUMP, strafe, code);
+            else p[i] = free(SPRINT, strafe, FREE_TOWARD);
+        }
+        return p;
     }
 
     static String name(int a) {
         if (a == STOP) return "stop";
+        if (isFree(a)) {
+            int c = freeCode(a);
+            return (c == FREE_TOWARD ? "toward" : "yaw" + (c - 180)) + (freeStrafe(a) != 0 ? (freeStrafe(a) < 0 ? "-left" : "-right") : "")
+                + "-" + switch (freeGait(a)) { case WALK -> "walk"; case SPRINT -> "sprint"; case SPRINT_JUMP -> "sprintjump";
+                                                case JUMP -> "jump"; default -> "g" + freeGait(a); };
+        }
         int d = dir(a), g = gait(a);
         String dn = d == DESCENT ? "on" : d == SHORTCUT ? "short" : (OFFSETS[d - 2] > 0 ? "+" : "") + (int) OFFSETS[d - 2];
         return dn + switch (g) {

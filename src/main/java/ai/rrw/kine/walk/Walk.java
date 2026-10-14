@@ -63,12 +63,23 @@ public final class Walk {
     private static State state = State.IDLE;
     private static String message = "";
     private static final Map<ResourceKey<Level>, int[]> DEST = new HashMap<>();
+    /** Each dimension's destination Y (the feet's height there, the Walk tab's optional Y); none or NaN: any floor of the
+     *  column. With one, only that floor counts (within 0.6) for the search, the field, layer 2 and arriving. */
+    private static final Map<ResourceKey<Level>, Double> DEST_Y = new HashMap<>();
+    /** The walk's destination Y (taken when it starts: a new destination cancels the walk). */
+    private static double walkY = Double.NaN;
     private static ResourceKey<Level> dimension = null;
 
     private static Planner.Job job = null;          // the plan in flight, or the last one
     private static Planner.Plan plan = null;        // the route being walked
     private static long planId = -1;
     private static int planPass = -1;
+    /** The last plan from a job looked at (adopted or not: a plan to the floor nearest an unreachable goal may be
+     *  passed over for walking without a route). */
+    private static long seenId = -1;
+    private static int seenPass = -1;
+    /** The plan to the floor nearest an unreachable goal whose end has been searched from once more. */
+    private static long nearestCheckedId = -1;
     private static int tick = 0, lastPlanTick = 0, lastCheckTick = 0;
     private static int seg = 1;                     // the waypoint walked toward
     private static double bestLeft = Double.MAX_VALUE;
@@ -192,11 +203,27 @@ public final class Walk {
         return mc.level == null ? null : DEST.get(mc.level.dimension());
     }
 
+    /** This dimension's destination Y (feet), NaN when none was given: any floor of the column. */
+    public static double destinationY() {
+        Minecraft mc = Minecraft.getInstance();
+        Double y = mc.level == null ? null : DEST_Y.get(mc.level.dimension());
+        return y == null ? Double.NaN : y;
+    }
+
+    /** The destination, any floor of its column. */
     public static void setDestination(int x, int z) {
+        setDestination(x, z, Double.NaN);
+    }
+
+    /** The destination with its optional Y (feet; NaN: any floor of the column). Another column, or another floor of the
+     *  same one, is a new destination. */
+    public static void setDestination(int x, int z, double y) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
         int[] old = DEST.put(mc.level.dimension(), new int[]{x, z});
-        if (old == null || old[0] != x || old[1] != z) {
+        Double oldY = DEST_Y.put(mc.level.dimension(), y);
+        boolean yChanged = oldY == null ? !Double.isNaN(y) : !(Double.isNaN(oldY) && Double.isNaN(y) || oldY == y);
+        if (old == null || old[0] != x || old[1] != z || yChanged) {
             // a new destination: a walk running or paused toward the old one is cancelled, back to Go (RW), and the
             // new one's pillar shows
             if (active() || showing()) cancel();
@@ -210,6 +237,7 @@ public final class Walk {
         int[] d = destination();
         if (!Settings.walkPathfinder || mc.player == null || d == null) return;
         dimension = mc.level.dimension();
+        walkY = destinationY();
         dismissed = false;
         endPreview();
         if (job != null) job.cancelled = true;   // an earlier walk's search: its plan is not for this walk
@@ -218,6 +246,7 @@ public final class Walk {
         message = "Planning";
         plan = null;
         planId = -1;
+        seenId = -1;
         seg = 1;
         handBack = false;
         stuckReplans = 0;
@@ -249,7 +278,7 @@ public final class Walk {
         View v = WalkTable.snapshot();
         long start = v.nodeAt(x, y, z);
         if (start == View.NONE) { lastWhy = "preview: no floor at the start"; return; }
-        previewJob = Planner.plan(v, start, gx, gz, costs(), margin(), true, Settings.walkLayer2, FIRST_BUDGET);
+        previewJob = Planner.plan(v, start, gx, gz, costs(), margin(), true, parkour(), FIRST_BUDGET);
         previewing = true;
     }
 
@@ -307,6 +336,11 @@ public final class Walk {
         int[] d = destination();
         if (p == null || d == null) return;
         if (job != null && !job.done) return;   // one at a time
+        if (forceDirect && plan == null) {
+            Planner.Plan dp = directPlan(p, d, "forced (test)");
+            if (dp != null) { adoptDirect(dp); return; }
+        }
+        if (forceDirect && plan != null && plan.direct) return;   // no layer 1 refreshes either
         // plan on an up-to-date table around the player: a block just changed there may not be in it yet
         if (!WalkTable.settled(p.getBlockX(), p.getBlockZ(), 1) && settleWaits++ < 40) { message = "Reading the terrain"; return; }
         View view = WalkTable.snapshot();
@@ -319,11 +353,54 @@ public final class Walk {
         settleWaits = 0;
         boolean canSprint = p.getFoodData().getFoodLevel() > 6;
         boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
-        job = Planner.plan(view, start, d[0], d[1], costs(), margin(), canSprint, Settings.walkLayer2, glides, budget);
+        job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget);
         jobReplay = replayNext;
         replayNext = true;
         lastPlanTick = tick;
         plans++;
+    }
+
+    /** Whether the walk may jump gaps: the Parkour setting (off by default: a jump that falls short lands in the gap;
+     *  RW, 2026-10-13: "parkour needs to e togalble since its rksky"), and only when layer 2 walks (the layer 1
+     *  follower has no way to make a jump). */
+    static boolean parkour() {
+        return Settings.walkLayer2 && Settings.walkParkour;
+    }
+
+    /** How near the goal must be (straight line, blocks) for walking without a route when layer 1 finds none. Set by
+     *  the planning cost (Layer2DirectTest, 2026-10-13): Field.direct's box builds in 5.8 ms at 48 blocks on this
+     *  machine (8.7 at 64: it grows with the box's area), and layer 2 alone arrived in 12 of 12 walks at every distance
+     *  out to 48 over scattered pillars and pits; past that the box's cost grows faster than its use (a goal that far
+     *  with no route is most likely cut off for good). */
+    static final double DIRECT_NEAR = 48.0;
+
+    /** Walking without a route (Settings.walkDirect, layer 2 walking): when layer 1 found none and the goal's column is
+     *  loaded and within DIRECT_NEAR; null otherwise. */
+    /** Tests: walk without a route from the start (layer 2 alone), whatever layer 1 would find. */
+    public static boolean forceDirect = false;
+
+    private static void adoptDirect(Planner.Plan dp) {
+        firstPlan = dp;
+        plan = dp;
+        planId = dp.id;
+        planPass = dp.pass;
+        seg = 1;
+        bestLeft = Double.MAX_VALUE;
+        bestLeftTick = tick;
+        eta.onPlan(null, dp.route);
+        state = State.WALKING;
+        message = "No route: walking with the movement search";
+        WalkRender.newPlan(dp, false);
+    }
+
+    private static Planner.Plan directPlan(LocalPlayer p, int[] d, String why) {
+        if (!Settings.walkLayer2 || !Settings.walkDirect) return null;
+        if (Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()) > DIRECT_NEAR) return null;
+        View view = WalkTable.snapshot();
+        if (!view.known(d[0], d[1])) return null;
+        long start = startNode(view, p);
+        if (start == View.NONE) return null;
+        return Planner.direct(view, start, d[0], d[1], walkY, costs(), margin(), p.getFoodData().getFoodLevel() > 6);
     }
 
     /** The safety margin in blocks (the setting, in hundredths). */
@@ -482,7 +559,21 @@ public final class Walk {
             // pass (the weighted search) can leave the loaded area by another way out, which flashed up as a stray
             // route at an angle for a moment every few seconds while the route dimmed (RW, 2026-10-13)
             boolean waitForBest = !jobReplay && plan != null && !job.done;
-            if (np != null && !waitForBest && (np.id != planId || np.pass != planPass)) {
+            boolean fresh = np != null && !waitForBest && (np.id != seenId || np.pass != seenPass);
+            if (fresh) { seenId = np.id; seenPass = np.pass; }
+            if (fresh && np.result.nearest) {
+                // no way to the goal (every reachable place searched; found at the start or on the way, the goal
+                // shut in: a tree's trunk, a pocket the graph has no way into): with Parkour on, walk without a route
+                // when it's near (layer 2 may jump what the graph has no move for); else to the floor nearest it and
+                // end there (Parkour off, layer 2 crosses no gap the graph doesn't: without a route it would only stand
+                // at the edge until it gave up, "Stuck")
+                if (plan != null && plan.direct) fresh = false;
+                else if (Settings.walkParkour) {
+                    Planner.Plan dp = directPlan(p, d, np.result.reason);
+                    if (dp != null) { adoptDirect(dp); fresh = false; }
+                }
+            }
+            if (fresh) {
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
                 planId = np.id;
@@ -493,10 +584,29 @@ public final class Walk {
                 bestLeftTick = tick;
                 eta.onPlan(np.time, np.route);
                 state = State.WALKING;
-                message = np.route.viaExit ? "Walking toward the edge of what's loaded" : "Walking";
+                message = np.route.viaExit ? "Walking toward the edge of what's loaded"
+                    : np.result.nearest ? "No way onto the destination: walking as near as it gets" : "Walking";
                 WalkRender.newPlan(np, jobReplay);
             } else if (job.done && job.failure != null && (plan == null || job.latest.get() == null)) {
-                if (plan == null) { fail("No path: " + job.failure); measure(t0); return; }
+                if (plan == null) {
+                    // shut in, and nowhere nearer it than here: with Parkour off, without a route would only stand
+                    Planner.Plan dp = job.exhausted && !Settings.walkParkour ? null : directPlan(p, d, job.failure);
+                    if (dp == null && job.exhausted) {
+                        double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
+                        fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
+                        measure(t0);
+                        return;
+                    }
+                    if (dp == null) { fail("No path: " + job.failure); measure(t0); return; }
+                    adoptDirect(dp);
+                } else if (job.exhausted && !plan.direct) {
+                    // a replan found the goal shut in and nothing nearer it than here: the route walked so far (often
+                    // one toward the loaded edge, from before the goal's ground loaded) leads nowhere
+                    double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
+                    fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
+                    measure(t0);
+                    return;
+                }
             }
             if (job.done && state == State.PLANNING && job.latest.get() == null && job.failure == null) {
                 // nothing from it (the start wasn't readable yet): try again
@@ -511,7 +621,8 @@ public final class Walk {
 
         // arrived: within half a block of the destination's centre
         double gx = d[0] + 0.5 - p.getX(), gz = d[1] + 0.5 - p.getZ();
-        if (gx * gx + gz * gz <= 0.25 && (p.onGround() || p.isInWater() || p.onClimbable())) {
+        if (gx * gx + gz * gz <= 0.25 && (p.onGround() || p.isInWater() || p.onClimbable())
+            && (Double.isNaN(walkY) || Math.abs(p.getY() - walkY) < 0.6)) {
             state = State.ARRIVED;
             message = "Arrived";
             steering = false;
@@ -521,6 +632,13 @@ public final class Walk {
 
         // progress, stuck and off-route checks; replans
         double left = remaining(p, r);
+        if (plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
+            && nearestCheckedId != plan.id) {
+            // at the floor nearest a goal with no way onto it: one more search on the table as it is now (ground loaded
+            // since may open a way); if it finds none nearer, the walk ends here (the exhausted replan, below)
+            nearestCheckedId = plan.id;
+            replanFor(AT_NEAREST, mc);
+        }
         if (left < bestLeft - 0.25 || mc.screen != null) {   // a screen pauses it
             if (bestLeft != Double.MAX_VALUE && left < bestLeft) progressed += bestLeft - left;
             if (progressed >= REAL_PROGRESS) stuckReplans = 0;
@@ -536,7 +654,7 @@ public final class Walk {
             bestLeftTick = tick;
             progressed = 0;
             replanFor(why, mc);
-        } else if (idle && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
+        } else if (idle && !plan.direct && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
             replanFor("off the route", mc);
         } else if (idle && (r.viaExit || plan.result.partial) && left < 24 && tick - lastPlanTick > 20) {
             replanFor(r.viaExit ? NEAR_EDGE : NEAR_END, mc);
@@ -547,12 +665,15 @@ public final class Walk {
             // as the gap loads, a straighter way may open (measured 2026-10-13: a route bent 4.9 blocks off the line
             // and walked to the end)
             replanFor(PAST_UNKNOWN, mc);
+        } else if (idle && plan.direct && tick - lastPlanTick > 100) {
+            // no route: try layer 1 again every 5 s (the walk may have got past what it had no way over)
+            replanFor(WITHOUT_ROUTE, mc);
         } else if (idle && tick - lastCheckTick > 20) {
             lastCheckTick = tick;
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
         if (state == State.WALKING) {
-            Layer2.endTick(mc, plan, d);
+            Layer2.endTick(mc, plan, d, walkY);
             tickEta(mc, p);
         }
         measure(t0);
@@ -573,10 +694,13 @@ public final class Walk {
 
     /** Replans that only refresh the route toward a far goal (no replay): the reasons below. */
     static final String EVERY_5S = "every 5 s toward a far goal", NEAR_EDGE = "near the loaded edge", NEAR_END = "near a partial route's end",
-        PAST_UNKNOWN = "every 5 s while the line to the goal crosses ground not loaded";
+        PAST_UNKNOWN = "every 5 s while the line to the goal crosses ground not loaded",
+        WITHOUT_ROUTE = "every 5 s while walking without a route",
+        AT_NEAREST = "at the floor nearest a goal with no way onto it: once more";
 
     private static void replanFor(String why, Minecraft mc) {
-        replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END) || why.equals(PAST_UNKNOWN));
+        replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END) || why.equals(PAST_UNKNOWN)
+            || why.equals(WITHOUT_ROUTE) || why.equals(AT_NEAREST));
         replans++;
         if (replanWhy.size() < 200) replanWhy.add(tick + ": " + why);
         replan(mc, REPLAN_BUDGET);
@@ -601,6 +725,13 @@ public final class Walk {
     /** This tick's steering: which waypoint, which way, which keys. */
     private static void steer(LocalPlayer p) {
         Route r = plan.route;
+        if (plan.direct) {
+            // no route: layer 2 alone steers (the follower would walk the straight line, maybe into a gap); a tick it
+            // hands back, the player stands
+            if (Settings.walkLayer2 && Layer2.steer(p)) { wantYaw = Layer2.yaw(); layer2 = true; steering = true; }
+            else steering = false;
+            return;
+        }
         if (Settings.walkLayer2 && Layer2.steer(p)) {
             // layer 2 moves along the route its own way: keep the place on the route for the progress check and for
             // the follower should layer 2 hand it a tick

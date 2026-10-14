@@ -54,10 +54,17 @@ public final class Planner {
         /** The route reaches the goal, but the straight line from its start to the goal crosses ground not loaded when
          *  it was planned: a straighter way may open as that ground loads. */
         public final boolean throughUnknown;
+        /** No route: layer 1 found none and the goal is near, so layer 2 walks with its own search (Field.direct); the
+         *  route is the straight line, for the progress check and the display. */
+        public final boolean direct;
         Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails,
              TimeProfile time, boolean throughUnknown) {
+            this(route, result, pass, id, stamps, replay, rails, time, throughUnknown, false);
+        }
+        Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails,
+             TimeProfile time, boolean throughUnknown, boolean direct) {
             this.route = route; this.result = result; this.pass = pass; this.id = id; this.stamps = stamps; this.replay = replay;
-            this.rails = rails; this.time = time; this.throughUnknown = throughUnknown;
+            this.rails = rails; this.time = time; this.throughUnknown = throughUnknown; this.direct = direct;
         }
     }
 
@@ -67,6 +74,7 @@ public final class Planner {
         public volatile boolean done = false;
         public volatile boolean cancelled = false;
         public volatile String failure = null;     // no path at all: why
+        public volatile boolean exhausted = false; // that, with every reachable place searched (the goal shut in)
         public volatile long nanos = 0;
         public volatile int passes = 0;
         public final long submitted = System.nanoTime();
@@ -76,18 +84,45 @@ public final class Planner {
 
     private static long ids = 0;
 
-    /** Start a job: from floor `start` to column (gx, gz); with gap jumps when layer 2 will walk it. */
-    public static Job plan(View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint, boolean gaps,
-                           long budgetNanos) {
-        return plan(view, start, gx, gz, costs, margin, canSprint, gaps, false, budgetNanos);
+    /** A plan without a route, from floor start to the goal column's floor nearest its height (Plan.direct); null when
+     *  the goal column has no floor in the view. Made on the game's thread (two points: quick). */
+    static Plan direct(View v, long start, int gx, int gz, double goalY, Costs costs, double margin, boolean canSprint) {
+        ChunkFloors gc = v.chunk(gx, gz);
+        if (gc == null || gc.count(gx & 15, gz & 15) == 0) return null;
+        ChunkFloors sc = v.chunk(View.nodeX(start), View.nodeZ(start));
+        double sh = sc.h(v.index(start));
+        int best = 0;
+        double bestD = Double.MAX_VALUE;
+        double want = Double.isNaN(goalY) ? sh : goalY;   // the destination's Y names the goal's floor
+        for (int i = 0; i < gc.count(gx & 15, gz & 15); i++) {
+            double d = Math.abs(gc.h(gc.index(gx & 15, gz & 15, i)) - want);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        long goal = View.node(gx, gz, best);
+        PathSearch.Result r = new PathSearch.Result();
+        r.path = new long[]{start, goal};
+        r.moves = new byte[]{(byte) Graph.START, (byte) Graph.WALK};
+        r.pathY = new float[]{(float) sh, gc.h(gc.index(gx & 15, gz & 15, best))};
+        r.reason = "no route: walking with the movement search";
+        Route route = new Tighten(v, costs, margin, canSprint).straight(start, goal, gx, gz);
+        RailPath rails = new RailPath(v, route);
+        Replay replay = new Replay(r, route, rails, false);
+        return new Plan(route, r, 0, ++ids, null, replay, rails, null, false, true);
     }
 
+    /** Start a job: from floor `start` to column (gx, gz) (any floor of it); with gap jumps when layer 2 will walk it. */
     public static Job plan(View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint, boolean gaps,
-                           boolean glides, long budgetNanos) {
+                           long budgetNanos) {
+        return plan(view, start, gx, gz, Double.NaN, costs, margin, canSprint, gaps, false, budgetNanos);
+    }
+
+    /** goalY: the destination's Y (feet), only that floor of the column is the goal; NaN: any floor of it. */
+    public static Job plan(View view, long start, int gx, int gz, double goalY, Costs costs, double margin, boolean canSprint,
+                           boolean gaps, boolean glides, long budgetNanos) {
         Job job = new Job(++ids);
         WORKER.submit(() -> {
             try {
-                run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budgetNanos);
+                run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budgetNanos, goalY);
             } catch (Throwable t) {
                 Kine.LOGGER.warn("Kine walk: search failed", t);
                 job.failure = "search error";
@@ -100,9 +135,14 @@ public final class Planner {
     }
 
     private static void run(Job job, View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint,
-                            boolean gaps, boolean glides, long budget) {
+                            boolean gaps, boolean glides, long budget, double goalY) {
+        run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budget, new PathSearch(view, costs)
+            .canSprint(canSprint).gaps(gaps).glides(glides).goalY(goalY));
+    }
+
+    private static void run(Job job, View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint,
+                            boolean gaps, boolean glides, long budget, PathSearch search) {
         long t0 = System.nanoTime(), deadline = t0 + budget;
-        PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(gaps).glides(glides);
         double bestCost = Double.MAX_VALUE;
         int prevExpanded = 0;
         boolean cutOff = false;
@@ -131,8 +171,8 @@ public final class Planner {
                 pass--;
                 continue;
             }
-            if (r.exhausted) { job.failure = r.reason; return; }
-            if (!r.found && !r.partial) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
+            if (r.exhausted && !r.nearest) { job.failure = r.reason; job.exhausted = true; return; }
+            if (!r.found && !r.partial && !r.nearest) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
             if (r.partial && pass == 0) {
                 // out of time or floors before the goal: is the destination closed off? (a small pocket found backward)
                 int pocket = search.pocketSize(gx, gz, 4096);
@@ -159,7 +199,7 @@ public final class Planner {
                 job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails, time, blind));
                 if (r.found) bestCost = c;
             }
-            if (r.partial) break;   // out of time or floors: a better pass won't fit
+            if (r.partial || r.exhausted) break;   // out of time or floors, or no way to the goal: a better pass won't help
         }
         lastPasses = job.passes;
         lastNanos = System.nanoTime() - t0;

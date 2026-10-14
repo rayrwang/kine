@@ -69,7 +69,8 @@ public final class WalkBeam {
         int[] dest = Walk.destination();
         if (!Settings.walkPathDisplay || !Settings.walkPathfinder || dest == null || Walk.dismissed()) return;
         int bx = dest[0], bz = dest[1];
-        double ground = columnTop(level, bx, bz);
+        double givenY = Walk.destinationY();   // the Walk tab's optional Y: the pillar stands on that floor
+        double ground = Double.isNaN(givenY) ? columnTop(level, bx, bz) : givenY;
         double baseY = Double.isNaN(ground) ? level.getMinY() : ground;
         double wx = bx + 0.5, wz = bz + 0.5;
 

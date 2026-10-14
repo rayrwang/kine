@@ -12,12 +12,17 @@ final class RunWorld {
     float sentYaw, sentPitch;
     /** The heading and pitch of the action held now, fixed at its first tick (NaN before any). */
     float segYaw = Float.NaN, segPitch = 0f;
+    /** A free action's movement heading (its view may turn 45 degrees off it for a strafe); NaN for the others. */
+    float segHeading = Float.NaN, firstHeading = Float.NaN;
     int lastKeys;
     boolean arrived;
     int ticks;
     /** The first tick's heading, pitch and keys (what the executor does now if this run is chosen). */
     float firstYaw = Float.NaN, firstPitch;
     int firstKeys;
+    /** Parkour off (RunModel.gapCheck): the height it last left the ground from, and the lowest floor under it since
+     *  that it couldn't walk back out of (NaN for none). */
+    double takeoffY = Double.NaN, gapFloor = Double.NaN, gapValue = Double.NaN;
     /** The feet each tick, for the display (null unless recorded). */
     float[] trail;
     int trailN;
@@ -32,6 +37,8 @@ final class RunWorld {
         RunWorld w = new RunWorld(s.copy(), sentYaw, sentPitch);
         w.segYaw = segYaw; w.segPitch = segPitch; w.lastKeys = lastKeys; w.arrived = arrived; w.ticks = ticks;
         w.firstYaw = firstYaw; w.firstPitch = firstPitch; w.firstKeys = firstKeys;
+        w.segHeading = segHeading; w.firstHeading = firstHeading;
+        w.takeoffY = takeoffY; w.gapFloor = gapFloor; w.gapValue = gapValue;
         if (trail != null) { w.trail = trail.clone(); w.trailN = trailN; }
         return w;
     }

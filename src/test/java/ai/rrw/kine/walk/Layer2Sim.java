@@ -78,6 +78,32 @@ final class Layer2Sim {
     boolean glides = false;
     /** Count the air in the search (off only to measure what it changes). */
     boolean airAware = true;
+    /** Parkour (the setting; on here so the jumping tests run): off, no gap moves and no gap crossings. */
+    boolean parkour = true;
+    /** Walking without a route when layer 1 finds none (Settings.walkDirect): Field.direct. */
+    boolean direct = false;
+    /** The jump being played (walking without a route), its tick, and the floor it was searched from. */
+    Recipe recipe;
+    int recipeT;
+    long recipeKey = Long.MIN_VALUE;
+    int recipesFound;
+    /** Free actions near a jump (Settings.walkFreeJumps), and the copy-found jumps without a route (recipes). */
+    boolean freeJumps = true, recipes = true;
+    /** Ticks before the first recipe search (the game's runs on the worker for some 5 ticks, and waits out a try
+     *  made in the 20 ticks before). */
+    int recipeDelay = 0;
+    double groundY = Double.NaN;
+    /** The destination's Y (feet): only that floor of the goal column is the goal; NaN: any floor (the Walk tab's Y). */
+    double goalY = Double.NaN;
+    int freeSeeds;
+    RunModel.FreeMemory freeMemory;
+    /** Every replan of the walks so far: its time in ms, the free plans' part of it, and 1 if it had a jump ahead. */
+    final List<double[]> replanTimes = new ArrayList<>();
+    /** Walk without a route even when layer 1 has one (to measure layer 2 alone). */
+    boolean forceDirect = false;
+    /** Whether the last walk went without a route, and its field's build time. */
+    boolean wentDirect;
+    long directFieldNanos;
     int glideTicks = 0;
 
     Layer2Sim(TestWorld w) {
@@ -99,14 +125,19 @@ final class Layer2Sim {
         for (int i = 0; i < res.plan().length; i += effort.hold) System.out.print(" " + RunModel.name(res.plan()[i]));
         System.out.println();
         StringBuilder sb = new StringBuilder("    held:");
-        for (int g = 0; g < RunModel.GAITS; g++) {
-            int a = RunModel.action(RunModel.DESCENT, g);
+        for (int a = 0; a < model.actionCount(); a++) {
             int[] plan = new int[effort.horizon()];
             java.util.Arrays.fill(plan, a);
             RunWorld w = root.copy();
-            for (int i = 0; i < plan.length; i++) model.step(w, a, i == 0 ? 0 : 1, null);
-            sb.append(String.format(java.util.Locale.ROOT, " %s=%.2f(end %.2f,%.2f swim=%b est %.1f)", RunModel.name(a),
-                rs.score(root, plan, effort, t), w.s.x, w.s.y, w.s.swimming, model.estimate(w)));
+            double c = 0;
+            String bad = "";
+            for (int i = 0; i < plan.length; i++) {
+                double ci = model.step(w, a, i % effort.hold, new java.util.SplittableRandom(i));
+                if (ci >= 500 && bad.isEmpty()) bad = String.format(java.util.Locale.ROOT, " !t%d@%.2f,%.2f,%.2f gf%.2f", i, w.s.x, w.s.y, w.s.z, w.gapFloor);
+                c += ci;
+            }
+            sb.append(String.format(java.util.Locale.ROOT, " %s=%.2f(end %.2f,%.2f,%.2f est %.1f%s)", RunModel.name(a),
+                rs.score(root, plan, effort, t), w.s.x, w.s.y, w.s.z, model.estimate(w), bad));
         }
         System.out.println(sb);
     }
@@ -116,9 +147,16 @@ final class Layer2Sim {
         long start = view.nodeAt((int) Math.floor(s.x), s.y, (int) Math.floor(s.z));
         if (start == View.NONE) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "no start floor");
         if (glides) { body.canGlide = true; body.glide = true; }
-        PathSearch ps = new PathSearch(view, costs).gaps(true).glides(glides);
+        PathSearch ps = new PathSearch(view, costs).gaps(parkour).glides(glides).goalY(goalY);
         PathSearch.Result r = ps.run(start, gx, gz, 1.0, Long.MAX_VALUE, 2_000_000, false);
-        if (!r.found) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route");
+        wentDirect = false;
+        if ((!r.found || forceDirect) && direct) {
+            Planner.Plan dp = Planner.direct(view, start, gx, gz, goalY, costs, 0.2, true);
+            if (dp == null) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route, and no goal floor");
+            r = dp.result;
+            wentDirect = true;
+        }
+        if (!r.found && !wentDirect) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route");
         lastRoute = r;
         Field f = null;
         Route route = null;
@@ -131,14 +169,63 @@ final class Layer2Sim {
             if (f == null || f.to < r.path.length - 1
                 && Field.nearestIndex(r.path, s.x, s.z) > (f.from + f.to) / 2) {
                 if (route == null) route = new Tighten(view, costs, 0.2, true).route(r, gx, gz);
-                f = Field.build(view, costs, true, true, glides, 1, r.path, route, s.x, s.z, gx, gz, !r.viaExit && !r.partial);
+                if (wentDirect) {
+                    f = Field.direct(view, costs, true, parkour, glides, 1, r.path, gx, gz, goalY);
+                    directFieldNanos = f.buildNanos;
+                } else f = Field.build(view, costs, true, parkour, glides, 1, r.path, route, s.x, s.z, gx, gz, goalY, !r.viaExit && !r.partial);
                 prev = null;
+            }
+            // walking without a route (as Layer2): on a floor the graph doesn't join to the goal, a jump found in the copy
+            // to one it does join, played while it still lands
+            if (wentDirect && parkour && recipes && recipe == null && t >= recipeDelay && s.onGround
+                && s.vx * s.vx + s.vz * s.vz <= 1e-4 && !f.joinedAt(s.x, s.y, s.z)) {   // from a standing start (as Layer2)
+                long key = ((long) Math.floor(s.x) << 40) ^ ((long) Math.floor(s.z) << 16) ^ (long) Math.floor(s.y);
+                if (key != recipeKey) {
+                    recipeKey = key;
+                    for (int c : f.joinedNear(s.x, s.y, s.z, 6.0, 3)) {
+                        int lx = (int) Math.floor(f.x(c)), ly = (int) Math.round(f.y(c)) - 1, lz = (int) Math.floor(f.z(c));
+                        float bearing = Recipe.yawTo(s.x, s.z, lx + 0.5, lz + 0.5);
+                        Recipe rc = Recipe.search(phys, s, sentYaw, lx, ly, lz, bearing - 90f, bearing + 90f, 6f, 8, 8, 60);
+                        if (rc.found()) { recipe = rc; recipeT = 0; recipesFound++; break; }
+                    }
+                }
+            }
+            if (recipe != null && (recipeT >= recipe.ticks || !recipe.stillLands(phys, s, recipeT, recipe.lx, recipe.ly, recipe.lz)))
+                recipe = null;
+            if (recipe != null) {
+                // the recipe's tick: the rotation and keys as recorded
+                sentYaw = recipe.yaw[recipeT];
+                boolean ground0 = s.onGround;
+                phys.step(s, recipe.keys[recipeT], sentYaw, 0f);
+                if ((recipe.keys[recipeT] & MoveState.JUMP) != 0 && ground0 && !s.onGround) jumps++;
+                recipeT++;
+                path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
+                    recipe.keys[Math.min(recipeT, recipe.ticks) - 1], s.air, s.drownDamage});
+                double gdx = gx + 0.5 - s.x, gdz = gz + 0.5 - s.z;
+                if (gdx * gdx + gdz * gdz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s)))
+                    return new Outcome(true, t + 1, jumps, replans, worst, replans == 0 ? 0 : sum / replans, path, "");
+                prev = null;
+                continue;
             }
             RunModel model = new RunModel(phys, f, gx, gz, 0f, costs.maxFall);
             model.gaits = glides ? RunModel.GLIDE_GAITS : gaits;
             model.airAware = airAware;
+            model.parkour = parkour;
+            model.goalY = goalY;   // the destination's Y (as the game's): only that floor of the goal column
+            if (parkour && freeJumps) {
+                double[] tg = f.jumpAhead(s.x, s.y, s.z, 5.0);
+                if (tg != null) {
+                    model.targetX = tg[0]; model.targetY = tg[1]; model.targetZ = tg[2];
+                    long key = RunModel.FreeMemory.key(tg[0], tg[1], tg[2]);
+                    if (freeMemory == null || freeMemory.target != key) freeMemory = new RunModel.FreeMemory(key);
+                    model.freeMemory = freeMemory;
+                    model.now = t;
+                }
+            }
             RecedingSearch<RunWorld> rs = new RecedingSearch<>(model);
             RunWorld root = new RunWorld(s.copy(), sentYaw, sentPitch);
+            if (s.onGround || s.inWater || phys.onClimbable(s)) groundY = s.y;   // the gap check's take-off (as Layer2)
+            root.takeoffY = groundY;
             long t0 = System.nanoTime();
             RecedingSearch.Effort e = effort.copy();
             if (s.inWater) e.hold = RunModel.WATER_HOLD;
@@ -147,6 +234,8 @@ final class Layer2Sim {
             worst = Math.max(worst, ms);
             sum += ms;
             replans++;
+            freeSeeds += model.freeSeeds;
+            replanTimes.add(new double[]{ms, model.freeNanos / 1e6, Double.isNaN(model.targetX) ? 0 : 1, model.freeRollouts});
             if (res.plan() == null) return new Outcome(false, t, jumps, replans, worst, sum / replans, path, "no plan");
             if (debugTicks.contains(t)) debug(t, model, rs, root, res);
             prev = res.plan();

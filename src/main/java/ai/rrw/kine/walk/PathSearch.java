@@ -22,6 +22,7 @@ public final class PathSearch {
         public boolean viaExit;      // the path ends at the loaded area's edge; the rest is a straight line
         public boolean partial;      // out of time or nodes: the path goes to the expanded floor nearest the goal
         public boolean exhausted;    // every reachable floor expanded without reaching the goal
+        public boolean nearest;      // exhausted: the path goes to the reachable floor nearest the goal
         public long[] path = new long[0];
         public byte[] moves = new byte[0];
         /** The path's floor heights. */
@@ -69,6 +70,17 @@ public final class PathSearch {
     private int hn = 0;
 
     private double goalMinH = Double.NaN;
+    /** The destination's Y (feet): only that floor of the goal column counts (within 0.6); NaN: any floor of it. */
+    private double goalY = Double.NaN;
+
+    public PathSearch goalY(double y) {
+        this.goalY = y;
+        return this;
+    }
+
+    private boolean goalFloor(double h) {
+        return Double.isNaN(goalY) || Math.abs(h - goalY) < 0.6;
+    }
     // a quick pass's aim: where the straight line to the goal leaves the loaded area, and the straight line on from it
     private boolean aiming = false;
     private double aimX, aimZ, aimOn;
@@ -164,6 +176,7 @@ public final class PathSearch {
             int n = gc.count(gx & 15, gz & 15);
             for (int i = 0; i < n; i++) {
                 double h = gc.h(gc.index(gx & 15, gz & 15, i));
+                if (!goalFloor(h)) continue;
                 goalMinH = Double.isNaN(goalMinH) ? h : Math.min(goalMinH, h);
             }
             if (n == 0) {
@@ -204,7 +217,7 @@ public final class PathSearch {
             }
             closedAt[id] = expansions++;
             long key = keys[id];
-            if (View.nodeX(key) == gx && View.nodeZ(key) == gz) { goalId = id; break; }
+            if (View.nodeX(key) == gx && View.nodeZ(key) == gz && goalFloor(fy[id])) { goalId = id; break; }
             if (hEst[id] < bestH) { bestH = hEst[id]; bestId = id; }
             if ((expansions & 255) == 0 && System.nanoTime() > deadline) { r.reason = "out of time"; break; }
             if (count >= maxNodes) { r.reason = "out of nodes"; break; }
@@ -257,6 +270,13 @@ public final class PathSearch {
         } else if (hn == 0 && r.reason.isEmpty()) {
             r.exhausted = true;
             r.reason = "no route: every reachable place searched (" + expansions + ")";
+            // the goal can't be reached from here: the way to the floor nearest it (the walk goes as near as it gets)
+            if (bestId != s) {
+                r.nearest = true;
+                fill(r, bestId);
+                r.cost = g[bestId];
+                r.totalCost = Double.NaN;
+            }
         } else {
             r.partial = true;
             fill(r, bestId);

@@ -43,6 +43,16 @@ public final class Layer2 {
         return t;
     });
 
+    /** The copy-found jumps' searches (some 250 ms each) on their own thread: on the worker they held the replans up,
+     *  and a free plan, which changes its action every tick, can't be carried on while a replan is late (the walk fell
+     *  off the take-off: pkTrace2, station 104). */
+    private static final ExecutorService RECIPES = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "kine-walk-recipes");
+        t.setDaemon(true);
+        t.setPriority(Thread.NORM_PRIORITY - 2);
+        return t;
+    });
+
     static RecedingSearch.Effort startEffort() {
         RecedingSearch.Effort e = new RecedingSearch.Effort();
         e.beam = 4; e.depth = 5; e.hold = 4; e.draws = 1;
@@ -63,7 +73,7 @@ public final class Layer2 {
      *  plan carries an unsafe mark (its score above the time left from the start by half the mark: the score itself
      *  grows with the walk's length, so it can't be compared with the mark directly). */
     record Out(RecedingSearch.Result result, int action, float yaw, Field field, int tick, long nanos, Layer2View.Frame frame,
-               boolean unsafe) {}
+               boolean unsafe, float heading) {}
 
     private static Field field = null;
     private static Future<Field> fieldJob = null;
@@ -76,7 +86,7 @@ public final class Layer2 {
 
     // this tick
     private static boolean controlling = false;
-    private static float yaw = 0f;
+    private static float yaw = 0f, heading = Float.NaN;
     private static int action = RunModel.STOP;
     private static boolean safe = false;
 
@@ -93,6 +103,13 @@ public final class Layer2 {
 
     /** A new walk, or the walk over: drop the field, the plan and the snapshot. */
     public static void reset() {
+        recipe = null;
+        if (recipeJob != null) recipeJob.cancel(false);
+        recipeJob = null;
+        recipeTryKey = Long.MIN_VALUE;
+        groundY = Double.NaN;
+        lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
+        freeMemory = null;
         field = null;
         if (fieldJob != null) fieldJob.cancel(false);
         fieldJob = null;
@@ -126,10 +143,25 @@ public final class Layer2 {
     private static int lastPressed = 0;
     private static int lastPressedTick = -1;
 
+    // a jump the graph has no move for, found in the copy (walking without a route): its inputs, played tick by tick
+    private static Recipe recipe = null;
+    private static int recipeT = 0, recipeKeys = 0, recipeKeysTick = -1, lastRecipeTry = -1000;
+    private static Future<Recipe> recipeJob = null;
+    /** The height the player last stood at (on the ground, in water or on a ladder): the gap check's take-off. */
+    private static double groundY = Double.NaN;
+    /** The free search's memory toward the jump ahead (RunModel.FreeMemory): a new one for each landing. */
+    private static volatile RunModel.FreeMemory freeMemory = null;
+    private static long recipeTryKey = Long.MIN_VALUE;
+    public static int recipesFound = 0, recipesPlayed = 0, recipesDropped = 0;
+    public static String lastRecipe = "";
+
     /** The keys this tick at the rotation sent now. */
     public static int keys(LocalPlayer p) {
+        if (recipeKeysTick == tick) return recipeKeys;
         int last = lastPressedTick == tick - 1 || lastPressedTick == tick ? lastPressed : 0;
-        int k = RunModel.keys(action, yaw, p.getYRot(), p.isInWater(), p.onGround(), p.isFallFlying(), last);
+        // a free action's keys come from its movement heading (its view may be 45 degrees off it: a strafe)
+        float h = RunModel.isFree(action) && !Float.isNaN(heading) ? heading : yaw;
+        int k = RunModel.keys(action, h, p.getYRot(), p.isInWater(), p.onGround(), p.isFallFlying(), last);
         lastPressed = k;
         lastPressedTick = tick;
         return k;
@@ -153,6 +185,18 @@ public final class Layer2 {
     static boolean steer(LocalPlayer p) {
         controlling = false;
         if (!Settings.walkLayer2) return false;
+        if (playRecipe(p)) return true;
+        if (recipeJob != null && !recipeJob.isDone() && p.onGround()) {
+            // a jump search runs from the state it started in (standing): stand until it is back
+            action = RunModel.STOP;
+            yaw = KillAura.lastSentYaw(p);
+            heading = Float.NaN;
+            safe = false;
+            controlling = true;
+            controlledTicks++;
+            lastWhy = "jump search";
+            return true;
+        }
         if (job != null && !job.isDone()) {
             // in real play the worker has had the whole time between ticks; in a lockstep test this keeps runs the same
             long w0 = System.nanoTime();
@@ -171,11 +215,80 @@ public final class Layer2 {
         if (at < 0 || at >= START.hold || plan[at] != plan[0]) return fallback("plan too old");
         action = plan[at];
         yaw = o.yaw();
+        heading = o.heading();
         safe = !o.unsafe();
         controlling = true;
         controlledTicks++;
         lastWhy = "";
         return true;
+    }
+
+    /**
+     * Walking without a route: a jump found in the copy to a floor the graph joins to the goal (Recipe), played tick by
+     * tick while the copy, from the state now, still lands it; dropped otherwise. Whether it steers this tick.
+     */
+    private static boolean playRecipe(LocalPlayer p) {
+        if (recipeJob != null && recipeJob.isDone()) {
+            try {
+                Recipe r = recipeJob.get();
+                if (r != null && r.found()) { recipe = r; recipeT = 0; recipesFound++; lastRecipe = r.how; }
+            } catch (Exception ex) {
+                Kine.LOGGER.warn("Kine walk layer 2: recipe search failed", ex);
+            }
+            recipeJob = null;
+        }
+        Recipe r = recipe;
+        if (r == null || grid == null) return false;
+        if (recipeT >= r.ticks) { recipe = null; recipesPlayed++; return false; }
+        GroundPhysics phys = new GroundPhysics(grid, WorldSnapshot.body(p));
+        if (!r.stillLands(phys, WorldSnapshot.state(p), recipeT, r.lx, r.ly, r.lz)) {
+            recipe = null;
+            recipesDropped++;
+            lastRecipeTry = tick;
+            return false;
+        }
+        action = RunModel.STOP;
+        yaw = r.yaw[recipeT];
+        recipeKeys = r.keys[recipeT];
+        recipeKeysTick = tick;
+        recipeT++;
+        safe = true;
+        controlling = true;
+        controlledTicks++;
+        lastWhy = "recipe";
+        return true;
+    }
+
+    /** Walking without a route, standing on a floor the graph doesn't join to the goal: search the copy for a jump to
+     *  one it does join, nearby (at most once per floor stood on, and a second after a dropped one). */
+    private static void maybeSearchRecipe(LocalPlayer p, Field f, BlockGrid g, Body body) {
+        // a jump the graph has no move for is parkour: only with Parkour on
+        if (!Settings.walkParkour || recipe != null || recipeJob != null || f.joined == null || !p.onGround()) return;
+        // from a standing start only: the walk stands while it searches (steer), so the state it searched from holds
+        var dv = p.getDeltaMovement();
+        if (dv.x * dv.x + dv.z * dv.z > 1e-4) return;
+        if (tick - lastRecipeTry < 20) return;
+        if (f.joinedAt(p.getX(), p.getY(), p.getZ())) return;
+        long key = ((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY();
+        if (key == recipeTryKey) return;
+        recipeTryKey = key;
+        lastRecipeTry = tick;
+        int[] cand = f.joinedNear(p.getX(), p.getY(), p.getZ(), 6.0, 3);
+        if (cand.length == 0) return;
+        MoveState s = WorldSnapshot.state(p);
+        float sent = KillAura.lastSentYaw(p);
+        int[][] land = new int[cand.length][];
+        for (int k = 0; k < cand.length; k++)
+            land[k] = new int[]{(int) Math.floor(f.x(cand[k])), (int) Math.round(f.y(cand[k])) - 1, (int) Math.floor(f.z(cand[k]))};
+        recipeJob = RECIPES.submit(() -> {
+            GroundPhysics phys = new GroundPhysics(g, body);
+            for (int[] l : land) {
+                float bearing = Recipe.yawTo(s.x, s.z, l[0] + 0.5, l[2] + 0.5);
+                Recipe r = Recipe.search(phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60);
+                if (r.found()) return r;
+            }
+            return null;
+        });
     }
 
     private static boolean fallback(String why) {
@@ -202,7 +315,7 @@ public final class Layer2 {
     }
 
     /** The end of a tick while walking (Walk.endTick): the field for the route, the blocks, and the next replan. */
-    static void endTick(Minecraft mc, Planner.Plan plan, int[] dest) {
+    static void endTick(Minecraft mc, Planner.Plan plan, int[] dest, double destY) {
         tick++;
         LocalPlayer p = mc.player;
         if (!Settings.walkLayer2 || plan == null || p == null || mc.level == null || dest == null) return;
@@ -231,7 +344,11 @@ public final class Layer2 {
             boolean reached = plan.result.found && !plan.result.viaExit && !plan.result.partial;
             Costs costs = Walk.costs();
             boolean glides = Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
-            fieldJob = WORKER.submit(() -> Field.build(v, costs, canSprint, true, glides, plan.id, path, plan.route, px, pz, dest[0], dest[1], reached));
+            boolean gaps = Settings.walkParkour;
+            fieldJob = plan.direct
+                ? WORKER.submit(() -> Field.direct(v, costs, canSprint, gaps, glides, plan.id, path, dest[0], dest[1], destY))
+                : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.route, px, pz, dest[0], dest[1],
+                    destY, reached));
         }
         Field f = field;
         if (f == null) return;
@@ -261,6 +378,7 @@ public final class Layer2 {
             maxGridNanos = Math.max(maxGridNanos, gn);
         }
 
+        if (plan.direct && grid != null) maybeSearchRecipe(p, f, grid, WorldSnapshot.body(p));
         if (job != null && !job.isDone()) return;   // still on the last one
         harvest();
         BlockGrid g = grid;
@@ -268,6 +386,10 @@ public final class Layer2 {
         body.glide = Settings.walkElytraHops && body.canGlide;   // elytra hops: off by default (they wear the elytra)
         MoveState s = WorldSnapshot.state(p);
         RunWorld root = new RunWorld(s, KillAura.lastSentYaw(p), KillAura.lastSentPitch(p));
+        // the take-off for the gap check (Parkour off): where the player stood last, not where a run's first tick in the
+        // air happens to be (from 0.42 up, a floor one block under the take-off looked like a gap)
+        if (p.onGround() || p.isInWater() || p.onClimbable()) groundY = p.getY();
+        root.takeoffY = groundY;
         float viewPitch = p.getXRot();
         int[] previous = last != null && last.result().plan() != null ? last.result().plan() : null;
         int shift = last != null ? tick - last.tick() : 0;
@@ -278,9 +400,26 @@ public final class Layer2 {
         boolean display = Layer2View.frameDue(tick);
         if (Settings.walkLayer2Display) Layer2View.ensureRegistered();
         double maxFall = Walk.costs().maxFall;
+        boolean parkour = Settings.walkParkour;
+        double goalY = destY;
+        // a jump ahead (the field's next GAP within 5 blocks, or walking without a route a joined floor in reach): free
+        // actions aimed at its landing (with Parkour on: the jumps are parkour's)
+        double[] target = parkour && Settings.walkFreeJumps ? f.jumpAhead(p.getX(), p.getY(), p.getZ(), 5.0) : null;
+        RunModel.FreeMemory mem = null;
+        if (target != null) {
+            long key = RunModel.FreeMemory.key(target[0], target[1], target[2]);
+            mem = freeMemory;
+            if (mem == null || mem.target != key) freeMemory = mem = new RunModel.FreeMemory(key);
+        }
+        RunModel.FreeMemory freeMem = mem;
         job = WORKER.submit(() -> {
             long r0 = System.nanoTime();
             RunModel model = new RunModel(new GroundPhysics(g, body), f, dest[0], dest[1], viewPitch, maxFall);
+            model.parkour = parkour;
+            model.goalY = goalY;
+            if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
+            model.freeMemory = freeMem;
+            model.now = at;
             if (body.glide) model.gaits = RunModel.GLIDE_GAITS;
             RecedingSearch<RunWorld> rs = new RecedingSearch<>(model);
             Layer2View.Recorder rec = display ? new Layer2View.Recorder(e.hold) : null;
@@ -288,16 +427,17 @@ public final class Layer2 {
             RecedingSearch.Result r = RunModel.plan(model, rs, root, previous, shift, e, seed);
             long nanos = System.nanoTime() - r0;
             int a = RunModel.STOP;
-            float y = root.sentYaw;
+            float y = root.sentYaw, hd = Float.NaN;
             if (r.plan() != null) {
                 RunWorld w = root.copy();
                 model.step(w, r.plan()[0], 0, null);
                 a = r.plan()[0];
                 y = w.firstYaw;
+                hd = w.firstHeading;
             }
             Layer2View.Frame frame = rec != null ? rec.frame(model, root, r) : null;
             boolean unsafe = r.plan() == null || r.score() - model.estimate(root) >= RunModel.UNSAFE / 2;
-            return new Out(r, a, y, f, at, nanos, frame, unsafe);
+            return new Out(r, a, y, f, at, nanos, frame, unsafe, hd);
         });
     }
 }

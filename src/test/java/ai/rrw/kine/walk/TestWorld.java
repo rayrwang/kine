@@ -30,6 +30,8 @@ final class TestWorld {
     static final Kind SOUL_SAND = Palette.add("soul_sand", List.of(box(0, 0, 0, 1, 0.875, 1)), 0.6F, 0.4F, Kind.SLOW);
     static final Kind MAGMA = Palette.add("magma", List.of(box(0, 0, 0, 1, 1, 1)), 0.6F, 1.0F, Kind.FLOOR_HAZARD);
     static final Kind ICE = Palette.add("ice", List.of(box(0, 0, 0, 1, 1, 1)), 0.98F, 1.0F, 0);
+    /** A vine: climbable, no collision. */
+    static final Kind VINE = Palette.add("vine", List.of(), 0.6F, 1.0F, Kind.CLIMB);
 
     static double[] box(double x0, double y0, double z0, double x1, double y1, double z1) {
         return new double[]{x0, y0, z0, x1, y1, z1};

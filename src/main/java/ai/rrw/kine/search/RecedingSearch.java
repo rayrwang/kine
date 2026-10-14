@@ -181,8 +181,13 @@ public final class RecedingSearch<W> {
 
     /** The score a fixed plan (one action a tick) gets from the root with this effort's draws and scoring, as the
      *  search would score it: for tests and diagnostics. */
-    @SuppressWarnings("unchecked")
     public double score(W root, int[] plan, Effort e, long seed) {
+        return score(root, plan, e, seed, null);
+    }
+
+    /** As above, each tick's world (the first draw's) shown to `each`, for a caller that checks where the plan goes. */
+    @SuppressWarnings("unchecked")
+    public double score(W root, int[] plan, Effort e, long seed, java.util.function.Consumer<W> each) {
         int draws = Math.max(1, e.draws);
         double sum = 0, worst = Double.NEGATIVE_INFINITY;
         for (int d = 0; d < draws; d++) {
@@ -192,6 +197,7 @@ public final class RecedingSearch<W> {
             for (int i = 0; i < plan.length; i++) {
                 run = i % e.hold != 0 && plan[i] == plan[i - 1] ? run + 1 : 0;
                 cost += model.step(w, plan[i], run, new SplittableRandom(mix(seed, d, i)));
+                if (each != null && d == 0) each.accept(w);
             }
             double total = cost + model.estimate(w);
             sum += total;

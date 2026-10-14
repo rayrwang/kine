@@ -73,8 +73,8 @@ public final class ColumnScan {
                         if (feet.is(Kind.WATER) || k.is(Kind.WATER)) fl |= ChunkFloors.WADE;
                         if (feet.is(Kind.CLIMB)) fl |= ChunkFloors.CLIMB_FEET;
                         if (k.is(Kind.SLOW) || feet.is(Kind.SLOW)) fl |= ChunkFloors.SLOW;
-                        if (k.topFull && k.footTop == k.cellTop && f.cellClear >= f.head - 1e-5F && !feet.is(Kind.CLIMB))
-                            fl |= ChunkFloors.SIMPLE;
+                        if (k.topFull && k.footTop == k.cellTop && f.cellClear >= f.head - 1e-5F)
+                            fl |= feet.is(Kind.CLIMB) ? (feet.empty() ? ChunkFloors.CLIMB_PLAIN : 0) : ChunkFloors.SIMPLE;
                         f.flags = fl;
                         window(ids, yi, f.window);
                         out.add(f);

@@ -163,6 +163,7 @@ class SettingsTest {
         assertTrue(Settings.walkPathDisplay);
         assertFalse(Settings.walkSearchDisplay);
         assertFalse(Settings.walkSearchDetailed);
+        assertFalse(Settings.walkParkour, "parkour off by default (Baritone's allowParkour too): a short jump lands in the gap");
         assertEquals(20, Settings.walkMargin, "0.20 blocks");
         // layer 2 (the movement search) and its display on: it presses only the game's own keys
         assertTrue(Settings.walkLayer2);

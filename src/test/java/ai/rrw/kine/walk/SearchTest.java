@@ -57,6 +57,65 @@ public class SearchTest {
         return w;
     }
 
+    /** The goal's column with two floors, the ground under a platform and the platform's top up a stair (as a goal
+     *  block over a pool): without a Y the search ends on the ground (any floor of the column, the nearer), with the
+     *  platform's Y on the platform. */
+    static TestWorld twoFloorGoal() {
+        TestWorld w = blocks(-8, -8, 23, 23).floor(10);
+        w.fill(5, 11, -2, 5, 11, 2, STONE);          // a stair up from the west: 12, 13, 14, then the platform's top, 15
+        w.fill(6, 11, -2, 6, 12, 2, STONE);
+        w.fill(7, 11, -2, 7, 13, 2, STONE);
+        w.fill(8, 14, -2, 10, 14, 2, STONE);         // the platform, room for the feet under it (11 to 14)
+        return w;
+    }
+
+    @Test
+    void theDestinationsYNamesTheGoalsFloor() {
+        View v = twoFloorGoal().view();
+        long start = v.nodeAt(0, 11, 0);
+        PathSearch.Result any = new PathSearch(v, new Costs()).run(start, 9, 0, 1.0, FOREVER, 1_000_000, false);
+        PathSearch.Result top = new PathSearch(v, new Costs()).goalY(15).run(start, 9, 0, 1.0, FOREVER, 1_000_000, false);
+        assertTrue(any.found && top.found);
+        assertEquals(11.0, any.pathY[any.pathY.length - 1], 1e-4, "without a Y: the ground under the platform");
+        assertEquals(15.0, top.pathY[top.pathY.length - 1], 1e-4, "with the platform's Y: on it");
+    }
+
+    /** A floor with a vine hanging at the feet a block above or below its neighbours (the benchmark's seed 556249644:
+     *  the goal on such a floor on a hillside was shut in, every jump up and drop down needing plain floors): reached
+     *  by a jump up, and by a drop down. */
+    @Test
+    void aVineAtTheFeetIsJumpedOntoAndDroppedInto() {
+        TestWorld w = blocks(-8, -8, 23, 23).floor(10);
+        w.set(5, 11, 0, STONE).set(5, 12, 0, TestWorld.VINE);         // a block up, a vine at the feet
+        w.fill(0, 11, 4, 9, 12, 6, STONE);                              // a ledge, its top at 13
+        w.set(5, 11, 7, STONE).set(5, 12, 7, TestWorld.VINE);           // a vine floor at 12, a block under the ledge
+        View v = w.view();
+        long start = v.nodeAt(0, 11, 0);
+        PathSearch.Result up = new PathSearch(v, new Costs()).run(start, 5, 0, 1.0, FOREVER, 1_000_000, false);
+        assertTrue(up.found && !up.viaExit, "onto the vine floor a block up: " + up.reason);
+        // down: from the ledge (top 13) onto a vine floor a block below it (top 12)
+        long ledge = v.nodeAt(5, 13, 6);
+        assertNotEquals(View.NONE, ledge);
+        PathSearch.Result down = new PathSearch(v, new Costs()).run(ledge, 5, 7, 1.0, FOREVER, 1_000_000, false);
+        assertTrue(down.found && !down.viaExit, "down onto the vine floor: " + down.reason);
+    }
+
+    /** A goal shut in (a floor in a ring of walls three high): the search searches every reachable place and gives the
+     *  way to the floor nearest the goal (the walk goes as near as it gets, then ends), not nothing. */
+    @Test
+    void aShutInGoalGivesTheWayToTheFloorNearestIt() {
+        TestWorld w = blocks(-8, -8, 23, 23).floor(10);
+        for (int x = 9; x <= 11; x++) for (int z = -1; z <= 1; z++) if (x != 10 || z != 0) w.fill(x, 11, z, x, 13, z, STONE);
+        View v = w.view();
+        long start = v.nodeAt(0, 11, 0);
+        PathSearch.Result r = new PathSearch(v, new Costs()).run(start, 10, 0, 1.0, FOREVER, 1_000_000, false);
+        assertFalse(r.found);
+        assertTrue(r.exhausted && r.nearest, r.reason);
+        long end = r.path[r.path.length - 1];
+        double d = Math.hypot(View.nodeX(end) - 10, View.nodeZ(end));
+        assertTrue(d <= 2.0, "ends next to the ring: " + View.nodeX(end) + "," + View.nodeZ(end));
+    }
+
     @Test
     void optimalAgainstBruteForce() {
         int compared = 0, unreachable = 0;

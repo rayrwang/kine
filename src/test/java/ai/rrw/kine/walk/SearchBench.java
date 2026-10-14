@@ -50,6 +50,39 @@ public class SearchBench {
         }
     }
 
+    /** What Parkour's gap jumps cost the search: the same kind of terrain with trenches (1 to 4 wide, 8 deep) and pits
+     *  cut in it, searched with the jumps off and on. */
+    @Test
+    void timesWithParkour() {
+        TestWorld w = blocks(-200, -200, 199, 199).floor(10);
+        Random r = new Random(7);
+        for (int x = -200; x < 200; x++)
+            for (int z = -200; z < 200; z++) {
+                double p = r.nextDouble();
+                if (p < 0.04) w.fill(x, 11, z, x, 12, z, STONE);
+                else if (p < 0.07) w.fill(x, 3, z, x, 10, z, Palette.AIR);   // a pit
+            }
+        for (int k = 0; k < 60; k++) {
+            int x0 = r.nextInt(380) - 190, z0 = r.nextInt(380) - 190, wd = 1 + r.nextInt(4), len = 10 + r.nextInt(30);
+            if (r.nextBoolean()) w.fill(x0, 3, z0, x0 + wd - 1, 10, z0 + len, Palette.AIR);
+            else w.fill(x0, 3, z0, x0 + len, 10, z0 + wd - 1, Palette.AIR);
+        }
+        w.fill(-1, 10, -1, 1, 12, 1, STONE).fill(-1, 11, -1, 1, 12, 1, Palette.AIR);
+        int[][] goals = {{70, 70}, {100, 140}, {180, -180}};
+        for (int[] g : goals) w.fill(g[0], 10, g[1], g[0], 10, g[1], STONE).fill(g[0], 11, g[1], g[0], 12, g[1], Palette.AIR);
+        View v = w.view();
+        long start = v.nodeAt(0, 11, 0);
+        Costs c = Costs.layer2();
+        for (int[] g : goals)
+            for (boolean gaps : new boolean[]{false, true}) {
+                PathSearch.Result res = new PathSearch(v, c).gaps(gaps).run(start, g[0], g[1], 1.0, Long.MAX_VALUE, 3_000_000, false);
+                int jumps = 0;
+                for (int i = 1; i < res.path.length; i++) if (res.moves[i] == Graph.GAP) jumps++;
+                System.out.printf(java.util.Locale.ROOT, "KINEMEASURE bench parkour %s goal %d,%d: search %.1f ms, %d expanded, cost %.1f, found %b, %d jumps%n",
+                    gaps ? "on " : "off", g[0], g[1], res.nanos / 1e6, res.expanded, res.cost, res.found, jumps);
+            }
+    }
+
     @Test
     void timesByDensityAndDistance() {
         for (double density : new double[]{0.0, 0.06, 0.15}) {

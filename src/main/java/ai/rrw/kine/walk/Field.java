@@ -39,6 +39,8 @@ public final class Field {
     /** The goal column, and whether the corridor reaches it (its end is the goal, not a point on the way). */
     final int goalX, goalZ;
     final boolean endsAtGoal;
+    /** The destination's Y (feet): only that floor of the goal column is a source (within 0.6); NaN: any floor. */
+    final double goalY;
 
     private final Long2IntOpenHashMap id = new Long2IntOpenHashMap();
     private final LongOpenHashSet columns = new LongOpenHashSet();
@@ -58,10 +60,68 @@ public final class Field {
     final double rate;
     public long buildNanos;
     public int edges;
+    /** Walking without a route: the columns are the box round the start and the goal, and floors the graph doesn't
+     *  join to the goal get the straight line's time (direct). */
+    boolean box = false;
+    /** What a floor not joined to the goal pays over the straight line's time: being joined is worth more than this. */
+    static final double DIRECT_PENALTY = 40.0;
+    /** Walking without a route: how far a joined floor is offered to the free actions as a landing, blocks: a jump
+     *  carries some 4.3 to 5.4 past its take-off's edge, and the free plans start up to 2 blocks before it (with the run
+     *  up's speed; from a standing start at the edge the landing is out of reach). */
+    static final double DIRECT_REACH = 8.0;
+    /** Walking without a route: whether the graph's moves join each floor to the goal (null otherwise). */
+    boolean[] joined;
 
-    private Field(View v, Costs c, long planId, long[] path, int from, int to, int goalX, int goalZ, boolean endsAtGoal) {
+    /** Walking without a route: the floors the graph joins to the goal within `radius` (horizontal) of (x, z), from
+     *  3.2 below to 1.3 above y, best (lowest time plus the straight line to them) first; at most `max`. */
+    int[] joinedNear(double x, double y, double z, double radius, int max) {
+        if (joined == null) return new int[0];
+        java.util.List<double[]> c = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (!joined[i] || type[i] != ChunkFloors.GROUND) continue;
+            double d = Math.hypot(px[i] - x, pz[i] - z);
+            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3) continue;
+            c.add(new double[]{value[i] + d * rate, i});
+        }
+        c.sort((a, b) -> Double.compare(a[0], b[0]));
+        int[] out = new int[Math.min(max, c.size())];
+        for (int k = 0; k < out.length; k++) out[k] = (int) c.get(k)[1];
+        return out;
+    }
+
+    /**
+     * The landing of a jump ahead, for layer 2's free actions: along the field's cheapest moves from the floor at (x, y,
+     * z), within `reach` blocks, the first GAP move's landing floor {x, y, z} (its centre and height); walking without a
+     * route, standing on a floor not joined to the goal, the best joined floor within reach. Null when none.
+     */
+    double[] jumpAhead(double x, double y, double z, double reach) {
+        int i = nodeAt(x, y, z);
+        if (i < 0) return null;
+        if (joined != null && !joined[i]) {
+            int[] c = joinedNear(x, y, z, Math.max(reach, DIRECT_REACH), 1);
+            return c.length == 0 ? null : new double[]{px[c[0]], py[c[0]], pz[c[0]]};
+        }
+        int j = i;
+        for (int k = 0; k < 16 && j >= 0; k++) {
+            int nx = next[j];
+            if (nx < 0) return null;
+            if (Math.hypot(px[nx] - x, pz[nx] - z) > reach + 6) return null;
+            if (nextMove[j] == Graph.GAP) return Math.hypot(px[j] - x, pz[j] - z) <= reach ? new double[]{px[nx], py[nx], pz[nx]} : null;
+            j = nx;
+        }
+        return null;
+    }
+
+    /** Whether the floor the player is on is joined to the goal (walking without a route); true otherwise. */
+    boolean joinedAt(double x, double y, double z) {
+        if (joined == null) return true;
+        int i = nodeAt(x, y, z);
+        return i < 0 || joined[i];
+    }
+
+    private Field(View v, Costs c, long planId, long[] path, int from, int to, int goalX, int goalZ, double goalY, boolean endsAtGoal) {
         this.v = v; this.c = c; this.planId = planId; this.path = path; this.from = from; this.to = to; this.pathLength = path.length;
-        this.goalX = goalX; this.goalZ = goalZ; this.endsAtGoal = endsAtGoal;
+        this.goalX = goalX; this.goalZ = goalZ; this.goalY = goalY; this.endsAtGoal = endsAtGoal;
         this.rate = c.fastest;
         id.defaultReturnValue(-1);
     }
@@ -84,13 +144,13 @@ public final class Field {
      */
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, long planId, long[] path, double x, double z,
                               int goalX, int goalZ, boolean reachedGoal) {
-        return build(v, c, canSprint, gaps, false, planId, path, null, x, z, goalX, goalZ, reachedGoal);
+        return build(v, c, canSprint, gaps, false, planId, path, null, x, z, goalX, goalZ, Double.NaN, reachedGoal);
     }
 
     /** route: the tightened route the walk follows (or null): the corridor takes it in too, and the window's end is
      *  sourced along it. */
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
-                              Route route, double x, double z, int goalX, int goalZ, boolean reachedGoal) {
+                              Route route, double x, double z, int goalX, int goalZ, double goalY, boolean reachedGoal) {
         long t0 = System.nanoTime();
         int at = nearestIndex(path, x, z);
         int from = at;
@@ -100,13 +160,40 @@ public final class Field {
         double ahead = 0;
         while (to + 1 < path.length && ahead < AHEAD) { ahead += hdist(path[to], path[to + 1]); to++; }
         boolean endsAtGoal = reachedGoal && to == path.length - 1;
-        Field f = new Field(v, c, planId, path, from, to, goalX, goalZ, endsAtGoal);
+        Field f = new Field(v, c, planId, path, from, to, goalX, goalZ, goalY, endsAtGoal);
         Graph g = new Graph(v, c);
         g.canSprint = canSprint;
         g.gaps = gaps;
         g.glides = glides;
         g.goalX = goalX; g.goalZ = goalZ;
         f.make(g, path, route, from, to);
+        f.buildNanos = System.nanoTime() - t0;
+        return f;
+    }
+
+    /**
+     * The field for walking without a route (layer 1 found none and the goal is near; RW, 2026-10-13: a short-range
+     * layer 2 only mode): the floors in the box round the start (path[0]) and the goal column, with RADIUS to spare;
+     * the graph's times to the goal where its moves join a floor to it, and elsewhere the straight line's time at the
+     * fastest rate plus DIRECT_PENALTY, so layer 2's own search, in the movement copy, finds what the graph doesn't have
+     * (a jump round a corner, a ladder's trick) by heading for the goal and for ground the graph joins to it.
+     */
+    public static Field direct(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
+                               int goalX, int goalZ, double goalY) {
+        long t0 = System.nanoTime();
+        Field f = new Field(v, c, planId, path, 0, path.length - 1, goalX, goalZ, goalY, true);
+        f.box = true;
+        Graph g = new Graph(v, c);
+        g.canSprint = canSprint;
+        g.gaps = gaps;
+        g.glides = glides;
+        g.goalX = goalX; g.goalZ = goalZ;
+        f.make(g, path, null, 0, path.length - 1);
+        f.joined = new boolean[f.n];
+        for (int i = 0; i < f.n; i++) {
+            f.joined[i] = f.value[i] != Double.POSITIVE_INFINITY;
+            if (!f.joined[i]) f.value[i] = Math.hypot(goalX + 0.5 - f.px[i], goalZ + 0.5 - f.pz[i]) * f.rate + DIRECT_PENALTY;
+        }
         f.buildNanos = System.nanoTime() - t0;
         return f;
     }
@@ -143,6 +230,11 @@ public final class Field {
             }
         }
         if (endsAtGoal) columns.add(View.key(goalX, goalZ));
+        if (box) {
+            int sx = View.nodeX(path[0]), sz = View.nodeZ(path[0]);
+            for (int x = Math.min(sx, goalX) - RADIUS; x <= Math.max(sx, goalX) + RADIUS; x++)
+                for (int z = Math.min(sz, goalZ) - RADIUS; z <= Math.max(sz, goalZ) + RADIUS; z++) columns.add(View.key(x, z));
+        }
         long[] list = new long[256];
         int cnt = 0;
         for (long key : columns) {
@@ -234,6 +326,7 @@ public final class Field {
             if (ch != null)
                 for (int i = 0; i < ch.count(goalX & 15, goalZ & 15); i++) {
                     int j = id.get(View.node(goalX, goalZ, i));
+                    if (j >= 0 && !Double.isNaN(goalY) && Math.abs(py[j] - goalY) >= 0.6) continue;   // a Y given: one floor
                     if (j >= 0 && value[j] > 0) { value[j] = 0; h.push(j, 0); }
                 }
         }

@@ -51,7 +51,7 @@ public class KineNavScreen extends Screen {
     private enum Tab { ELYTRA, WALK }
     private static Tab tab = Tab.ELYTRA;
     private Button elytraTab, walkTab;
-    private EditBox walkX, walkZ;
+    private EditBox walkX, walkY, walkZ;   // walkY optional: blank, any floor of the column
     private Button walkHere, walkBtn;   // walkBtn: Go, Pause or Cancel, as the walk stands (RW)
     private int walkTop;
 
@@ -211,14 +211,22 @@ public class KineNavScreen extends Screen {
 
     private void initWalk(int cx) {
         walkTop = 46;
-        int fw = 92, fh = 20, fy = walkTop + 18;
-        walkX = new EditBox(this.font, cx - fw - 8, fy, fw, fh, Component.literal("Walk X"));
-        walkZ = new EditBox(this.font, cx + 8, fy, fw, fh, Component.literal("Walk Z"));
+        int fw = 64, fh = 20, fy = walkTop + 18, gap = 20;   // X, Y, Z in a row, a label left of each
+        int x0 = cx - (3 * fw + 2 * gap) / 2 + 5;
+        walkX = new EditBox(this.font, x0, fy, fw, fh, Component.literal("Walk X"));
+        walkY = new EditBox(this.font, x0 + fw + gap, fy, fw, fh, Component.literal("Walk Y"));
+        walkZ = new EditBox(this.font, x0 + 2 * (fw + gap), fy, fw, fh, Component.literal("Walk Z"));
         walkX.setMaxLength(9);
+        walkY.setMaxLength(5);
         walkZ.setMaxLength(9);
+        walkY.setHint(Component.literal("optional"));
+        walkY.setTooltip(Tooltip.create(Component.literal("The floor to walk to, the Y you stand at there. Blank: any floor of the column.")));
         int[] d = Walk.destination();
         if (d != null) { walkX.setValue(Integer.toString(d[0])); walkZ.setValue(Integer.toString(d[1])); }
+        double dy = Walk.destinationY();
+        if (d != null && !Double.isNaN(dy)) walkY.setValue(Integer.toString((int) Math.floor(dy)));
         addRenderableWidget(walkX);
+        addRenderableWidget(walkY);
         addRenderableWidget(walkZ);
         walkHere = addRenderableWidget(Button.builder(Component.literal("Use current position"), b -> useCurrentPosition())
             .bounds(cx - 75, fy + 28, 150, 20).build());
@@ -255,14 +263,15 @@ public class KineNavScreen extends Screen {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
         walkX.setValue(Integer.toString(mc.player.getBlockX()));
+        walkY.setValue(Integer.toString(mc.player.getBlockY()));
         walkZ.setValue(Integer.toString(mc.player.getBlockZ()));
         applyWalk();
     }
 
-    /** Keep the typed destination (both boxes must parse). */
+    /** Keep the typed destination (X and Z must parse; Y blank or not a number: any floor). */
     private void applyWalk() {
-        Integer x = parseInt(walkX.getValue()), z = parseInt(walkZ.getValue());
-        if (x != null && z != null) Walk.setDestination(x, z);
+        Integer x = parseInt(walkX.getValue()), y = parseInt(walkY.getValue()), z = parseInt(walkZ.getValue());
+        if (x != null && z != null) Walk.setDestination(x, z, y == null ? Double.NaN : y);
     }
 
     private void walkGo() {
@@ -276,6 +285,7 @@ public class KineNavScreen extends Screen {
         int cx = this.width / 2;
         g.centeredText(this.font, Component.literal("Walk to (this dimension)"), cx, walkTop, LABEL);
         g.text(this.font, "X", walkX.getX() - 10, walkX.getY() + 6, DIM, true);
+        g.text(this.font, "Y", walkY.getX() - 10, walkY.getY() + 6, DIM, true);
         g.text(this.font, "Z", walkZ.getX() - 10, walkZ.getY() + 6, DIM, true);
         refreshWalkButton();   // the walk can pause or arrive while the screen is open
         int y = walkBtn.getY() + 30;
@@ -318,6 +328,7 @@ public class KineNavScreen extends Screen {
         elytraTab.active = walk && Settings.navigation;   // the tab shown is greyed out, like the mode buttons
         walkTab.active = !walk && Settings.walkPathfinder;
         walkX.visible = walkX.active = walk;
+        walkY.visible = walkY.active = walk;
         walkZ.visible = walkZ.active = walk;
         walkHere.visible = walkHere.active = walk;
         walkBtn.visible = walk; walkBtn.active = walk && Settings.walkPathfinder;
