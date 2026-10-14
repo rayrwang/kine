@@ -47,7 +47,11 @@ import java.util.concurrent.TimeUnit;
  * glide stays clear well past the warning, the autopilot trips off with its AUTOPILOT OFF warning and the 1.5 s
  * dead-man disconnect, unless the pilot takes over. A small mouse movement is taken back, as the landing takes back
  * a bump (Autopilot.control); a deliberate turn, a movement key or J hands control straight back, and the guardian
- * then stays off for that danger until the do-nothing path is clear again (RW's ruling 1).
+ * then stays off for that danger until the do-nothing path is clear again (RW's ruling 1). In flight by hand it fires
+ * only once the pilot has given no input (a mouse turn, a movement key, use) for the cooldown setting, default 1 s,
+ * so terrain can be flown close on purpose (RW 2026-10-14: "otherwise its basicaly impossible to fly near tererian",
+ * "i meant cooldown after yoru last input"); on the autopilot, a takeoff or a landing it always acts ("in autopilot
+ * it's alwyas active").
  */
 public final class Guardian {
     private Guardian() {}
@@ -79,9 +83,12 @@ public final class Guardian {
     private static int startTick;
     private static double startY, startTrack, lowY;
     private static boolean noHelpLogged = false;
+    private static int lastInputTick = Integer.MIN_VALUE / 2;  // the pilot's last mouse turn or key, flying by hand
+    private static float prevYaw = Float.NaN, prevPitch = Float.NaN;
+    private static boolean quietLogged = false;
 
     // measured, for the report and the tests (read by reflection)
-    public static int fires = 0, handbacks = 0, overrides = 0, switches = 0, rearms = 0, noHelps = 0;
+    public static int fires = 0, handbacks = 0, overrides = 0, switches = 0, rearms = 0, noHelps = 0, quietSkips = 0;
     public static long ticks = 0, tickNanos = 0, maxTickNanos = 0, jobs = 0, jobNanos = 0, maxJobNanos = 0;
     public static long waits = 0, waitNanos = 0, maxWaitNanos = 0;
     /** The game thread's time a tick (end of tick and start of the next together), as a histogram: under 0.1, 0.25,
@@ -135,6 +142,10 @@ public final class Guardian {
         }
         GuardWorld.tick(mc, p);
         sentYaw = p.getYRot(); sentPitch = p.getXRot();
+        // flying by hand, a turn of the view (only the mouse turns it then) or a key held is the pilot's input
+        boolean turned = !Float.isNaN(prevYaw) && (Math.abs(sentYaw - prevYaw) > 0.01f || Math.abs(sentPitch - prevPitch) > 0.01f);
+        if (byHand() && (turned || pilotKeys(mc) || mc.options.keyUse.isDown())) lastInputTick = tick;
+        prevYaw = sentYaw; prevPitch = sentPitch;
         if (!p.isFallFlying()) { stop("the glide ended"); RING.clear(); overridden = false; note(t0); return; }
         if (active != null && !Autopilot.isEngaged()) stop("the autopilot let go");
         if (active == null) RING.add(p.getX(), p.getY(), p.getZ());
@@ -243,13 +254,21 @@ public final class Guardian {
         switch (v.kind()) {
             case SAFE -> {
                 noHelpLogged = false;
+                quietLogged = false;
                 if (overridden) { overridden = false; rearms++; event("re-armed: the path ahead is clear"); }
             }
             case NO_HELP -> {
                 if (!noHelpLogged) { noHelps++; event("no rescue helps: " + v.danger() + "; best " + v.rescue()); }
                 noHelpLogged = true;
             }
-            case FIRE -> { if (active == null && !overridden && j.steered() == null) fire(mc, p, j, v); }
+            case FIRE -> {
+                if (active == null && !overridden && j.steered() == null) {
+                    if (byHand() && tick - lastInputTick < Settings.collisionCooldown * 2) {
+                        if (!quietLogged) { quietSkips++; event("held: your input " + (tick - lastInputTick) + " ticks ago; " + v.danger()); }
+                        quietLogged = true;
+                    } else { quietLogged = false; fire(mc, p, j, v); }
+                }
+            }
             case STEER -> {
                 if (active != null && j.steered() != null && v.rescue().plan != j.steered()) {
                     active = v.rescue().plan.copy();
@@ -294,6 +313,11 @@ public final class Guardian {
         overrides++;
         Autopilot.releaseQuietly();
         event("overridden by " + why + " after " + (tick - startTick) + " ticks");
+    }
+
+    /** Flying by hand: no autopilot (a landing included) and no takeoff. Only then does the cooldown hold it back. */
+    private static boolean byHand() {
+        return !Autopilot.isEngaged() && !Takeoff.active();
     }
 
     private static void stop(String why) {

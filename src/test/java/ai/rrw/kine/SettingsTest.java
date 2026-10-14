@@ -165,6 +165,11 @@ class SettingsTest {
         assertFalse(Settings.walkSearchDetailed);
         assertFalse(Settings.walkParkour, "parkour off by default (Baritone's allowParkour too): a short jump lands in the gap");
         assertEquals(20, Settings.walkMargin, "0.20 blocks");
+        // collision avoidance's cooldown after your last input, flying by hand: 1 s (RW 2026-10-14, "defualt to like
+        // 1s"), a slider in Elytra flight
+        assertEquals(10, Settings.collisionCooldown, "1.0 s in tenths");
+        assertTrue(Settings.COLLISION_COOLDOWN.isLevel());
+        assertEquals(Settings.Section.FLIGHT, Settings.COLLISION_COOLDOWN.section);
         // layer 2 (the movement search) and its display on: it presses only the game's own keys
         assertTrue(Settings.walkLayer2);
         assertTrue(Settings.walkLayer2Display);

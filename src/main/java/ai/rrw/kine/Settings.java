@@ -57,6 +57,8 @@ public final class Settings {
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
+    /** Collision avoidance's quiet time after it lets go, tenths of a second. */
+    public static int collisionCooldown;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
         walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps;
     /** The walking route's safety margin, hundredths of a block. */
@@ -182,6 +184,8 @@ public final class Settings {
     public static final Option NAVIGATION                 = toggle("navigation", FLIGHT, true, v -> navigation = v);
     public static final Option TERRAIN_AVOIDANCE          = toggle("terrainAvoidance", FLIGHT, true, v -> terrainAvoidance = v);
     public static final Option COLLISION_AVOIDANCE        = toggle("collisionAvoidance", FLIGHT, true, v -> collisionAvoidance = v);
+    // RW 2026-10-14: "add a coolwodnw ig defualt to like 1s or somethgin with a slider"
+    public static final Option COLLISION_COOLDOWN         = level("collisionAvoidanceCooldown", FLIGHT, 10, 100, v -> collisionCooldown = v);
 
     public static final Option WALK_PATHFINDER            = toggle("walkPathfinder", WALK, true, v -> walkPathfinder = v);
     public static final Option WALK_PATH_DISPLAY          = toggle("walkPathDisplay", WALK, true, v -> walkPathDisplay = v);

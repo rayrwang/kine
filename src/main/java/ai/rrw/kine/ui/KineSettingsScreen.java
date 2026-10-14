@@ -103,6 +103,10 @@ public class KineSettingsScreen extends Screen {
         "Gliding by hand or on the autopilot, it predicts where you will fly if nothing changes; if that would hurt you, "
         + "the autopilot takes over at the last moment, turns or pulls up into clear air, then hands back with AUTOPILOT "
         + "OFF. Move the mouse or press a key to take over. Needs the autopilot on. Survival and adventure only.";
+    private static final String DESC_COLLISION_COOLDOWN =
+        "Flying by hand, collision avoidance acts only after this long with no input from you (mouse or keys), in "
+        + "seconds, so it leaves you alone while you fly close to terrain yourself; 0 lets it act any time. On the "
+        + "autopilot it always acts.";
 
     private static final String DESC_ELYTRA =
         "Leave this on; turn it off only if a bug of ours keeps getting in your way. Swaps in a fresh elytra "
@@ -333,6 +337,8 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),
             Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
             Opt.of("Collision avoidance", DESC_COLLISION, Settings.COLLISION_AVOIDANCE),
+            Opt.of("Avoidance cooldown", DESC_COLLISION_COOLDOWN, Settings.COLLISION_COOLDOWN, () -> Settings.collisionAvoidance,
+                   v -> String.format(java.util.Locale.ROOT, "%.1f s", v / 10.0)),
         }),
         new Section(Settings.Section.WALK, new Opt[]{
             Opt.of("Pathfinder", DESC_WALK_PATHFINDER, Settings.WALK_PATHFINDER),
