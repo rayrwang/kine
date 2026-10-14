@@ -68,6 +68,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Emergency landing with nothing safe within 32 blocks goes straight down, even onto lava
 		- AFK damage kick can log you out mid-air during a night hold (phantoms)
 		- Takeoff's last rocket can overshoot the cruise altitude
+		- Takeoff stalls if a screen (e.g. chat) opens mid-climb: no more rockets, nose held up
 		- Check terrain avoidance and hold steering for the per-frame stutter fixed in the autopilot
 	- Walking pathfinder:
 		- Route tightening over water
