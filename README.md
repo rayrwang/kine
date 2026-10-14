@@ -76,13 +76,18 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Terrain avoidance passes wall corners with no margin to the side (collision avoidance catches the clip)
 		- Check terrain avoidance and hold steering for the per-frame stutter fixed in the autopilot
 	- Walking pathfinder:
-		- Route tightening over water
 		- Occasional fall damage from the movement search
 		- Elytra hops unreliable
 		- Rarely stuck at the top of steep drops
+		- Sometimes stuck on vines
+		- Can get stuck at the bottom of a pond and start drowning
+		- Jitters in place, or stands still a couple of seconds, on a landing before the next jump
+		- A jump from a standing start against a wall can find no way on (parkour course #67)
 		- Long-range search display needs rework
 		- Rails still a bit rough
 	- Kill aura turning to hit while the pathfinder walks puts the walk's keys off its heading (up to 22.5 degrees, sprint drops)
+	- Mob health labels show through walls, and their 30-block range is fixed
+	- The settings file is rewritten on every step of a slider drag
 	- Aimbot:
 		- A held target out of reach blocks the others until the mouse moves
 		- Check auto aim's turns for the same stutter
@@ -90,6 +95,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Elytra:
 	- Autopilot:
 		- Per block pathing instead of heightmap highest block
+		- Terrain avoidance reworked (the June code), planned on a worker thread instead of the game's
+		- Predictions on the exact movement copy (the autopilot's own model cruises about 3% faster than the game)
 		- Fly climbing pattern if boxed in
 		- Descend gradually before reaching destination
 		- Fly on, land, or rockets, instead of tripping off after a collision avoidance rescue?
@@ -99,17 +106,20 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Takeoff and landing:
 		- Suicide burn: land when the durability left is less than the landing needs
 		- Better landing from low height
+		- Faster landing: dive in from out to the side instead of spiralling down over the spot
 		- Terrain aware glide landing, shared with the takeoff; pole landings
 		- Takeoff from under a block
 		- Takeoff levelling off below 350 for short trips or flat ground
-	- Activate elytra if fall, instead of the water bucket (could be annoying)
+	- Activate elytra if fall with no water bucket, collision avoidance deciding (the bucket stays first)
 	- Range and endurance counting height less
 	- Nav screen: a map in Managed mode; saved per world and dimension, with waypoints and a home
 - Walking pathfinder:
 	- Breaking and placing blocks, bridging included, preferring common, easy to get blocks
 	- Gait setting (walk, sprint, sprint-jump, elytra hops), allowed faster when chased
-	- Setting for how much damage the walk may take
+	- Setting for how much damage the walk may take, counting armour, Feather Falling and Protection
 	- Neo port and the triple neo for long routes
+	- Jump search from a moving start, so jumps chain without stopping on each landing
+	- Knight's moves for swims, and each water entry slid along the shore to the quickest crossing
 	- Parkour risk setting
 	- Opening doors
 	- Combat aware routes, and pausing a walk for a fight
@@ -117,17 +127,25 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Saved map of seen chunks, for routes past render distance
 	- Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
 	- Benchmarks against Baritone on random seeds, and a comparison video
+	- Real parkour maps as a test bed
 	- Publish the parkour test world
 - Combat:
 	- Kill aura only on player attack or being attacked
 	- Expand configurability especially aimbot, kill aura
 	- Combat movement more cautious than 0, and better against brutes and ravagers
+	- Combat movement only when a melee fight is reachable (for now, only mobs within 4 blocks above or below)
+	- Combat movement's cost worked out from principles, its weights tuned on recorded fights
+	- Human-like variation in the kill aura's swing timing and auto aim
 	- Creeper explosion avoidance
 	- Auto eat working with the kill aura and combat movement
 	- Spear elytra (rails, repositioning before attacking)
 	- Mace fall
+	- Ender dragon bed bombing
+	- End crystal PvP
+	- Setting for whether features may break weapons and tools
 	- Aimbot:
-		- Collision detection
+		- Collision detection, including friendly mobs and players in the line; a high-arc shot over them
+		- Target motion tracking for the lead (several motion models)
 		- Zoomed in targeting view
 		- Ender pearl target selection & protection
 		- Finer selection options: priority, whitelist
@@ -145,6 +163,9 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- User guide / help: controls & displays list and explanations
 	- Update pictures, add logo
 	- Support multiple versions & forge (and a backport for 2b2t and 6b6t)
+	- Publish on CurseForge
+	- Test data and study scripts in the repo, so every test can be regenerated
+	- Feature order enforced in code, not only in comments
 
 ## Technical Details
 
@@ -188,7 +209,7 @@ An elytra counts as spent at 3 durability or less (the game itself stops gliding
 
 ### Walking pathfinder
 
-The nav screen's Walk tab (`N`) has its own destination for each dimension: an X and Z, and an optional Y naming the floor to reach (left blank, any floor of that column). Go plans a route on foot over a table of every loaded column's floors: A* with straight, diagonal and knight's moves (the knight's moves cut the worst detour against the straight line from 8.2% to 2.7%), costs in ticks fitted from the movement search's own runs (Baritone's with the movement search off), then the grid path pulled taut by straight-walk checks against the blocks' own shapes, keeping a set margin from walls, hazards and drops. Its moves: walking, sprinting above 6 food, steps up slabs and stairs, one-block jumps, drops of up to 3 (any height into water), ladders and vines, swimming; it never breaks or places blocks, and treats doors and gates as walls. A destination beyond the loaded area is headed for where the straight line leaves the loaded area, replanning as chunks load. The search runs on a worker thread within a time budget set by this machine's measured speed: a quick pass first, so you start walking at once, then better passes while the time lasts. If the destination can't be reached, it walks to the reachable floor nearest it and stops there ("stopped as near as it gets").
+The nav screen's Walk tab (`N`) has its own destination for each dimension: an X and Z, and an optional Y naming the floor to reach (left blank, any floor of that column). Go plans a route on foot over a table of every loaded column's floors: A* with straight, diagonal and knight's moves (the knight's moves, on foot only, cut the worst detour against the straight line from 8.2% to 2.7%), costs in ticks fitted from the movement search's own runs (Baritone's with the movement search off), then the grid path pulled taut by straight-walk checks against the blocks' own shapes, keeping a set margin from walls, hazards and drops; swims are pulled taut the same way, each straight swim kept over open water. Its moves: walking, sprinting above 6 food, steps up slabs and stairs, one-block jumps, drops of up to 3 (any height into water), ladders and vines, swimming; it never breaks or places blocks, and treats doors and gates as walls. A destination beyond the loaded area is headed for where the straight line leaves the loaded area, replanning as chunks load. The search runs on a worker thread within a fixed time budget (0.4 s for a new plan, 0.2 s for a replan): a quick pass first, so you start walking at once, then better passes while the time lasts, each started only if this machine's measured search speed says it will finish in time. If the destination can't be reached, it walks to the reachable floor nearest it and stops there ("stopped as near as it gets").
 
 Along the route the movement search (on by default) chooses your keys. Every tick, on a worker thread, it tries short runs of movement keys (eleven headings; walking, sprinting, sprint-jumping, jumping or sneaking; held a few ticks and chained) in an exact copy of the game's movement code, water, climbing and gliding included, and presses the first tick of the fastest safe one. So it sprint-jumps on open ground, swims under the surface, climbs out at a bank, and keeps enough air to come up before it would drown, sprint-swimming with its eyes just out of the water on long crossings. With no route to a destination within 48 blocks, it searches toward it on its own. Elytra hops (off by default, since gliding wears the elytra) let it glide off ledges and over gaps.
 
