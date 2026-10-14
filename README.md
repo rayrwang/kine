@@ -62,35 +62,84 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Planned
 
-- Above ground altitude display change color
-- Expand configurability especially aimbot, kill aura
-- Kill aura only on player attack or being attacked
-- Elytra autopilot:
-	- Per block pathing instead of heightmap highest block
-	- Fly climbing pattern if boxed in
-	- Descend gradually before reaching destination
-	- Fly landing instead of disengaging on unable to escape terrain?
-	- Support fireworks?
-	- Warnings?
 - Fix:
-	- Low altitude warning should count as autopilot disconnect
-	- Flight director turn even in manual flight?
-- Update pictures, add logo
-- Vertical speed indicator? Move speed to left?
-- Spear elytra
-- Mace fall
-- Activate elytra if fall (could be annoying)
-- Creeper explosion avoidance
-- Warning sounds
-- User guide / help: controls & displays list and explanations
-- Aimbot:
-	- Collision detection
-	- Zoomed in targeting view
-	- Ender pearl target selection & protection
-	- Finer selection options: priority, whitelist
-- Auto combat
-- Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
-- Support multiple versions & forge
+	- Elytra:
+		- Flight director turn even in manual flight? (terrain avoidance's turns; the bar already follows your nav heading)
+		- Emergency landing with nothing safe within 32 blocks goes straight down, even onto lava
+		- AFK damage kick can log you out mid-air during a night hold (phantoms)
+		- Takeoff's last rocket can overshoot the cruise altitude
+		- Check terrain avoidance and hold steering for the per-frame stutter fixed in the autopilot
+	- Walking pathfinder:
+		- Route tightening over water
+		- Occasional fall damage from the movement search
+		- Elytra hops unreliable
+		- Rarely stuck at the top of steep drops
+		- Long-range search display needs rework
+		- Rails still a bit rough
+	- Aimbot:
+		- A held target out of reach blocks the others until the mouse moves
+		- Check auto aim's turns for the same stutter
+	- Kine's world drawing (rails, pillars, route lines) with Iris shaders
+- Elytra:
+	- Autopilot:
+		- Per block pathing instead of heightmap highest block
+		- Fly climbing pattern if boxed in
+		- Descend gradually before reaching destination
+		- Collision avoidance redone (the emergency turnaround is unreliable): turn around for walls, flare for the ground, always on; with it, low altitude warning should count as autopilot disconnect (unreliable near terrain in June)
+		- Fly landing, or rockets, instead of disengaging on unable to escape terrain?
+		- Support fireworks? (rockets in flight, not only the takeoff)
+		- Warnings?
+		- Faster porpoise profile (law2)?
+	- Takeoff and landing:
+		- Suicide burn: land when the durability left is less than the landing needs
+		- Better landing from low height
+		- Terrain aware glide landing, shared with the takeoff; pole landings
+		- Takeoff from under a block
+		- Takeoff levelling off below 350 for short trips or flat ground
+	- Activate elytra if fall, instead of the water bucket (could be annoying)
+	- Range and endurance counting height less
+	- Nav screen: a map in Managed mode; saved per world and dimension, with waypoints and a home
+- Walking pathfinder:
+	- Breaking and placing blocks, bridging included, preferring common, easy to get blocks
+	- Gait setting (walk, sprint, sprint-jump, elytra hops), allowed faster when chased
+	- Setting for how much damage the walk may take
+	- Neo port and the triple neo for long routes
+	- Parkour risk setting
+	- Opening doors
+	- Combat aware routes, and pausing a walk for a fight
+	- Handing off between walking and elytra flight
+	- Saved map of seen chunks, for routes past render distance
+	- Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
+	- Benchmarks against Baritone on random seeds, and a comparison video
+	- Publish the parkour test world
+- Combat:
+	- Auto combat: kill aura with bows, switching between bow and melee
+	- Kill aura only on player attack or being attacked
+	- Expand configurability especially aimbot, kill aura
+	- Combat movement more cautious than 0, and better against brutes and ravagers
+	- Creeper explosion avoidance
+	- Auto eat working with the kill aura and combat movement
+	- Spear elytra (rails, repositioning before attacking)
+	- Mace fall
+	- Aimbot:
+		- Collision detection
+		- Zoomed in targeting view
+		- Ender pearl target selection & protection
+		- Finer selection options: priority, whitelist
+		- Hit chance for mobs moving erratically
+		- Arrows slowing in water
+		- Better aim at mobs in flight
+- HUD:
+	- Above ground altitude display change color
+	- Vertical speed indicator? Move speed to left?
+	- Warning sounds
+	- Entity highlights?
+- General:
+	- Defaults reviewed, each setting's ban risk in its description, settings ordered by risk
+	- Black box log behind a setting; kine's log lines switchable
+	- User guide / help: controls & displays list and explanations
+	- Update pictures, add logo
+	- Support multiple versions & forge (and a backport for 2b2t and 6b6t)
 
 ## Technical Details
 
