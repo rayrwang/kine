@@ -91,6 +91,13 @@ public final class Walk {
     private static double hopY = Double.NaN, hopFromY = Double.NaN;
     private static long hopNode = View.NONE;
     private static final java.util.Set<Long> hopsTried = new java.util.HashSet<>();
+    /** Each floor gets a second try before it joins hopsTried (a copy-found jump dropped part way, as over
+     *  slime_bounce's slime, is often made on the next). */
+    private static final java.util.Map<Long, Integer> hopTries = new java.util.HashMap<>();
+    /** Arrivals on each hop floor since the walk last got a real step nearer the goal (HOP_PROGRESS blocks). */
+    private static final java.util.Map<Long, Integer> hopArrivals = new java.util.HashMap<>();
+    static final double HOP_PROGRESS = 1.0;
+    static final int HOP_TRIES = 2;
     private static double hopBest = Double.MAX_VALUE;
     private static int hops = 0;
     private static boolean hopsOff = false;
@@ -100,6 +107,30 @@ public final class Walk {
     static final int HOP_MAX = 200, HOP_FAILS = 3, HOP_STUCK = 2;
     static final double HOP_REACH = 8.0;
     private static int hopFails = 0;
+    /** The tick the walk first stood on the hop's floor (-1: not yet); how long it may take to come to rest there. */
+    private static int hopOnSince = -1;
+    /** A hop arrived on a climbable: its plan without a route holds on until layer 1's next plan, which replaces it. */
+    private static boolean hopTaken = false;
+    static final int SETTLE_TICKS = 30;
+
+    /** Still: no more horizontal speed than layer 2's jump search allows for a standing start. */
+    private static boolean standing(LocalPlayer p) {
+        var v = p.getDeltaMovement();
+        return p.onGround() && v.x * v.x + v.z * v.z <= 1e-4;
+    }
+
+    /** How near the goal the walk stands, as Hop.pick measures floors: from the block it stands in (its column's corner
+     *  to the goal column's). Measured from the player's position, a step behind its block's centre made the floor
+     *  beside it (the pad it had come from) count as nearer, and the walk hopped back onto it. */
+    private static double standDistance(LocalPlayer p, int[] d) {
+        return Math.hypot(d[0] - p.getBlockX(), d[1] - p.getBlockZ());
+    }
+
+    /** The tick the walk came onto the hop's floor (now, the first time asked). */
+    private static int hopOnTick(int now) {
+        if (hopOnSince < 0) hopOnSince = now;
+        return hopOnSince;
+    }
     private static int tick = 0, lastPlanTick = 0, lastCheckTick = 0;
     private static int seg = 1;                     // the waypoint walked toward
     private static double bestLeft = Double.MAX_VALUE;
@@ -272,7 +303,7 @@ public final class Walk {
         stuckReplans = 0;
         noWaySeen = false;
         hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
-        hopsTried.clear(); hopBest = Double.MAX_VALUE; hops = 0; hopsOff = false; hopFails = 0;
+        hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest = Double.MAX_VALUE; hops = 0; hopsOff = false; hopFails = 0; hopOnSince = -1; hopTaken = false;
         progressed = 0;
         replans = 0;
         replanWhy.clear();
@@ -435,10 +466,10 @@ public final class Walk {
         View view = WalkTable.snapshot();
         long start = startNode(view, p);
         if (start == View.NONE) return false;
-        hopBest = Math.min(hopBest, Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()));
-        long pick = Hop.pick(view, p.getX(), p.getY(), p.getZ(), d[0], d[1], hopBest, hopsTried, costs().maxFall, HOP_REACH);
+        hopBest = Math.min(hopBest, standDistance(p, d));
+        long pick = Hop.pick(view, p.getX(), p.getY(), p.getZ(), d[0], d[1], walkY, hopBest, hopsTried, costs().maxFall, HOP_REACH);
         if (pick == View.NONE) return false;
-        hopsTried.add(pick);
+        if (hopTries.merge(pick, 1, Integer::sum) >= HOP_TRIES) hopsTried.add(pick);
         int x = View.nodeX(pick), z = View.nodeZ(pick);
         ChunkFloors c = view.chunk(x, z);
         double h = c.h(view.index(pick));
@@ -448,7 +479,10 @@ public final class Walk {
         hopY = h;
         hopNode = pick;
         hopFromY = p.getY();
+        hopOnSince = -1;
+        hopTaken = false;
         hops++;
+        Layer2.newTry();   // a new try from here: layer 2's jump search may search again from the floor it stands on
         adoptDirect(dp);
         stuckReplans = 0;
         progressed = 0;
@@ -622,7 +656,7 @@ public final class Walk {
                 // when it's near (layer 2 may jump what the graph has no move for); else to the floor nearest it and
                 // end there (Parkour off, layer 2 crosses no gap the graph doesn't: without a route it would only stand
                 // at the edge until it gave up, "Stuck")
-                if (plan != null && plan.direct) fresh = false;
+                if (plan != null && plan.direct && !hopTaken) fresh = false;
                 else if (Settings.walkParkour) {
                     Planner.Plan dp = directPlan(p, d, np.result.reason);
                     if (dp != null) { adoptDirect(dp); fresh = false; }
@@ -630,6 +664,7 @@ public final class Walk {
             }
             if (fresh) {
                 hop = null;   // layer 1 has a plan again: the hop, if any, is over
+                hopTaken = false;
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
                 planId = np.id;
@@ -679,8 +714,13 @@ public final class Walk {
         Route r = plan.route;
 
         // a hop: arrived on its floor, back to layer 1 for the real goal; fallen well below where it started, the hops end
-        if (hop != null && plan.direct) {
-            if (p.getY() < hopFromY - 4.0) {
+        if (hop != null && plan.direct && !hopTaken) {
+            // a drop layer 2 plays as a copy-found jump that still lands (checked each tick) is the way, not a fall: the
+            // course's slime_bounce drops 6 onto slime and bounces up to a landing 3 under the start (RW 2026-10-14)
+            // and a drop the copy says ends without hurting (layer 2's own way onto slime: the bounce) is not one either;
+            // judged only going down (off the slime, going up, keys up in the copy would carry it past the landing)
+            if (p.getY() < hopFromY - 4.0 && p.getDeltaMovement().y < 0.0 && !Layer2.playingRecipe()
+                && !Layer2.fallEndsSafely(p, costs().maxFall)) {
                 // fell: no more hops; plan from where it is (the walk ends at the floor nearest the goal there)
                 hopsOff = true;
                 hop = null;
@@ -691,16 +731,45 @@ public final class Walk {
                 measure(t0);
                 return;
             } else if ((p.onGround() || p.onClimbable()) && Math.abs(p.getY() - hopY) < 0.6
-                       && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75) {
-                hopBest = Math.min(hopBest, Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()));
-                hopFails = 0;
-                hop = null;
-                plan = null;
-                state = State.PLANNING;
+                       && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75
+                       && (standing(p) || p.onClimbable() || tick - hopOnTick(tick) > SETTLE_TICKS)) {
+                // on a ladder or a vine the walk never stands: it is across once on it in the hop's column (it waited
+                // 30 ticks there and slid off: the course's ladder_diagonal, RW 2026-10-14; the plan up the climb then
+                // takes over, layer 2 keeping hold till it comes, hopTaken below)
+                // on the hop's floor, and stood still there (or long enough on it): the next jump starts from a
+                // standing start, as a walk started there would (arriving with the run's speed, on a small floor the
+                // walk slid off it before the next jump, and layer 2's copy-found jump searches only from standing)
+                double sd = standDistance(p, d);
+                if (sd < hopBest - HOP_PROGRESS) hopArrivals.clear();
+                hopBest = Math.min(hopBest, sd);
+                // back on a floor it hopped to before, with no real progress since, is a round, not a way on: it counts
+                // as a failed hop (the course's mm_backwalled_1bm_4b went round for good: the pad beside the start is
+                // nearer the far goal by 0.002, so layer 1's nearest floor, and the start is a step up from it)
+                boolean again = hopArrivals.merge(hopNode, 1, Integer::sum) > 1;
+                if (again) hopFails++;
+                else hopFails = 0;
+                hopOnSince = -1;
+                // across: the floors tried from back there may be tried again from here (a landing tried from the pad
+                // beside a jump's start, before the start was stood on); being nearer the goal than the walk has stood
+                // keeps the hops going forward
+                hopsTried.clear();
+                hopTries.clear();
+                // and not hopped to again until the walk gets nearer the goal (the next hop takes another floor)
+                if (again) for (long n : hopArrivals.keySet()) if (hopArrivals.get(n) > 1) hopsTried.add(n);
                 message = "Across: planning on";
                 replanFor("across, without a route: planning on", mc);
-                measure(t0);
-                return;
+                if (p.onClimbable()) {
+                    // on a ladder or a vine layer 2 keeps hold (the plan without a route stays, toward where it hangs)
+                    // until the next plan comes: let go for the tick between, it slid off a ladder's foot and fell (the
+                    // course's ladder_4b, RW 2026-10-14). That plan replaces this one when it comes (hopTaken)
+                    hopTaken = true;
+                } else {
+                    hop = null;
+                    plan = null;
+                    state = State.PLANNING;
+                    measure(t0);
+                    return;
+                }
             }
         }
 
@@ -718,7 +787,7 @@ public final class Walk {
         // progress, stuck and off-route checks; replans
         double left = remaining(p, r);
         if (plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
-            && nearestCheckedId != plan.id) {
+            && nearestCheckedId != plan.id && (standing(p) || p.isInWater() || p.onClimbable())) {
             // at the floor nearest a goal with no way onto it: one more search on the table as it is now (ground loaded
             // since may open a way); if it finds none nearer, the walk ends here (the exhausted replan, below)
             nearestCheckedId = plan.id;
@@ -737,6 +806,11 @@ public final class Walk {
                     hop = null;
                     hopFails++;
                     if (startHop(p, d)) { measure(t0); return; }
+                } else if (noWaySeen && !plan.direct && startHop(p, d)) {
+                    // layer 1's way toward the floor nearest the goal stalled short of its end (a gap move layer 2
+                    // didn't make from here): the next floor without a route, as at the way's end
+                    measure(t0);
+                    return;
                 }
                 if (noWaySeen) {
                     double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());

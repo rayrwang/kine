@@ -22,7 +22,7 @@ public final class BlockInfo {
     /** Hurts on touch or stepping on it: lava, fire, magma, cactus, berry bushes, wither roses, campfires,
      *  powder snow, pointed dripstone. */
     public static final int HAZARD = 64;
-    /** Movement the copy leaves out: climbable blocks, slime and beds (bounce), honey (wall slide), cobwebs,
+    /** Movement the copy leaves out: climbable blocks, slime and beds (bounce; these three copied now), honey (wall slide), cobwebs,
      *  scaffolding and powder snow (shape depends on the player), bubble columns, portals. */
     public static final int SPECIAL = 128;
 
@@ -34,6 +34,10 @@ public final class BlockInfo {
     /** Only in MoveState.touched: the plan met movement the copy leaves out (a current, slime, honey, cobwebs,
      *  scaffolding, the edge of the snapshot), as SPECIAL but without ladders and vines, which are copied now. */
     public static final int UNCOPIED = 1024;
+    /** A slime block and a bed: a fall onto them bounces (SlimeBlock, BedBlock), copied now. Also SPECIAL, as before,
+     *  for the combat model. In MoveState.touched: a landing on slime without the shift key (no fall damage), on a bed
+     *  (half). */
+    public static final int SLIME = 2048, BED = 4096;
 
     /** The fluid in the block (FluidState): none, water or lava; and its own height (FluidState.getOwnHeight: amount /
      *  9, a source 8/9). The height the player meets is 1 where the same fluid is above (FlowingFluid.getHeight). */

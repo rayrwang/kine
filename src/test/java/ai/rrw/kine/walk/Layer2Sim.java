@@ -144,6 +144,30 @@ final class Layer2Sim {
                 rs.score(root, plan, effort, t), w.s.x, w.s.y, w.s.z, model.estimate(w), bad));
         }
         System.out.println(sb);
+        // the chosen plan, stepped: its end and estimate, and its cost tick by tick
+        RunWorld w = root.copy();
+        StringBuilder cs = new StringBuilder("    chosen:");
+        double c = 0;
+        for (int i = 0; i < res.plan().length; i++) {
+            double ci = model.step(w, res.plan()[i], i % effort.hold, new java.util.SplittableRandom(i));
+            c += ci;
+            if (i % effort.hold == effort.hold - 1) cs.append(String.format(java.util.Locale.ROOT, " [%s %.2f,%.2f,%.2f c%.1f]", RunModel.name(res.plan()[i]), w.s.x, w.s.y, w.s.z, c));
+        }
+        cs.append(String.format(java.util.Locale.ROOT, " end est %.1f arrived %b", model.estimate(w), w.arrived));
+        System.out.println(cs);
+        // and on-walk held, the same way
+        RunWorld w2 = root.copy();
+        StringBuilder cs2 = new StringBuilder("    on-walk held:");
+        double c2 = 0;
+        int a = -1;
+        for (int k = 0; k < model.actionCount(); k++) if (RunModel.name(k).equals("on-walk")) a = k;
+        for (int i = 0; i < res.plan().length; i++) {
+            double ci = model.step(w2, a, i % effort.hold, new java.util.SplittableRandom(i));
+            c2 += ci;
+            if (i % effort.hold == effort.hold - 1) cs2.append(String.format(java.util.Locale.ROOT, " [%.2f,%.2f,%.2f c%.1f g%b cl%b]", w2.s.x, w2.s.y, w2.s.z, c2, w2.s.onGround, phys.onClimbable(w2.s)));
+        }
+        cs2.append(String.format(java.util.Locale.ROOT, " end est %.1f arrived %b", model.estimate(w2), w2.arrived));
+        System.out.println(cs2);
     }
 
     /** Walk with layer 2 from s to column (gx, gz). */

@@ -121,6 +121,70 @@ public class CourseRunTest {
             jumps.size(), ticks, ticks / 20.0, why, best < jumps.size() ? jumps.get(best).getAsJsonObject().get("id").getAsString() : "the finish");
     }
 
+    /** KINE_COURSE_AT="x,y,z" (world): one walk from there toward the target, layer 1's way as the game takes it, with
+     *  its path every 5 ticks (KINE_COURSE_DEBUG: ticks to print layer 2's scores at). */
+    @Test
+    void fromAPoint() throws Exception {
+        String dir = System.getenv("KINE_COURSE_DIR"), at = System.getenv("KINE_COURSE_AT");
+        if (dir == null || at == null) return;
+        String[] p = at.split(",");
+        double x = Double.parseDouble(p[0]), y = Double.parseDouble(p[1]), z = Double.parseDouble(p[2]);
+        int maxX = (int) x + 60;
+        TestWorld w = TestWorld.blocks((int) x - 60, -100, maxX + 16, -20);
+        Pattern fill = Pattern.compile("fill (-?\\d+) (-?\\d+) (-?\\d+) (-?\\d+) (-?\\d+) (-?\\d+) (\\S+)");
+        Pattern set = Pattern.compile("setblock (-?\\d+) (-?\\d+) (-?\\d+) (\\S+)");
+        for (String f : new String[]{"cmds_course_pool.txt", "cmds_course.txt"})
+            for (String line : Files.readAllLines(Path.of(dir, f))) {
+                Matcher m = fill.matcher(line);
+                if (m.matches()) {
+                    Kind k = CourseStartTest.kind(m.group(7));
+                    int ax = Integer.parseInt(m.group(1)), ay = Integer.parseInt(m.group(2)), az = Integer.parseInt(m.group(3));
+                    int bx = Integer.parseInt(m.group(4)), by = Integer.parseInt(m.group(5)), bz = Integer.parseInt(m.group(6));
+                    for (int xx = Math.max((int) x - 60, Math.min(ax, bx)); xx <= Math.min(maxX + 16, Math.max(ax, bx)); xx++)
+                        for (int yy = Math.min(ay, by); yy <= Math.max(ay, by); yy++)
+                            for (int zz = Math.max(-100, Math.min(az, bz)); zz <= Math.min(-20, Math.max(az, bz)); zz++)
+                                if (yy - DY >= 0 && yy - DY < 48) w.set(xx, yy - DY, zz, k == null ? Palette.AIR : k);
+                    continue;
+                }
+                m = set.matcher(line);
+                if (m.find()) {
+                    int xx = Integer.parseInt(m.group(1)), yy = Integer.parseInt(m.group(2)), zz = Integer.parseInt(m.group(3));
+                    if (xx < (int) x - 60 || xx > maxX + 16 || yy - DY < 0 || yy - DY >= 48) continue;
+                    w.set(xx, yy - DY, zz, CourseStartTest.kind(m.group(4)));
+                }
+            }
+        if (System.getenv("KINE_COURSE_SEARCH") != null) {
+            View v = w.view();
+            long st = v.nodeAt((int) Math.floor(x), y - DY, (int) Math.floor(z));
+            PathSearch.Result r = new PathSearch(v, new Costs()).gaps(true).run(st, 940, -60, 1.0, Long.MAX_VALUE, 2_000_000, false);
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < r.path.length; i++) sb.append(' ').append(r.moves[i]).append('@').append(View.nodeX(r.path[i])).append(',')
+                .append(String.format(Locale.ROOT, "%.2f", r.pathY[i] + DY)).append(',').append(View.nodeZ(r.path[i]));
+            System.out.println("search from " + at + ": nearest " + r.nearest + " exhausted " + r.exhausted + " expanded " + r.expanded + " path" + sb);
+            for (int[] dd : new int[][]{{0, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, 0}}) {
+                int cx = (int) Math.floor(x) + dd[0], cz = (int) Math.floor(z) + dd[1];
+                ChunkFloors c = v.chunk(cx, cz);
+                StringBuilder f = new StringBuilder();
+                for (int i = 0; i < c.count(cx & 15, cz & 15); i++) {
+                    int idx = c.index(cx & 15, cz & 15, i);
+                    f.append(String.format(Locale.ROOT, " [type %d h %.2f head %.2f clearTop %.2f flags %d]", c.type(idx), c.h(idx) + DY, c.head(idx), c.clearTop(idx) + DY, c.flags(idx)));
+                }
+                System.out.println("  column " + cx + "," + cz + ":" + f);
+            }
+            return;
+        }
+        Layer2Sim sim = new Layer2Sim(w);
+        sim.parkour = true; sim.direct = true; sim.recipes = true; sim.freeJumps = true; sim.acceptNearest = true;
+        if (System.getenv("KINE_COURSE_DEBUG") != null) for (String t : System.getenv("KINE_COURSE_DEBUG").split(",")) sim.debugTicks.add(Integer.parseInt(t));
+        MoveState s = Layer2Sim.standing(x, y - DY, z);
+        s.onGround = false; s.hasSupport = false;
+        Layer2Sim.Outcome o = sim.walk(s, -90f, 940, -60, 300);
+        for (int i = 0; i < o.path().size(); i += 5) { double[] q = o.path().get(i);
+            System.out.printf(Locale.ROOT, "   t%d %.2f %.2f %.2f flags %d keys %d%n", i, q[0], q[1] + DY, q[2], (int) q[3], (int) q[4]); }
+        System.out.printf(Locale.ROOT, "from %s: arrived %b (%s) in %d ticks, to %s; route %s%n", at, o.arrived(), o.why(), o.ticks(),
+            sim.lastTarget == null ? "-" : sim.lastTarget[0] + "," + sim.lastTarget[1], sim.lastRoute == null ? "-" : java.util.Arrays.toString(sim.lastRoute.moves));
+    }
+
     static MoveState end(Layer2Sim.Outcome o, MoveState from) {
         if (o.path().isEmpty()) return from;
         double[] p = o.path().get(o.path().size() - 1);

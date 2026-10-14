@@ -180,6 +180,16 @@ public final class GroundPhysics {
         if (s.inWater) travelInWater(s, keys);
         else if (s.fallFlying) travelFallFlying(s, keys, jumping);
         else travelInAir(s, keys, jumping);
+        // ---- LivingEntity.aiStep: applyEffectsFromBlocks, the block under the feet's stepOn (SlimeBlock: a step on it
+        // slower than 0.1 down, unless sneaking, keeps 0.4 + |vy| * 0.2 of the horizontal speed)
+        if (s.onGround && (keys & MoveState.SHIFT) == 0 && blockAt(onPos(s, 0.2F)).is(BlockInfo.SLIME)) {
+            double ay = Math.abs(s.vy);
+            if (ay < 0.1) {
+                double scale = 0.4 + ay * 0.2;
+                s.vx = s.vx * scale;
+                s.vz = s.vz * scale;
+            }
+        }
         touchedBlocks(s);
 
         // ---- Player.tick: updatePlayerPose (the box for the next tick)
@@ -472,8 +482,18 @@ public final class GroundPhysics {
         }
         if (dy != myv) {   // Block.updateEntityMovementAfterFallOn on the block under the feet (getOnPosLegacy)
             BlockInfo on = blockAt(onPos(s, 0.2F));
-            if (on.is(BlockInfo.SPECIAL)) s.touched |= uncopied(on.flags) & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);   // slime and beds bounce
-            s.vy = s.vy * 0.0;
+            boolean shift = (keys & MoveState.SHIFT) != 0;   // LocalPlayer.isSuppressingBounce: the shift key this tick
+            // a landing on slime (unless sneaking) costs no fall damage, on a bed half (fallOn): marked for the planner
+            if (s.onGround && on.is(BlockInfo.SLIME) && !shift) s.touched |= BlockInfo.SLIME;
+            if (s.onGround && on.is(BlockInfo.BED)) s.touched |= BlockInfo.BED;
+            if (on.is(BlockInfo.SLIME) && !shift) {
+                if (s.vy < 0.0) s.vy = -s.vy;                                 // SlimeBlock.bounceUp
+            } else if (on.is(BlockInfo.BED) && !shift) {
+                if (s.vy < 0.0) s.vy = -s.vy * (double) 0.66F;               // BedBlock.bounceUp
+            } else {
+                if (on.is(BlockInfo.SPECIAL)) s.touched |= uncopied(on.flags) & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
+                s.vy = s.vy * 0.0;
+            }
         }
         float f = blockSpeedFactor(s);
         s.vx = s.vx * f;
@@ -681,10 +701,10 @@ public final class GroundPhysics {
     }
 
     /** Flags of the blocks the box is in or stands on, for the planner. */
-    /** A block's flags, with UNCOPIED added for movement the copy leaves out (SPECIAL but not a ladder or vine, which
-     *  are copied now; the combat model still reads SPECIAL as before). */
+    /** A block's flags, with UNCOPIED added for movement the copy leaves out (SPECIAL but not a ladder, a vine, slime
+     *  or a bed, which are copied now; the combat model still reads SPECIAL as before). */
     private static int uncopied(int f) {
-        return (f & BlockInfo.SPECIAL) != 0 && (f & BlockInfo.CLIMBABLE) == 0 ? f | BlockInfo.UNCOPIED : f;
+        return (f & BlockInfo.SPECIAL) != 0 && (f & (BlockInfo.CLIMBABLE | BlockInfo.SLIME | BlockInfo.BED)) == 0 ? f | BlockInfo.UNCOPIED : f;
     }
 
     private void touchedBlocks(MoveState s) {

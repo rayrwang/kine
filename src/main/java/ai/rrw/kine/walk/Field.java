@@ -532,10 +532,24 @@ public final class Field {
         if (type[own] == ChunkFloors.SWIM && py[own] - y > 3.0) f0 += (py[own] - y - 3.0) * DEEP_TICKS;
         if (type[own] == ChunkFloors.CLIMB) {
             // on a ladder the floors are a block apart: slope the time between this rung and the next one up, so a
-            // climb shows progress within the block
-            int up = floorAt((int) Math.floor(px[own]), (int) Math.floor(pz[own]), py[own] + 1.0, 0.05);
-            if (up >= 0 && up != own && value[up] < f0 && Math.abs(py[up] - py[own] - 1.0) < 0.05)
-                f0 = f0 + (value[up] - f0) * Math.max(0.0, Math.min(1.0, y - py[own]));
+            // climb shows progress within the block; on the top rung, toward the floor it climbs off onto (a
+            // neighbour's, a block up). Without that the last rung showed none: climbed out over the top into the air
+            // it scored worse than hanging below it, and layer 2 hung on the vine short of the top (the Kine Parkour
+            // course's vine_jump, RW 2026-10-14)
+            int bx = (int) Math.floor(px[own]), bz = (int) Math.floor(pz[own]);
+            int up = floorAt(bx, bz, py[own] + 1.0, 0.05), next = -1;
+            if (up >= 0 && up != own && value[up] < f0 && Math.abs(py[up] - py[own] - 1.0) < 0.05) next = up;
+            else
+                for (int d = 0; d < 4; d++) {
+                    int j = floorAt(bx + (d == 0 ? 1 : d == 1 ? -1 : 0), bz + (d == 2 ? 1 : d == 3 ? -1 : 0), py[own] + 1.0, 0.6);
+                    if (j >= 0 && j != own && value[j] < f0 && py[j] > py[own] + 0.4 && py[j] <= py[own] + 1.6
+                        && (next < 0 || value[j] < value[next])) next = j;
+                }
+            if (next >= 0) f0 = f0 + (value[next] - f0) * Math.max(0.0, Math.min(1.0, y - py[own]));
+            // on a climbable the column is the place: no blend with the columns beside it. Blended, the wall a vine
+            // hangs on (no floor at the climber's height) counted a sprint's time more, so pressing into the wall to
+            // climb scored worse than hanging still at the vine's foot (the course's vine_jump, RW 2026-10-14)
+            return f0;
         }
         double gx = x - 0.5, gz = z - 0.5;
         int ix = (int) Math.floor(gx), iz = (int) Math.floor(gz);

@@ -120,9 +120,38 @@ public final class Layer2 {
         controlling = false;
     }
 
+    /** How far the floors a jump search aims at may be (straight line, blocks): as far as a hop's (Walk.HOP_REACH). It was
+     *  6, and slime_bounce's landing stood 6.01 from where a walk through the course came to rest on its start (6.0 from
+     *  the block's centre, where a walk started there stands): no search, and layer 2 stood until the hop gave up. */
+    static final double RECIPE_REACH = 8.0;
+
+    /** A new try at a crossing (a hop of the far-target fallback): the jump search forgets the floor it last searched
+     *  from (it searches once per floor, and a try that came onto it moving, or with another field, searched for
+     *  nothing), and its wait between tries. */
+    public static void newTry() {
+        recipeTryKey = Long.MIN_VALUE;
+        lastRecipeTry = tick - 1000;
+        recipe = null;
+        if (recipeJob != null) recipeJob.cancel(false);
+        recipeJob = null;
+    }
+
     /** Whether layer 2 steers this tick. */
     public static boolean controlling() {
         return controlling;
+    }
+
+    /** Whether the player's fall now, keys up, ends without hurting, by the copy (layer 2's blocks): onto slime (the
+     *  bounce, no damage), into water, or from no more than maxFall. False with no blocks yet. */
+    static boolean fallEndsSafely(LocalPlayer p, double maxFall) {
+        BlockGrid g = grid;
+        if (g == null) return false;
+        return Recipe.fallEndsSafely(new GroundPhysics(g, WorldSnapshot.body(p)), WorldSnapshot.state(p), maxFall);
+    }
+
+    /** Whether a copy-found jump is being played (it still lands, by the copy from the state each tick). */
+    public static boolean playingRecipe() {
+        return recipe != null;
     }
 
     /** Whether this tick's plan was checked safe in the copy (no hurting fall, nothing that hurts). */
@@ -273,7 +302,7 @@ public final class Layer2 {
         if (key == recipeTryKey) return;
         recipeTryKey = key;
         lastRecipeTry = tick;
-        int[] cand = f.joinedNear(p.getX(), p.getY(), p.getZ(), 6.0, 3);
+        int[] cand = f.joinedNear(p.getX(), p.getY(), p.getZ(), RECIPE_REACH, 3);
         if (cand.length == 0) return;
         MoveState s = WorldSnapshot.state(p);
         float sent = KillAura.lastSentYaw(p);

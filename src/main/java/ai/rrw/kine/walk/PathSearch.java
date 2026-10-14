@@ -190,7 +190,7 @@ public final class PathSearch {
         push(s, w * hEst[s], 0);
         int expansions = 0;
         int goalId = -1;
-        double bestH = Double.MAX_VALUE;
+        double bestH = Double.MAX_VALUE, tieH = c.estimate(Hop.TIE, 0);
         int bestId = s;
         boolean exitReached = false;
         // toward a goal past the loaded area: the floor to leave from, chosen as if the way to it were the straight line
@@ -218,7 +218,20 @@ public final class PathSearch {
             closedAt[id] = expansions++;
             long key = keys[id];
             if (View.nodeX(key) == gx && View.nodeZ(key) == gz && goalFloor(fy[id])) { goalId = id; break; }
-            if (hEst[id] < bestH) { bestH = hEst[id]; bestId = id; }
+            // the floor nearest the goal (a partial or a shut-in goal's way ends there): by the estimate to the goal itself,
+            // not the weighted pass's aimed one (aimed through where the line leaves the loaded area, a floor a block to
+            // the side of the start counted farther than the start: the course's next take-off beside its pad was never
+            // the nearest, and the walk gave up on the pad; RW 2026-10-14)
+            double near = aiming ? nearness(key, fy[id]) : hEst[id];
+            // as near (within Hop.TIE blocks: a block aside of a far goal), the floor nearer the destination's Y by 0.4
+            // or more is the nearer (the course's start beside its pad, a block lower: RW 2026-10-14, flower_pot_jump)
+            boolean better;
+            if (bestId < 0 || near < bestH - tieH) better = true;
+            else if (near >= bestH + tieH) better = false;
+            else if (nearerY(fy[id], fy[bestId])) better = true;
+            else if (nearerY(fy[bestId], fy[id])) better = false;
+            else better = near < bestH;
+            if (better) { bestH = near; bestId = id; }
             if ((expansions & 255) == 0 && System.nanoTime() > deadline) { r.reason = "out of time"; break; }
             if (count >= maxNodes) { r.reason = "out of nodes"; break; }
             graph.expand(key);
@@ -456,7 +469,20 @@ public final class PathSearch {
         return t;
     }
 
+    /** Whether height a is nearer the destination's Y than height b by 0.4 or more (false with no Y). */
+    private boolean nearerY(double a, double b) {
+        return !Double.isNaN(goalY) && !Double.isNaN(a) && !Double.isNaN(b) && Math.abs(a - goalY) < Math.abs(b - goalY) - 0.4;
+    }
+
     /** A newly seen floor. */
+    /** The estimate from floor (key, at height h) to the goal itself (as hEst when not aiming). */
+    private double nearness(long key, double h) {
+        int x = View.nodeX(key), z = View.nodeZ(key);
+        double dx = x - graph.goalX, dz = z - graph.goalZ;
+        double climb = Double.isNaN(goalMinH) || Double.isNaN(h) ? 0 : Math.max(0, goalMinH - h);
+        return c.estimate(Math.sqrt(dx * dx + dz * dz), climb);
+    }
+
     private int see(long key, int par, double gg, int mv, int expansions) {
         if (count == keys.length) grow();
         int id = count++;

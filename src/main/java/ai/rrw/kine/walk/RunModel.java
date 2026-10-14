@@ -232,7 +232,9 @@ final class RunModel implements Model<RunWorld> {
     /** This tick's marks: a hurting landing, hurting blocks, a glide, movement the copy leaves out. */
     private double marks(MoveState s, boolean air0, double y0, double fall0) {
         double c = 0;
-        if (air0 && s.onGround && !s.inWater && fall0 + Math.max(0.0, y0 - s.y) > maxFall) c += UNSAFE;
+        // a landing on slime (the shift key up) costs nothing, on a bed half the fall (SlimeBlock and BedBlock.fallOn)
+        double fall = (fall0 + Math.max(0.0, y0 - s.y)) * ((s.touched & BlockInfo.BED) != 0 ? 0.5 : 1.0);
+        if (air0 && s.onGround && !s.inWater && (s.touched & BlockInfo.SLIME) == 0 && fall > maxFall) c += UNSAFE;
         if ((s.touched & BlockInfo.HAZARD) != 0) c += UNSAFE;
         if ((s.touched & BlockInfo.UNCOPIED) != 0) c += UNCOPIED;
         if (s.wouldGlide) c += UNSAFE;

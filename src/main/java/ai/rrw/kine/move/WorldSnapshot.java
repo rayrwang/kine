@@ -93,6 +93,8 @@ public final class WorldSnapshot {
                 || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL) || st.is(Blocks.END_GATEWAY))
                 flags |= BlockInfo.SPECIAL;
             if (st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= BlockInfo.CLIMBABLE;
+            if (st.is(Blocks.SLIME_BLOCK)) flags |= BlockInfo.SLIME;
+            if (st.is(BlockTags.BEDS)) flags |= BlockInfo.BED;
             var fs = st.getFluidState();
             int fluid = fs.isEmpty() ? BlockInfo.NO_FLUID : fs.is(net.minecraft.tags.FluidTags.WATER) ? BlockInfo.WATER_FLUID
                 : fs.is(net.minecraft.tags.FluidTags.LAVA) ? BlockInfo.LAVA_FLUID : BlockInfo.NO_FLUID;
