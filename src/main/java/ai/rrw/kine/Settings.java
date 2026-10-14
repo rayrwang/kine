@@ -57,6 +57,16 @@ public final class Settings {
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, bowAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
+    /** The bow aura's mode (RW 2026-10-14): BOW_OFF, BOW_HELD (only the ranged weapon in your selected slot, no
+     *  switching), BOW_ON (picks the strongest one it can and switches to it). bowAura is true in either of the last two. */
+    public static int bowAuraMode;
+    public static final int BOW_OFF = 0, BOW_HELD = 1, BOW_ON = 2;
+    /** The bow aura's range, blocks (RW 2026-10-14: "make the 48 blocks a slider"), from BOW_RANGE_MIN: below it a mob
+     *  is about to be the kill aura's anyway (its reach and a couple of blocks' walk). Up to 128: the client is sent
+     *  monsters only within 8 chunks of you (EntityType clientTrackingRange 8), and a bow's arc on level ground ends at
+     *  about 117 blocks (a crossbow's a little further), so nothing beyond can be seen or reached. */
+    public static int bowAuraRange;
+    public static final int BOW_RANGE_MIN = 8, BOW_RANGE_MAX = 128;
     /** Collision avoidance's quiet time after it lets go, tenths of a second. */
     public static int collisionCooldown;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
@@ -90,6 +100,7 @@ public final class Settings {
         public final String key;
         public final Section section;
         private final String[] labels;   // null for a level
+        private String[] keys = null;    // a choice saved by key (else by index as a toggle, a mode or a level)
         private final int max;           // a level's maximum
         private final int defaultValue;
         private final Consumer<Integer> field;   // writes the effective value
@@ -108,6 +119,8 @@ public final class Settings {
         public String label() { return labels == null ? String.valueOf(value) : labels[value]; }
         public boolean isMode() { return labels == MODES; }   // the display modes (not any 3 or 4 choices)
         public boolean isLevel() { return labels == null; }
+        /** A choice of more than on and off, saved by key ("off", "held", "on"). */
+        public boolean isChoice() { return keys != null; }
         public int max() { return max; }
         /** Step to the next choice, apply and save. */
         public void cycle() { value = (value + 1) % (max + 1); apply(); save(); }
@@ -131,6 +144,15 @@ public final class Settings {
 
     private static Option mode(String key, Section s, Show def, Consumer<Show> field) {
         Option o = new Option(key, s, MODES, def.ordinal(), v -> field.accept(Show.values()[v]));
+        TABLE.add(o);
+        return o;
+    }
+
+    /** A choice among labels, saved by its key; a saved true (the setting when it was a toggle) reads as the last
+     *  choice, false as the first. */
+    private static Option choice(String key, Section s, String[] labels, String[] keys, int def, Consumer<Integer> field) {
+        Option o = new Option(key, s, labels, def, field);
+        o.keys = keys;
         TABLE.add(o);
         return o;
     }
@@ -214,7 +236,11 @@ public final class Settings {
     public static final Option AUTO_WEAPON                = toggle("autoWeapon", COMBAT, false, v -> autoWeapon = v);
     public static final Option AUTO_AIM                   = toggle("autoAim", COMBAT, false, v -> autoAim = v);
     public static final Option KILL_AURA                  = toggle("killAura", COMBAT, false, v -> killAura = v);
-    public static final Option BOW_AURA                   = toggle("bowAura", COMBAT, false, v -> bowAura = v);
+    // RW 2026-10-14: "add a third oton, so bow aura can be off, only when bow slot slected, and on"
+    public static final Option BOW_AURA                   = choice("bowAura", COMBAT, new String[]{"OFF", "HELD ONLY", "ON"},
+        new String[]{"off", "held", "on"}, BOW_OFF, v -> { bowAuraMode = v; bowAura = v != BOW_OFF; });
+    public static final Option BOW_AURA_RANGE             = level("bowAuraRange", COMBAT, 48, BOW_RANGE_MAX,
+        v -> bowAuraRange = Math.max(BOW_RANGE_MIN, v));
     public static final Option COMBAT_MOVEMENT            = toggle("combatMovement", COMBAT, false, v -> combatMovement = v);
     public static final Option COMBAT_BIAS                = level("combatMovementBias", COMBAT, 0, 100, v -> combatBias = v);
 
@@ -255,6 +281,9 @@ public final class Settings {
                 JsonPrimitive v = e.getAsJsonPrimitive();
                 if (opt.isLevel()) {
                     if (v.isNumber()) opt.set(v.getAsInt());
+                } else if (opt.isChoice()) {
+                    if (v.isBoolean()) opt.set(v.getAsBoolean() ? opt.max : 0);
+                    else for (int i = 0; i < opt.keys.length; i++) if (opt.keys[i].equals(v.getAsString())) opt.set(i);
                 } else if (opt.isMode()) {
                     if (v.isBoolean()) opt.set(!v.getAsBoolean() ? 0 : opt.defaultValue == 0 ? Show.ELYTRA.ordinal() : opt.defaultValue);
                     else for (Show s : Show.values()) if (s.key.equals(v.getAsString())) opt.set(s.ordinal());
@@ -290,6 +319,7 @@ public final class Settings {
         o.addProperty("navArrival", navArrival);
         for (Option opt : ALL) {
             if (opt.isLevel()) o.addProperty(opt.key, opt.value);
+            else if (opt.isChoice()) o.addProperty(opt.key, opt.keys[opt.value]);
             else if (opt.isMode()) o.addProperty(opt.key, Show.values()[opt.value].key);
             else o.addProperty(opt.key, opt.value != 0);
         }

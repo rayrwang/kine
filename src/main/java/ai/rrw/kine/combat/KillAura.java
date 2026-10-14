@@ -171,10 +171,15 @@ public final class KillAura {
             if (onFoot) want = aim;
         }
         // the bow aura, when the melee aura has no mob to turn to (it stands down by itself when the melee aura is
-        // active, BowAura.guard): the full-power shot it is drawing for
+        // active, BowAura.guard): the full-power shot it is drawing for; or, while it stands down for a mob about to
+        // come into reach, a turn toward that mob, ready for the first swing
         if (!aimedAtMob && onFoot) {
             float[] bow = BowAura.plan(mc, p, viewYaw);
             if (bow != null) want = bow;
+            else if (on) {
+                float[] pre = preTurn(p, p.getEyePosition());
+                if (pre != null) want = pre;
+            }
         }
         if (!turned() && want[0] == viewYaw && want[1] == viewPitch) { holdClicks(mc); return; }   // idle, on your view: hands off
         float[] next = MouseTurn.limit(sentYaw, sentPitch, want[0], want[1], TURN_BUDGET);
@@ -681,6 +686,7 @@ public final class KillAura {
      * Whether the melee aura is on is the caller's to check.
      */
     public static double meleeTicks(Minecraft mc, LocalPlayer p) {
+        soonest = null; soonestTick = tick;
         if (mc.level == null) return Double.POSITIVE_INFINITY;
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         Vec3 eye = p.getEyePosition();
@@ -692,20 +698,44 @@ public final class KillAura {
             if (gap <= 0) {
                 if (pickable == null)
                     pickable = mc.level.getEntities(p, p.getBoundingBox().inflate(reach + 1.0), x -> !x.isSpectator() && x.isPickable());
-                if (aimAt(p, eye, p.getLookAngle(), t, reach, pickable) != null) return 0.0;
+                if (aimAt(p, eye, p.getLookAngle(), t, reach, pickable) != null) { soonest = t; return 0.0; }
                 continue;   // in reach but out of the crosshair's way (a block between): not the melee aura's yet
             }
             Vec3 c = t.getBoundingBox().getCenter();
             if (p.level().clip(new ClipContext(eye, c, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p)).getType()
                 != HitResult.Type.MISS) continue;
-            if (gap <= BowAura.REACH_MARGIN) { best = Math.min(best, 1.0); continue; }
-            double dx = t.getX() - p.getX(), dz = t.getZ() - p.getZ(), d = Math.sqrt(dx * dx + dz * dz);
-            if (d < 1e-6) { best = Math.min(best, 1.0); continue; }
-            double vx = (t.getX() - t.xo) - (p.getX() - p.xo), vz = (t.getZ() - t.zo) - (p.getZ() - p.zo);
-            double closing = -(vx * dx + vz * dz) / d;
-            if (closing > 1e-3) best = Math.min(best, Math.max(1.0, gap / closing));
+            double ticks;
+            if (gap <= BowAura.REACH_MARGIN) ticks = 1.0;
+            else {
+                double dx = t.getX() - p.getX(), dz = t.getZ() - p.getZ(), d = Math.sqrt(dx * dx + dz * dz);
+                double vx = (t.getX() - t.xo) - (p.getX() - p.xo), vz = (t.getZ() - t.zo) - (p.getZ() - p.zo);
+                double closing = d < 1e-6 ? 0.0 : -(vx * dx + vz * dz) / d;
+                // a mob that comes to you could at its walking pace, whatever it does this tick: a knockback (an arrow's)
+                // or a pause turns its motion away for a few ticks, and the bow would draw again only to be cut short
+                if (!BowAura.ranged(t)) closing = Math.max(closing, WALK_PACE * t.getAttributeValue(Attributes.MOVEMENT_SPEED));
+                ticks = d < 1e-6 ? 1.0 : closing > 1e-3 ? Math.max(1.0, gap / closing) : Double.POSITIVE_INFINITY;
+            }
+            if (ticks < best) { best = ticks; soonest = t; }
         }
         return best;
+    }
+
+    /** Blocks a tick a mob walks toward you, per point of its movement speed attribute (a zombie's 0.23 closes about
+     *  0.117 a tick in the lockstep test's logs, 2026-10-14). */
+    static final double WALK_PACE = 0.5;
+    /** The mob meleeTicks found soonest in reach, and the tick it was asked (the pre-turn reads it the same tick). */
+    private static LivingEntity soonest = null;
+    private static int soonestTick = -1;
+
+    /** While the bow aura stands down for a mob coming into reach: the rotation toward it, so the melee aura's first
+     *  swing doesn't wait for a turn from wherever the bow last aimed or your view; null if none this tick. */
+    private static float[] preTurn(LocalPlayer p, Vec3 eye) {
+        if (soonest == null || soonestTick != tick || !soonest.isAlive() || !BowAura.standingDownForMelee()) return null;
+        Vec3 d = soonest.getBoundingBox().getCenter().subtract(eye);
+        if (d.lengthSqr() < 1e-6) return null;
+        float yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
+        float pitch = (float) Math.toDegrees(Math.atan2(-d.y, Math.sqrt(d.x * d.x + d.z * d.z)));
+        return new float[]{p.getYRot() - appliedYaw + Mth.wrapDegrees(yaw - (p.getYRot() - appliedYaw)), Mth.clamp(pitch, -90f, 90f)};
     }
 
     // ---------------------------------------------------------------- read by the combat movement's simulation (fight/)

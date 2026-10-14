@@ -139,11 +139,15 @@ public class KineSettingsScreen extends Screen {
         + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
         + "stays put; the server sees turns no faster than a quick flick. Survival and adventure only. Servers may ban it.";
     private static final String DESC_BOW_AURA =
-        "Shoots hostile mobs with a bow, full draws only, when the shot is likely to hit and nothing else is near its "
-        + "path; never your pets. Takes a bow from your hotbar or inventory and gives your slot back. The kill aura comes "
+        "Shoots hostile mobs with a bow, a crossbow or a Loyalty trident when the shot is likely to hit and nothing else "
+        + "is near its path; never your pets. Held only: just the one in your selected slot. On: switches to the one that "
+        + "deals the most damage per second (from your hotbar or inventory) and gives your slot back. The kill aura comes "
         + "first: stands down while it fights or a mob is about to come into its reach, and while combat movement fights, "
         + "the pathfinder walks you or you fly. Your view stays put; the server sees turns no faster than a quick flick. "
         + "Survival and adventure only. Servers may ban it.";
+    private static final String DESC_BOW_RANGE =
+        "The farthest mob the bow aura shoots at, in blocks. Farther shots miss more and pull mobs that hadn't seen you; "
+        + "nearer than 8 the kill aura has them anyway, and past 128 the game doesn't show you mobs.";
     private static final String DESC_COMBAT_MOVE =
         "In fights with most hostile mobs (zombies, skeletons, creepers, spiders, witches, slimes, blazes, "
         + "phantoms, pillagers, piglins and more), moves you with your movement keys so you take less damage: out "
@@ -379,6 +383,8 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
             Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
             Opt.of("Bow aura", DESC_BOW_AURA, Settings.BOW_AURA),
+            Opt.of("Bow aura range", DESC_BOW_RANGE, Settings.BOW_AURA_RANGE, () -> Settings.bowAura,
+                   v -> Math.max(Settings.BOW_RANGE_MIN, v) + " blocks"),
             Opt.of("Combat movement", DESC_COMBAT_MOVE, Settings.COMBAT_MOVEMENT),
             Opt.of("Survive or kill fast", DESC_COMBAT_BIAS, Settings.COMBAT_BIAS,
                    () -> Settings.killAura && Settings.combatMovement, KineSettingsScreen::biasText),

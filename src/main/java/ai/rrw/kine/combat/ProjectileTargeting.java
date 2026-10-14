@@ -571,9 +571,9 @@ public class ProjectileTargeting {
 
         valid = false; hitBox = null; hitId = -1; noDamage = null; lastShown = null;
         courses.clear();
-        if (BowAura.ownsUse(p)) {
-            // the bow aura's draw: its shot goes along the rotation it sends, not your view, so no ring and no auto aim;
-            // the mob it aims at is boxed, with the chance of the shot as sent
+        if (BowAura.aiming(p)) {
+            // the bow aura's shot: it goes along the rotation it sends, not your view, so no ring and no auto aim; the
+            // mob it aims at is boxed, with the chance of the shot as sent
             dropLock();
             Entity t = BowAura.targetId() >= 0 ? level.getEntity(BowAura.targetId()) : null;
             if (t != null) { hitBox = t.getBoundingBox(); hitId = t.getId(); }

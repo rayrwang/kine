@@ -1,11 +1,20 @@
 package ai.rrw.kine.combat;
 
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The bow aura's rule for when the melee kill aura goes first (BowAura.meleeFirst, mayLoose). */
 class BowAuraMeleeTest {
+    @BeforeAll
+    static void boot() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();   // BowAura's statics hold items
+    }
+
     @Test
     void aTargetInReachAlwaysGoesToTheMeleeAura() {
         for (int drawn = 0; drawn <= 40; drawn++) assertTrue(BowAura.meleeFirst(0, drawn));
