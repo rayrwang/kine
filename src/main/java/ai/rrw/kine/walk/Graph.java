@@ -170,21 +170,21 @@ final class Graph {
                 // rise in this column to the higher floor, then over: room above here, and the higher floor plain
                 if (ah + a.head(ai) < bh + H - 1e-4) return;
                 if (!plainOrVine(a, ai) || !plainOrVine(b, bj)) return;
-                if (a.cellTop(ai) + a.cellClear(ai) < bh + H - 1e-4) return;
+                if (a.clearTop(ai) < bh + H - 1e-4) return;
                 add(target, c.jumpCost(len, dh) + hazardCost(b, bj, bx, bz), JUMP);
             } else if (straight && dh < -STEP) {
                 boolean water = (b.flags(bj) & ChunkFloors.WADE) != 0;
                 if (-dh > c.maxFall + 1e-5 && !water) return;
                 // fall through the other column: free over the whole cell from its floor to above where we start
-                if (!plainOrVine(b, bj) || b.cellTop(bj) + b.cellClear(bj) < ah + H - 1e-4) return;
+                if (!plainOrVine(b, bj) || b.clearTop(bj) < ah + H - 1e-4) return;
                 if (!plain(a, ai) && !sweepFits(a, ai, x, z, bx, bz, ah)) return;
                 add(target, c.dropCost(len, -dh) + hazardCost(b, bj, bx, bz), DROP);
             }
         } else if (btype == ChunkFloors.SWIM && (straight || diagonal) && d < 4) {
             // into deep water from a bank at or above its top: fall through the air above it
             if (ah < bh - 0.5) return;
-            if (b.cellTop(bj) + b.cellClear(bj) < ah + H - 1e-4) return;
-            if (a.cellTop(ai) + a.cellClear(ai) < ah + H - 1e-4) return;
+            if (b.clearTop(bj) < ah + H - 1e-4) return;
+            if (a.clearTop(ai) < ah + H - 1e-4) return;
             double fall = Math.max(0, ah - bh);
             add(target, len * c.walk * c.walkOffFraction + Costs.fallTicks(fall) + c.water * (1 - c.walkOffFraction)
                 + c.waterPenalty, WATER_IN);
@@ -193,7 +193,7 @@ final class Graph {
             if (dh > STEP + 1e-5 || dh < -JUMP_MAX - 1e-5) return;
             float top = Math.max(ah, bh);
             if (bh + b.head(bj) < top + H - 1e-4) return;
-            if (a.cellTop(ai) + a.cellClear(ai) < top + H - 1e-4) return;
+            if (a.clearTop(ai) < top + H - 1e-4) return;
             add(target, len * c.walk + (dh < 0 ? Costs.fallTicks(-dh) : 0), CLIMB_ON);
         }
     }
@@ -211,7 +211,7 @@ final class Graph {
             if (dh > 0.25 + 1e-5 || dh < -1.0) return;
             if (b.head(bj) < H - 1e-4) return;
             if (!plain(b, bj)) return;
-            if (dh > 0 && a.cellTop(ai) + a.cellClear(ai) < bh + H - 1e-4) return;
+            if (dh > 0 && a.clearTop(ai) < bh + H - 1e-4) return;
             add(target, len * c.water + c.jumpPenalty, WATER_OUT);
         } else if (btype == ChunkFloors.CLIMB && straight) {
             // onto a ladder from the water (out of a channel whose banks are too high to climb out onto): a rung at
@@ -255,7 +255,7 @@ final class Graph {
     private void gapMoves(ChunkFloors a, int ai, int x, int z) {
         if (!plain(a, ai)) return;
         float ah = a.h(ai);
-        if (a.cellTop(ai) + a.cellClear(ai) < ah + ARC - 1e-4) return;
+        if (a.clearTop(ai) < ah + ARC - 1e-4) return;
         for (java.util.Map.Entry<Long, java.util.List<Jumps.Jump>> e : Jumps.BY_FIRST.entrySet()) {
             long first = e.getKey();
             int fx = x + (int) (first >> 32), fz = z + (int) first;
@@ -278,7 +278,7 @@ final class Graph {
             float bh = b.h(bj), dh = bh - ah;
             // the table's height: the landing from just above dh - 1 to dh (a lower landing is no harder)
             if (dh > j.dh + 1e-4 || dh <= j.dh - 1 + 1e-4) continue;
-            if (b.cellTop(bj) + b.cellClear(bj) < Math.max(ah, bh) + H - 1e-4 || b.head(bj) < H - 1e-4) continue;
+            if (b.clearTop(bj) < Math.max(ah, bh) + H - 1e-4 || b.head(bj) < H - 1e-4) continue;
             float low = Math.min(ah, bh);
             boolean ok = true;
             for (int i = 0; i < j.over.length && ok; i += 2) {
@@ -311,14 +311,14 @@ final class Graph {
         int cnt = b.count(lx, lz);
         // free from low to the arc's top: inside the free space over one of its floors, or a column with no floor at all
         // (nothing in it to stand on anywhere: open to the void)
-        boolean free = cnt == 0;
+        boolean free = cnt == 0 || b.openFrom(lx, lz) <= low + 1e-4;   // no floor at all (open to the void), or open sky
         for (int j = 0; j < cnt; j++) {
             int bj = b.index(lx, lz, j);
             float h = b.h(bj);
             if (h > low - STEP - 1e-5 && h < ah + STEP + 1e-5) return false;
             if (b.type(bj) == ChunkFloors.SWIM && h > low - 1e-4) return false;
             if (b.type(bj) == ChunkFloors.CLIMB) continue;
-            if (b.cellTop(bj) <= low + 1e-4 && b.cellTop(bj) + b.cellClear(bj) >= ah + ARC - 1e-4) free = true;
+            if (b.cellTop(bj) <= low + 1e-4 && b.clearTop(bj) >= ah + ARC - 1e-4) free = true;
         }
         if (!free) return false;
         return !v.hazardIn(cx, cz, (int) Math.floor(low + 1e-4), (int) Math.floor(ah + ARC - 1e-4));
@@ -337,7 +337,7 @@ final class Graph {
     private void glideMoves(ChunkFloors a, int ai, int x, int z) {
         if (!plain(a, ai)) return;
         float ah = a.h(ai);
-        if (a.cellTop(ai) + a.cellClear(ai) < ah + ARC - 1e-4) return;
+        if (a.clearTop(ai) < ah + ARC - 1e-4) return;
         for (int d = 0; d < 8; d++) {
             // the first column must fall away: no floor from a safe fall below the take-off up to a jump above it
             ChunkFloors f = v.chunk(x + DX[d], z + DZ[d]);
@@ -354,7 +354,7 @@ final class Graph {
                     float bh = b.h(bj);
                     double drop = ah - bh;
                     if (drop < GLIDE_MIN_DROP || dist > 2.0 + 2.5 * drop) continue;
-                    if (b.cellTop(bj) + b.cellClear(bj) < bh + H - 1e-4) continue;
+                    if (b.clearTop(bj) < bh + H - 1e-4) continue;
                     if (!glideClear(x, z, d, k, ah, bh)) continue;
                     add(View.node(cx, cz, j), c.glideCost(dist) + hazardCost(b, bj, cx, cz), GLIDE);
                 }
@@ -402,7 +402,7 @@ final class Graph {
         float ah = a.h(ai), bh = b.h(bj), top = Math.max(ah, bh);
         if (a.head(ai) < top - ah + H - 1e-4 || b.head(bj) < top - bh + H - 1e-4) return false;
         boolean fast = plain(a, ai) && plain(b, bj)
-            && a.cellTop(ai) + a.cellClear(ai) >= top + H - 1e-4 && b.cellTop(bj) + b.cellClear(bj) >= top + H - 1e-4;
+            && a.clearTop(ai) >= top + H - 1e-4 && b.clearTop(bj) >= top + H - 1e-4;
         if (fast && d >= 4 && d < 8) {
             fast = sideFree(x + DX[d], z, top) && sideFree(x, z + DZ[d], top);
         } else if (fast && d >= 8) {
@@ -433,11 +433,21 @@ final class Graph {
         if (c == null) return false;
         int lx = x & 15, lz = z & 15, n = c.count(lx, lz);
         double lo = top + STEP, hi = top + H;
+        if (c.openFrom(lx, lz) <= lo + 1e-5) {
+            // open sky over the cell (its floors, if any, are below the move): only hazards and water to check
+            for (int y = (int) Math.floor(top); y <= (int) Math.floor(hi - 1e-4); y++) {
+                Kind k = v.block(x, y, z);
+                if (k.is(Kind.WATER) || k.blocksBody()) return false;
+            }
+            boolean below = true;
+            for (int i = 0; i < n; i++) if (c.h(c.index(lx, lz, i)) > lo + 1e-5) below = false;
+            if (below) return true;
+        }
         for (int i = 0; i < n; i++) {
             int idx = c.index(lx, lz, i);
             if (c.type(idx) == ChunkFloors.CLIMB) continue;
             float ct = c.cellTop(idx);
-            if (ct <= lo + 1e-5 && ct + c.cellClear(idx) >= hi - 1e-5) {
+            if (ct <= lo + 1e-5 && c.clearTop(idx) >= hi - 1e-5) {
                 // no water or hazard in the way
                 for (int y = (int) Math.floor(top); y <= (int) Math.floor(hi - 1e-4); y++) {
                     Kind k = v.block(x, y, z);
@@ -460,7 +470,7 @@ final class Graph {
             float h = c.h(idx);
             if (Math.abs(h - ah) > STEP + 1e-5 || Math.abs(h - bh) > STEP + 1e-5) continue;
             float top = Math.max(h, Math.max(ah, bh));
-            if (c.cellTop(idx) + c.cellClear(idx) >= top + H - 1e-4 && (c.flags(idx) & ChunkFloors.WADE) == 0) return true;
+            if (c.clearTop(idx) >= top + H - 1e-4 && (c.flags(idx) & ChunkFloors.WADE) == 0) return true;
         }
         return false;
     }

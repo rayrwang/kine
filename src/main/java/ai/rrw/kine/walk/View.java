@@ -98,9 +98,10 @@ public final class View {
         for (int i = c.hazStart[col]; i < c.hazStart[col + 1]; i++) if (c.haz[i] == y) return Palette.HAZARD_SOLID;
         for (int i = s; i < e; i++) {
             if (c.type[i] == ChunkFloors.CLIMB) continue;
-            float lo = c.cellTop[i], hi = lo + c.cellClear[i];
+            float lo = c.cellTop[i], hi = c.clearTop(i);
             if (y >= lo - 1e-5 && y + 1 <= hi + 1e-5) return Palette.AIR;
         }
+        if (y >= c.openFrom[col] - 1e-5) return Palette.AIR;   // over the highest floor and hazard: open sky
         return Palette.SOLID;
     }
 

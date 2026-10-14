@@ -101,6 +101,10 @@ final class Layer2Sim {
     final List<double[]> replanTimes = new ArrayList<>();
     /** Walk without a route even when layer 1 has one (to measure layer 2 alone). */
     boolean forceDirect = false;
+    /** Walk layer 1's way to the floor nearest an unreachable goal (as the game's walk does), arriving at its end. */
+    boolean acceptNearest = false;
+    /** Where the last walk was aiming: the goal, or the nearest floor's column when it took layer 1's nearest way. */
+    int[] lastTarget;
     /** Whether the last walk went without a route, and its field's build time. */
     boolean wentDirect;
     long directFieldNanos;
@@ -150,13 +154,30 @@ final class Layer2Sim {
         PathSearch ps = new PathSearch(view, costs).gaps(parkour).glides(glides).goalY(goalY);
         PathSearch.Result r = ps.run(start, gx, gz, 1.0, Long.MAX_VALUE, 2_000_000, false);
         wentDirect = false;
-        if ((!r.found || forceDirect) && direct) {
+        boolean nearestWay = !r.found && !forceDirect && acceptNearest && r.nearest && r.path.length > 1;
+        if ((!r.found || forceDirect) && direct && !nearestWay) {
             Planner.Plan dp = Planner.direct(view, start, gx, gz, goalY, costs, 0.2, true);
             if (dp == null) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route, and no goal floor");
             r = dp.result;
             wentDirect = true;
         }
-        if (!r.found && !wentDirect) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route");
+        double keepGoalY = goalY;
+        if (nearestWay) {
+            long end = r.path[r.path.length - 1];
+            gx = View.nodeX(end); gz = View.nodeZ(end);
+            goalY = r.pathY[r.pathY.length - 1];
+            r.found = true;   // walked as far as it goes
+        }
+        lastTarget = new int[]{gx, gz};
+        if (!r.found && !wentDirect) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route" + (r.nearest ? " (nearest is here)" : ""));
+        try {
+            return walkOn(s, yaw, gx, gz, maxTicks, r);
+        } finally {
+            goalY = keepGoalY;
+        }
+    }
+
+    private Outcome walkOn(MoveState s, float yaw, int gx, int gz, int maxTicks, PathSearch.Result r) {
         lastRoute = r;
         Field f = null;
         Route route = null;

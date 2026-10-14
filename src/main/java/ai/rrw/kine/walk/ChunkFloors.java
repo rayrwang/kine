@@ -54,6 +54,18 @@ public final class ChunkFloors {
     final int[] window;          // WINDOW per floor: kind ids from fb up
     final int[] hazStart;        // hazard heights of column c are haz[hazStart[c] .. hazStart[c + 1] - 1]
     final int[] haz;
+    /** Per column: the height from which it is open to the sky (no collision above), or +infinity when that isn't
+     *  known. The free space over a floor is measured only MAX_CLEAR up; above that the table knew nothing, and a column
+     *  was taken as solid there (a gap over a chasm deeper than 24 wasn't a gap, and the air round a player more than 24
+     *  above the ground read as solid: RW 2026-10-13, the Kine Parkour course, the ground 160 below and a pool of bubble
+     *  columns with no floor in it). Anything with collision over a column's highest floor makes a floor of its own (its
+     *  top, or the top of what is stacked on it), unless a hazard or a block to avoid covers it (those are listed apart);
+     *  so a column is open from its highest floor (a climbable's aside) when that floor's free space reached the cap, or
+     *  from just above its highest hazard when that is higher (what a pool of bubble columns hides under it is unknown,
+     *  the air over it is not). */
+    final float[] openFrom;
+    /** Per floor: its free space reaches open sky (the column's highest floor, the column open from its top). */
+    final boolean[] open;
     /** Per column, the stamp of the build in which it last changed (its floors or hazards), so a route can tell a
      *  change that matters to it from one elsewhere in the chunk (grass turning to dirt under a wall). Set once by the
      *  table before the entry is published. */
@@ -75,7 +87,40 @@ public final class ChunkFloors {
         }
         this.hazStart = hazStart;
         this.haz = haz;
+        open = new boolean[n];
+        openFrom = new float[256];
+        for (int c = 0; c < 256; c++) {
+            openFrom[c] = Float.POSITIVE_INFINITY;
+            int top = -1;
+            for (int i = start[c]; i < start[c + 1]; i++) if (type[i] != CLIMB) top = i;
+            if (top < 0) continue;   // no floor at all: void or solid to the top, not known which
+            float hazTop = Float.NEGATIVE_INFINITY;
+            for (int i = hazStart[c]; i < hazStart[c + 1]; i++)
+                if (haz[i] + 1 > cellTop[top] + 1e-4F) hazTop = Math.max(hazTop, haz[i] + 1);
+            boolean capped = cellClear[top] >= MAX_CLEAR - 1e-4F;
+            if (hazTop == Float.NEGATIVE_INFINITY) {
+                if (capped) openFrom[c] = cellTop[top];
+                // else: the free space ends at a collision with nothing listed over it (the world's top, a thin block
+                // at a cell's edge): not known
+            } else if (capped || hazTop > cellTop[top] + cellClear[top] + 1e-4F) {
+                openFrom[c] = hazTop;   // what the hazards cover is unknown; above the highest of them, open
+            }
+            open[top] = openFrom[c] <= cellTop[top] + 1e-4F;
+        }
     }
+
+    /** The height from which column (lx, lz) is open to the sky; +infinity when not known. */
+    public float openFrom(int lx, int lz) {
+        return openFrom[lx + 16 * lz];
+    }
+
+    /** The top of the free space over floor idx: cellTop + cellClear, or infinity when it is open to the sky. */
+    public float clearTop(int idx) {
+        return open[idx] ? Float.POSITIVE_INFINITY : cellTop[idx] + cellClear[idx];
+    }
+
+    /** Whether floor idx is open to the sky above (see {@link #openFrom}). */
+    public boolean open(int idx) { return open[idx]; }
 
     /** How many floors the column (local lx, lz) has. */
     public int count(int lx, int lz) {
@@ -130,7 +175,8 @@ public final class ChunkFloors {
 
     /** Approximate memory use, bytes. */
     public long bytes() {
-        return 64L + start.length * 4L + type.length * (1L + 2 + 16 + 4 + 4L * WINDOW) + hazStart.length * 4L + haz.length * 4L;
+        return 64L + start.length * 4L + type.length * (2L + 2 + 16 + 4 + 4L * WINDOW) + hazStart.length * 4L + haz.length * 4L
+            + 256L * 4;
     }
 
     /** One floor while building. */

@@ -80,6 +80,26 @@ public final class Walk {
     private static int seenPass = -1;
     /** The plan to the floor nearest an unreachable goal whose end has been searched from once more. */
     private static long nearestCheckedId = -1;
+    /** The last search found no way onto the goal (a plan only to the floor nearest it, or nothing nearer than here):
+     *  a walk that then makes no progress (walking without a route stood at a wall or an edge) ends as near as it gets,
+     *  not "Stuck" (RW, 2026-10-13). Cleared by a plan with a way onto the goal or toward the loaded edge. */
+    private static boolean noWaySeen = false;
+    /** Walking without a route to a floor past where a far goal's route stops (Hop): that floor's column and height,
+     *  its node, the floors tried this walk, the nearest the walk has stood to the goal, the hops made, and the height
+     *  the current one started from (a fall well below it ends the hops). */
+    private static int[] hop = null;
+    private static double hopY = Double.NaN, hopFromY = Double.NaN;
+    private static long hopNode = View.NONE;
+    private static final java.util.Set<Long> hopsTried = new java.util.HashSet<>();
+    private static double hopBest = Double.MAX_VALUE;
+    private static int hops = 0;
+    private static boolean hopsOff = false;
+    /** At most this many hops in a walk; hops tried in a row without getting across before the walk ends; how far a
+     *  hop's floor may be (the longest jump of the catalogue is 5.4 blocks past its take-off's edge: layer 2 without a
+     *  route crosses one thing, and a floor farther on needs layer 1 between); the no-progress replans a hop gets. */
+    static final int HOP_MAX = 200, HOP_FAILS = 3, HOP_STUCK = 2;
+    static final double HOP_REACH = 8.0;
+    private static int hopFails = 0;
     private static int tick = 0, lastPlanTick = 0, lastCheckTick = 0;
     private static int seg = 1;                     // the waypoint walked toward
     private static double bestLeft = Double.MAX_VALUE;
@@ -250,6 +270,9 @@ public final class Walk {
         seg = 1;
         handBack = false;
         stuckReplans = 0;
+        noWaySeen = false;
+        hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
+        hopsTried.clear(); hopBest = Double.MAX_VALUE; hops = 0; hopsOff = false; hopFails = 0;
         progressed = 0;
         replans = 0;
         replanWhy.clear();
@@ -401,6 +424,37 @@ public final class Walk {
         long start = startNode(view, p);
         if (start == View.NONE) return null;
         return Planner.direct(view, start, d[0], d[1], walkY, costs(), margin(), p.getFoodData().getFoodLevel() > 6);
+    }
+
+    /** No way on to a far goal (layer 1's every reachable place searched, the walk at the floor nearest it, the goal past
+     *  the range of walking without a route): walk without a route to a floor past here instead (Hop.pick), Parkour on.
+     *  True when one is taken. */
+    private static boolean startHop(LocalPlayer p, int[] d) {
+        if (!Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour || hopsOff || hops >= HOP_MAX
+            || hopFails >= HOP_FAILS) return false;
+        View view = WalkTable.snapshot();
+        long start = startNode(view, p);
+        if (start == View.NONE) return false;
+        hopBest = Math.min(hopBest, Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()));
+        long pick = Hop.pick(view, p.getX(), p.getY(), p.getZ(), d[0], d[1], hopBest, hopsTried, costs().maxFall, HOP_REACH);
+        if (pick == View.NONE) return false;
+        hopsTried.add(pick);
+        int x = View.nodeX(pick), z = View.nodeZ(pick);
+        ChunkFloors c = view.chunk(x, z);
+        double h = c.h(view.index(pick));
+        Planner.Plan dp = Planner.direct(view, start, x, z, h, costs(), margin(), p.getFoodData().getFoodLevel() > 6);
+        if (dp == null) return false;
+        hop = new int[]{x, z};
+        hopY = h;
+        hopNode = pick;
+        hopFromY = p.getY();
+        hops++;
+        adoptDirect(dp);
+        stuckReplans = 0;
+        progressed = 0;
+        message = String.format(java.util.Locale.ROOT, "No route on from here: walking without one to %d %d %d", x, (int) Math.floor(h), z);
+        if (replanWhy.size() < 200) replanWhy.add(tick + ": without a route to " + x + " " + z + " (hop " + hops + ")");
+        return true;
     }
 
     /** The safety margin in blocks (the setting, in hundredths). */
@@ -561,6 +615,7 @@ public final class Walk {
             boolean waitForBest = !jobReplay && plan != null && !job.done;
             boolean fresh = np != null && !waitForBest && (np.id != seenId || np.pass != seenPass);
             if (fresh) { seenId = np.id; seenPass = np.pass; }
+            if (fresh) noWaySeen = np.result.nearest;
             if (fresh && np.result.nearest) {
                 // no way to the goal (every reachable place searched; found at the start or on the way, the goal
                 // shut in: a tree's trunk, a pocket the graph has no way into): with Parkour on, walk without a route
@@ -574,6 +629,7 @@ public final class Walk {
                 }
             }
             if (fresh) {
+                hop = null;   // layer 1 has a plan again: the hop, if any, is over
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
                 planId = np.id;
@@ -588,9 +644,11 @@ public final class Walk {
                     : np.result.nearest ? "No way onto the destination: walking as near as it gets" : "Walking";
                 WalkRender.newPlan(np, jobReplay);
             } else if (job.done && job.failure != null && (plan == null || job.latest.get() == null)) {
+                if (job.exhausted) noWaySeen = true;
                 if (plan == null) {
                     // shut in, and nowhere nearer it than here: with Parkour off, without a route would only stand
                     Planner.Plan dp = job.exhausted && !Settings.walkParkour ? null : directPlan(p, d, job.failure);
+                    if (dp == null && job.exhausted && startHop(p, d)) { measure(t0); return; }
                     if (dp == null && job.exhausted) {
                         double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
                         fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
@@ -602,6 +660,7 @@ public final class Walk {
                 } else if (job.exhausted && !plan.direct) {
                     // a replan found the goal shut in and nothing nearer it than here: the route walked so far (often
                     // one toward the loaded edge, from before the goal's ground loaded) leads nowhere
+                    if (startHop(p, d)) { measure(t0); return; }
                     double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
                     fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
                     measure(t0);
@@ -618,6 +677,32 @@ public final class Walk {
 
         if (state != State.WALKING || plan == null) { measure(t0); return; }
         Route r = plan.route;
+
+        // a hop: arrived on its floor, back to layer 1 for the real goal; fallen well below where it started, the hops end
+        if (hop != null && plan.direct) {
+            if (p.getY() < hopFromY - 4.0) {
+                // fell: no more hops; plan from where it is (the walk ends at the floor nearest the goal there)
+                hopsOff = true;
+                hop = null;
+                plan = null;
+                state = State.PLANNING;
+                message = "Fell: planning from here";
+                replanFor("fell on the way, without a route", mc);
+                measure(t0);
+                return;
+            } else if ((p.onGround() || p.onClimbable()) && Math.abs(p.getY() - hopY) < 0.6
+                       && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75) {
+                hopBest = Math.min(hopBest, Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()));
+                hopFails = 0;
+                hop = null;
+                plan = null;
+                state = State.PLANNING;
+                message = "Across: planning on";
+                replanFor("across, without a route: planning on", mc);
+                measure(t0);
+                return;
+            }
+        }
 
         // arrived: within half a block of the destination's centre
         double gx = d[0] + 0.5 - p.getX(), gz = d[1] + 0.5 - p.getZ();
@@ -647,7 +732,19 @@ public final class Walk {
         }
         boolean idle = job == null || job.done;
         if (tick - bestLeftTick > 60 && idle) {
-            if (++stuckReplans > 3) { fail("Stuck"); measure(t0); return; }
+            if (++stuckReplans > (hop != null ? HOP_STUCK : 3)) {
+                if (hop != null) {
+                    hop = null;
+                    hopFails++;
+                    if (startHop(p, d)) { measure(t0); return; }
+                }
+                if (noWaySeen) {
+                    double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
+                    fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
+                } else fail("Stuck");
+                measure(t0);
+                return;
+            }
             String why = String.format(java.util.Locale.ROOT, "no progress in 3 s (%d in a row, left %.1f, seg %d/%d)",
                 stuckReplans, left, seg, r.n);
             bestLeft = Double.MAX_VALUE;
@@ -673,7 +770,8 @@ public final class Walk {
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
         if (state == State.WALKING) {
-            Layer2.endTick(mc, plan, d, walkY);
+            if (hop != null && plan.direct) Layer2.endTick(mc, plan, hop, hopY);
+            else Layer2.endTick(mc, plan, d, walkY);
             tickEta(mc, p);
         }
         measure(t0);
