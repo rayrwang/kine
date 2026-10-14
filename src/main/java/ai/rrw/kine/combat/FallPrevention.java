@@ -18,8 +18,9 @@ import net.minecraft.world.phys.Vec3;
  * sneak only in a tick whose step would leave you over such a drop, and lets go once you turn away. Jumping
  * gets past it, as before: it never sneaks while you jump or are off the ground. Any drop of more than 3
  * blocks counts, water and hay included, except a shaft you can climb down: a ladder, vine or other climbable
- * block in the column you step into catches you (LivingEntity.onClimbable). The walking pathfinder's own planned step
- * into water passes (Walk.steppingIntoWater): its drop is measured to the water, this one's to the ground under it.
+ * block in the column you step into catches you (LivingEntity.onClimbable). The walking pathfinder's own checked steps
+ * pass (Walk.ownStepSafe): with layer 2 any step its plan checked lands without hurting, with layer 1's follower its
+ * step into water, whose drop it measures to the water where this one measures to the ground under it.
  */
 public final class FallPrevention {
     private FallPrevention() {}
@@ -30,7 +31,7 @@ public final class FallPrevention {
     /** Press sneak when this tick's step, with these keys, would go over a dangerous drop. */
     public static Input adjustInput(LocalPlayer p, Input keys) {
         if (!Settings.fallPrevention || keys.shift() || keys.jump()) return keys;
-        if (Walk.steppingIntoWater(p)) return keys;   // the walk's own step into water (RW)
+        if (Walk.ownStepSafe(p)) return keys;   // the walk's own checked step (RW)
         if (!GameModes.survivalLike(Minecraft.getInstance())) return keys;   // creative and spectator take no fall damage
         if (!p.onGround() || p.getAbilities().flying || p.isFallFlying() || p.isPassenger() || p.isInWater()) return keys;
         Vec3 step = predictedStep(p, keys);

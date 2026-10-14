@@ -227,10 +227,11 @@ public final class Walk {
         return dismissed;
     }
 
-    /** Whether this tick the walk is on its own step into water: into deep water, or a drop onto a floor in water,
-     *  with water still at the landing. The planner chose that step knowing it lands in water, so fall prevention lets
-     *  it through (RW, 2026-10-12); on the rest of the walk fall prevention guards as usual. */
-    public static boolean steppingIntoWater(LocalPlayer p) {
+    /** Whether this tick's step is the walk's own, checked safe, so fall prevention lets it through. With layer 2: its
+     *  plan's landing was checked in the movement copy (no fall that hurts). With layer 1's follower: its own step into
+     *  water, into deep water or a drop onto a floor in water, with water still at the landing (RW, 2026-10-12); on
+     *  the rest of the walk fall prevention guards as usual. */
+    public static boolean ownStepSafe(LocalPlayer p) {
         if (state != State.WALKING || !steering || plan == null) return false;
         // layer 2 checked its plan's landing in the movement copy (no fall that hurts): let it through
         if (layer2) return Layer2.safe();
