@@ -198,7 +198,7 @@ public class Nav {
         while (navKey.consumeClick()) if (Settings.navigation || Settings.walkPathfinder) mc.setScreen(new KineNavScreen());
         // END 0 on the autopilot: land near here, whatever nav was doing; a landing already under way goes on. Ahead of
         // the hold's own check below, so a hold ends in this landing too.
-        if (!landing && Settings.navigation && Autopilot.isEngaged() && p.isFallFlying() && !p.isInWater()
+        if (!landing && Settings.navigation && Autopilot.flying() && p.isFallFlying() && !p.isInWater()
                 && ElytraGuard.landNow()) emergencyLanding(mc, p);
         if (mode() == Mode.OFF) { clearLanding(); return; }
 
@@ -207,9 +207,9 @@ public class Nav {
             double dist = Math.sqrt(hdx * hdx + hdz * hdz);
             if (!landing && holding) {
                 if (!Autopilot.isEngaged() && dist > HOLD_EXIT_RADIUS) holding = false;   // pilot took over and flew off
-                else if (Autopilot.isEngaged() && p.isFallFlying() && !holdNow(mc)) { holding = false; beginLanding(mc, p); }
+                else if (Autopilot.flying() && p.isFallFlying() && !holdNow(mc)) { holding = false; beginLanding(mc, p); }
             } else if (!landing) {
-                if (dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.isEngaged()) {
+                if (dist < ARRIVAL_RADIUS && p.isFallFlying() && Autopilot.flying()) {
                     if (holdNow(mc)) holding = true;
                     else beginLanding(mc, p);
                 }
@@ -257,6 +257,14 @@ public class Nav {
         if (level.dimensionType().hasFixedTime()) return false;
         return HoldModel.darkEnoughToSpawn(level.getSkyDarken(), level.isThundering(),
             level.dimensionType().monsterSpawnLightTest().maxInclusive());
+    }
+
+    /** The elytra guardian took the controls during a landing (the landing law was flying into damage): the landing
+     *  is let go, and an aimed one gives the trip back. */
+    static void abandonLanding() {
+        if (!landing) return;
+        Kine.LOGGER.info("Kine landing: let go for the elytra guardian's rescue");
+        landing = false; haveSpot = false; emergency = false; endAimed();
     }
 
     /** Touched down: the landing ends, and an aimed or emergency one gives the trip back. */

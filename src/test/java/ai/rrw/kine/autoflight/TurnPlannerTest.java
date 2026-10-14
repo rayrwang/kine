@@ -56,30 +56,25 @@ class TurnPlannerTest {
     }
 
     @Test
-    void aWallInsideTheTurnRadiusIsAnEmergency() {
-        Terrain2D close = (x, z) -> (z >= 30 && z <= 60) ? 900 : 64;   // endless, 30 blocks ahead
+    void boxedInItTurnsTowardTheMostRoom() {
+        // an endless wall 30 blocks ahead, inside the turn radius: no heading clears, so the planner turns toward the
+        // one whose path meets the wall farthest away (the guardian rescues if it closes; the emergency reversal that
+        // was here is purged, RW 2026-10-11)
+        Terrain2D close = (x, z) -> (z >= 30 && z <= 60) ? 900 : 64;
         var p = TurnPlanner.plan(seed(250), 0.0, 0, 3000, close);
-        assertEquals(TurnPlanner.EMERGENCY, p.action);
-        assertEquals(179.0, Math.abs(p.heading), 1e-9, "reverses");
+        assertEquals(TurnPlanner.TURN, p.action);
+        assertTrue(Math.abs(p.heading) >= 20.0, "turns away: " + p.heading);   // 52 here: the longest path before the wall
+        TurnPlanner.boxedInTurns = false;
+        try {
+            var q = TurnPlanner.plan(seed(250), 0.0, 0, 3000, close);
+            assertEquals(TurnPlanner.STRAIGHT, q.action, "the other policy: straight on");
+        } finally { TurnPlanner.boxedInTurns = true; }
     }
 
     @Test
     void tooLowOverFlatGroundIsNotFeasible() {
         assertFalse(TurnPlanner.feasible(seed(70), 0.0, 0, 3000, FLAT_LOW), "the climb's first dive would hit the ground");
         assertTrue(TurnPlanner.feasible(seed(250), 0.0, 0, 3000, FLAT_LOW));
-    }
-
-    @Test
-    void controllerHandsBackAfterRepeatedReversalsAgainstOneWall() {
-        Terrain2D close = (x, z) -> 900;   // a wall everywhere: every plan is an emergency
-        var c = new TurnController();
-        var s = seed(250);
-        boolean handedBack = false;
-        for (int t = 0; t < 400 && !handedBack; t++) {
-            c.update(s.copy(), 0, 3000, close);
-            handedBack = c.action() == TurnPlanner.DISENGAGE;
-        }
-        assertTrue(handedBack);
     }
 
     @Test
@@ -93,7 +88,7 @@ class TurnPlannerTest {
             return (z >= 30 && z <= 60) ? 900 : 64;
         };
         var p = TurnPlanner.plan(seed(250), 0.0, 0, 3000, strip);
-        assertEquals(TurnPlanner.EMERGENCY, p.action, "nothing clears and the wall is inside the turn radius");
+        assertEquals(TurnPlanner.STRAIGHT, p.action, "nothing clears and no turn is seen to hit: straight on");
         // about 19,000 samples (one rollout per heading); climbing every heading's ladder took about 273,000
         assertTrue(samples[0] < 40_000, "terrain sampled " + samples[0] + " times");
     }

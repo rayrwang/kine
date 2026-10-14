@@ -25,6 +25,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - **Fly long distances without fireworks.**
 	- Take off from ground with rockets, or start high enough and press `J` to engage autopilot.
 	- Terrain aware autopilot with fully optimized flight profile.
+	- Collision avoidance: if the path you are on would hurt you, by hand or on the autopilot, it takes over at the last moment, turns or pulls up into clear air, then hands back.
 	- Press `N` to enter a destination, with auto landing.
 	- Or look at a spot while gliding and left click to land there.
 	- Visualizations: flight director bars, path guiderails, flight path vector, and side profile map.
@@ -68,7 +69,8 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Emergency landing with nothing safe within 32 blocks goes straight down, even onto lava
 		- AFK damage kick can log you out mid-air during a night hold (phantoms)
 		- Takeoff's last rocket can overshoot the cruise altitude
-		- Takeoff stalls if a screen (e.g. chat) opens mid-climb: no more rockets, nose held up
+		- Takeoff stalls if a screen (e.g. chat) opens mid-climb: no more rockets, nose held up (collision avoidance now catches the stall)
+		- Terrain avoidance passes wall corners with no margin to the side (collision avoidance catches the clip)
 		- Check terrain avoidance and hold steering for the per-frame stutter fixed in the autopilot
 	- Walking pathfinder:
 		- Route tightening over water
@@ -87,8 +89,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Per block pathing instead of heightmap highest block
 		- Fly climbing pattern if boxed in
 		- Descend gradually before reaching destination
-		- Collision avoidance redone (the emergency turnaround is unreliable): turn around for walls, flare for the ground, always on; with it, low altitude warning should count as autopilot disconnect (unreliable near terrain in June)
-		- Fly landing, or rockets, instead of disengaging on unable to escape terrain?
+		- Fly on, land, or rockets, instead of tripping off after a collision avoidance rescue?
 		- Support fireworks? (rockets in flight, not only the takeoff)
 		- Warnings?
 		- Faster porpoise profile (law2)?
@@ -159,7 +160,11 @@ Standing with an elytra on and rockets in hand, the warning row offers a takeoff
 
 ### Terrain avoidance
 
-On by default. While engaged, the autopilot rolls the flight model forward over the loaded heightmap, replanning every half second: it flies straight when that path clears, raises the porpoise's low point to climb over terrain, turns toward a clear heading, and reverses hard from a wall inside its turn radius. When reversing doesn't get past a wall it hands control back. It also arms only when it finds a path. Terrain is the heightmap's top surface, so overhangs and caves count as solid.
+On by default. While engaged, the autopilot rolls the flight model forward over the loaded heightmap, replanning every half second: it flies straight when that path clears, raises the porpoise's low point to climb over terrain, and turns toward a clear heading; boxed in, it turns toward the heading with the most room, and collision avoidance (below) is the emergency path. It also arms only when it finds a path. Terrain is the heightmap's top surface, so overhangs and caves count as solid.
+
+### Collision avoidance
+
+On by default, in survival and adventure, whenever you glide: by hand, on the autopilot, in a takeoff or a landing. Each tick, on a worker thread, it flies the path you will take if nothing changes, in an exact copy of the game's movement code over a copy of the blocks within 160 blocks (their real shapes: overhangs, arches, canopies and the Nether roof are what they are), with the game's damage rules: a wall hit while gliding (the horizontal speed lost times 10, less 3, in blocks a tick), a landing's fall (cut by hay, honey, beds, slime, powder snow and water, and to a block while sinking slowly), and blocks that hurt to touch. Nothing changing means your look held still when flying by hand; the autopilot's own laws on the autopilot (the porpoise, terrain avoidance, the hold, a landing's spiral); a takeoff's own climb and rockets, with none while a screen such as chat is open. If that path takes damage, it waits for the last moment a rescue still works with a second to spare: it acts once a second's freeze of the controls, a tick from now, would leave no rescue. Then it engages the autopilot (past its arming gate), flies the best rescue a search finds, and shows a red TERRAIN. The search tries sequences of looks, at most 28 degrees a tick, starting from named moves (turning back either way, level, climbing or diving; other turns; flaring; diving then pulling out) and from shapes it found best in tests, and scores them by damage first, then by how the rescue ends: on the way back along the air you have just flown through, with open air ahead, at the height you flew, with speed. Once the rescue is done and a hands-off glide from there stays clear for 4 s, it hands back with AUTOPILOT OFF and the 1.5 s disconnect, unless you take over. A small bump of the mouse is taken back; a real turn, a movement key or `J` takes over at once, and it stays out of that danger until your path is clear again.
 
 ### Navigation and landing
 

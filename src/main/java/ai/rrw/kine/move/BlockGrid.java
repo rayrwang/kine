@@ -8,9 +8,10 @@ import java.util.Map;
 /**
  * A snapshot of the blocks around the player, as the movement copy reads them: one BlockInfo per block, looked up by
  * world position. Blocks outside the snapshot read as {@link BlockInfo#UNKNOWN} (solid and flagged). No Minecraft
- * class is used here; WorldSnapshot fills it from the live world.
+ * class is used here; WorldSnapshot fills it from the live world. Not final: the elytra guardian's copy of the blocks
+ * far ahead reads copied chunk sections instead of a box of cells, by overriding {@link #get}.
  */
-public final class BlockGrid {
+public class BlockGrid {
     public final int x0, y0, z0, nx, ny, nz;
     private final short[] cells;
     private final List<BlockInfo> table = new ArrayList<>();

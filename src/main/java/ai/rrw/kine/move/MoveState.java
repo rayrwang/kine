@@ -53,6 +53,11 @@ public final class MoveState {
     public int touched;
     /** A jump pressed in the air with a glider worn would open it: the copy stops being right. */
     public boolean wouldGlide;
+    /** The last landing's fall (for the elytra guardian's damage rules, not game state): the fall distance the landing
+     *  ended (Entity.checkFallDamage hands it to the block's fallOn before resetting it), and that block's fall factor
+     *  (BlockInfo.fallFactor). Left as they were by steps that don't land; the guardian clears them each tick. */
+    public double landedFall;
+    public float landedFallFactor = 1.0F;
 
     public MoveState copy() {
         MoveState s = new MoveState();
@@ -74,6 +79,7 @@ public final class MoveState {
         supX = o.supX; supY = o.supY; supZ = o.supZ;
         lastKeys = o.lastKeys; lastMoveForward = o.lastMoveForward;
         touched = o.touched; wouldGlide = o.wouldGlide;
+        landedFall = o.landedFall; landedFallFactor = o.landedFallFactor;
     }
 
     @Override

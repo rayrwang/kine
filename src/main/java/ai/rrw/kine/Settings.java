@@ -52,7 +52,7 @@ public final class Settings {
     public static boolean displayMobHealths, displayMobNames, displayMiningProgress,
         fullbright, freecam, noWaterFog, noLavaFog, noPowderSnowFog, noNetherFog, noRainFog, noBossFog, noDistanceFog,
         noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
-        autopilot, takeoff, landing, navigation, terrainAvoidance,
+        autopilot, takeoff, landing, navigation, terrainAvoidance, collisionAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, autoTotem, autoEat, afkDamageProtection,
         projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
@@ -181,6 +181,7 @@ public final class Settings {
     public static final Option LANDING                    = toggle("landing", FLIGHT, true, v -> landing = v);
     public static final Option NAVIGATION                 = toggle("navigation", FLIGHT, true, v -> navigation = v);
     public static final Option TERRAIN_AVOIDANCE          = toggle("terrainAvoidance", FLIGHT, true, v -> terrainAvoidance = v);
+    public static final Option COLLISION_AVOIDANCE        = toggle("collisionAvoidance", FLIGHT, true, v -> collisionAvoidance = v);
 
     public static final Option WALK_PATHFINDER            = toggle("walkPathfinder", WALK, true, v -> walkPathfinder = v);
     public static final Option WALK_PATH_DISPLAY          = toggle("walkPathDisplay", WALK, true, v -> walkPathDisplay = v);

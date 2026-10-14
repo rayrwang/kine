@@ -3,6 +3,7 @@ package ai.rrw.kine.hud;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
+import ai.rrw.kine.autoflight.Guardian;
 import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.Takeoff;
@@ -65,6 +66,11 @@ public final class FlightDirectorHud {
         }
         if (Takeoff.usesWarningRow()) return;   // the takeoff's prompt has the row, and the law flies nothing until it hands over
         if (!p.isFallFlying()) return;   // the bars are for elytra flight only, never in creative free flight (RW); the takeoff's above
+        if (Guardian.rescuing()) {
+            // the guardian flies the view: the bars show its rescue's look; TERRAIN has the warning row
+            bars(g, p, partial, cx, cy, maxOff, H, Guardian.commandedPitch(), Mth.wrapDegrees(Guardian.commandedYaw() - p.getYRot()));
+            return;
+        }
 
         boolean landing = Nav.landing();
         if (FlightDirector.isTooLow() && !landing && !Landing.valid()) {   // a landing spot on offer has the row instead

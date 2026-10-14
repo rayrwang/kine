@@ -74,10 +74,8 @@ public class FlightDirector {
         boolean room;
         if (Settings.terrainAvoidance) {
             // Checked every tick, not latched, so sinking into a low and slow state with no way out drops the
-            // bars. Exception: a committed turn or emergency bank, whose low speed would otherwise read as
-            // infeasible mid-turn. A stuck manoeuvre ends through the controller's own hand-off.
-            boolean maneuvering = Autopilot.isEngaged()
-                    && (TurnGuard.action() == TurnPlanner.TURN || TurnGuard.action() == TurnPlanner.EMERGENCY);
+            // bars. Exception: a committed turn, whose low speed would otherwise read as infeasible mid-turn.
+            boolean maneuvering = Autopilot.isEngaged() && TurnGuard.action() == TurnPlanner.TURN;
             room = TurnGuard.feasibleToArm(mc, p, LAW.targetAlt) || maneuvering;
         } else {
             int clear = clearBelow(mc, p);
@@ -90,11 +88,10 @@ public class FlightDirector {
             TurnGuard.reset();
             return;
         }
-        // Lateral terrain avoidance: this tick's steering heading. An imminent wall becomes an emergency bank;
-        // if banking can't escape, the controller hands control back rather than fly into the ground.
+        // Lateral terrain avoidance: this tick's steering heading. Boxed in, it turns toward the most room; the elytra
+        // guardian (Guardian) is the emergency path.
         if (Settings.terrainAvoidance && Autopilot.isEngaged() && !Nav.landing()) {   // a landing steers itself down
             TurnGuard.evaluate(mc, p, LAW.targetAlt);
-            if (TurnGuard.handOff()) Autopilot.disengage();
             // Adopt the planner's trough floor for next tick's law: the cruise floor, or higher to climb over
             // rising terrain. The planner only raises it, so clamp into [targetAlt, ALT_MAX].
             LAW.floorAlt = Math.max(LAW.targetAlt, Math.min(AltitudeLaw.ALT_MAX, (int) Math.round(TurnGuard.desiredFloor())));

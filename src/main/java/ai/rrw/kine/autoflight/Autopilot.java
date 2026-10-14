@@ -32,7 +32,7 @@ public class Autopilot {
     // each frame turns the view its share of the way there.
     private static final float TURN_DPS  = 30f;   // heading change per second while A/D is held (deg)
     static final float NAV_TURN_DPS = 35f;        // max heading change per second while a nav mode steers
-    private static final float EMERGENCY_FLICK_DPS = 450f;// imminent-wall turn-around: brisk human mouse-flick (~180 deg in 0.4s)
+    private static final float CATCH_UP_DPS = 450f; // the most terrain avoidance's look placement moves (22.5 a tick): a brisk human flick
     static final float LANDING_TURN_DPS = (float) (LandingModel.YAW_RATE * 20);   // the landing law's turn rate, 300 deg/s
     private static final float LANDING_BUMP_DEG = 10f; // while landing, this much mouse movement within about half a second is the pilot; less is a bump taken back
     private static final float LANDING_BUMP_DECAY = 0.5f;   // seconds: how fast the landing's tally of mouse movement fades
@@ -52,7 +52,6 @@ public class Autopilot {
     private static int   tripTicks = 0;             // counts down a too-low engage before it trips off
     private static float landingMouse = 0f;         // while landing: the pilot's recent mouse movement (deg), fading
     private static boolean rotationSet = false;     // the server set the rotation (a teleport): start again from it
-    private static boolean yawCatchUp = false;      // since then, terrain avoidance's look placement eases at the bank rate
 
     // "AUTOPILOT OFF" warning and dead-man disconnect after a disengage in flight
     private static boolean warnActive = false;
@@ -60,6 +59,8 @@ public class Autopilot {
     private static float   warnBaseYaw, warnBasePitch;
 
     public static boolean isEngaged() { return engaged; }
+    /** Engaged and flying its own laws: not flying a guardian's rescue. Nav starts arrivals and landings only then. */
+    public static boolean flying() { return engaged && !Guardian.rescuing(); }
 
     public static void register() {
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
@@ -86,11 +87,13 @@ public class Autopilot {
             return;
         }
         while (toggleKey.consumeClick()) {
-            if (engaged) disengage();
+            if (Guardian.rescuing()) Guardian.override("J");   // the pilot takes the rescue back
+            else if (engaged) disengage();
             else if (p.isFallFlying()) engage(p);   // engage even if too low; it trips off below, visibly
         }
-        // too low / not gliding: let the engage stand briefly (so it's visibly acknowledged) then trip it
-        if (engaged && !FlightDirector.isActive() && !Nav.landing()) {
+        // too low / not gliding: let the engage stand briefly (so it's visibly acknowledged) then trip it. A guardian's
+        // rescue flies past the arming gate.
+        if (engaged && !FlightDirector.isActive() && !Nav.landing() && !Guardian.rescuing()) {
             if (++tripTicks >= TRIP_DELAY) disengage();
         } else {
             tripTicks = 0;
@@ -113,7 +116,7 @@ public class Autopilot {
     public static void onTickStart(Minecraft mc) {
         if (!engaged || mc.isPaused()) return;
         LocalPlayer p = mc.player;
-        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing())) return;
+        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing() && !Guardian.rescuing())) return;
         if (lastFrameNanos == 0L) return;     // no frame yet since engaging or a pause: the first frame takes the view
         takeSetRotation(p);
         if (!planned) plan(mc, p);            // no frame since the last tick (under 20 fps): plan now
@@ -132,7 +135,7 @@ public class Autopilot {
         if (!engaged) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing())) return;   // tick() performs the actual disengage
+        if (p == null || p.isDeadOrDying() || (!FlightDirector.isActive() && !Nav.landing() && !Guardian.rescuing())) return;   // tick() performs the actual disengage
 
         long now = System.nanoTime();
         if (lastFrameNanos == 0L) { lastFrameNanos = now; holdView(p); return; }
@@ -148,15 +151,20 @@ public class Autopilot {
         // frame's movement: the view is turned back every frame, so a frame's movement never grows.
         float drift = MOUSE_EPS * 20f * dt;                    // per-tick sensitivity, scaled to this frame
         float moved = Math.max(Math.abs(p.getXRot() - setPitch), Math.abs(Mth.wrapDegrees(p.getYRot() - setYaw)));
-        if (Nav.landing()) {
+        if (Nav.landing() || Guardian.rescuing()) {
+            // the guardian's rescue takes back small movements as the landing does (RW's ruling 1, 2026-10-14)
             landingMouse = landingMouse * (float) Math.exp(-dt / LANDING_BUMP_DECAY) + (moved > drift ? moved : 0f);
-            if (landingMouse > LANDING_BUMP_DEG) { disengage(); return; }
+            if (landingMouse > LANDING_BUMP_DEG) {
+                if (Guardian.rescuing()) Guardian.override("the mouse");
+                else disengage();
+                return;
+            }
         } else if (moved > drift) { disengage(); return; }
 
         // A/D moves the heading bug: it nudges the selected heading and enters SELECTED, so it steers
         // whether terrain avoidance or the nav law is flying, since both fly toward that heading.
         boolean apLeft = mc.options.keyLeft.isDown(), apRight = mc.options.keyRight.isDown();
-        if ((apLeft ^ apRight) && Nav.mode() != Nav.Mode.MANAGED) {   // don't fight the coordinate nav while it's flying
+        if ((apLeft ^ apRight) && Nav.mode() != Nav.Mode.MANAGED && !Guardian.rescuing()) {   // don't fight the coordinate nav while it's flying; in a rescue a key takes it back
             // from the selected heading only in SELECTED: with nav off a remembered heading is hidden and stale
             float base = (Nav.mode() == Nav.Mode.SELECTED && Nav.hasHeading()) ? Nav.selectedHeading()
                                           : (float) Compass.heading(cmdYaw);   // current heading, as compass
@@ -170,9 +178,16 @@ public class Autopilot {
 
     // The command for the coming tick, one tick's step from the last: pitch eased toward the landing law's or the
     // director's pitch as the flight model eases it; yaw by the landing law's turn rate while landing, else terrain
-    // avoidance's look placement (or its emergency bank), else the nav law's turn rate. Planned once a tick, at the
-    // first frame after it (the targets are set at the end of the tick) or at the next tick's start.
+    // avoidance's look placement, else the nav law's turn rate; or the elytra guardian's rescue. Planned once a tick,
+    // at the first frame after it (the targets are set at the end of the tick) or at the next tick's start.
     private static void plan(Minecraft mc, LocalPlayer p) {
+        if (Guardian.rescuing()) {
+            // the guardian's rescue: its look for the coming tick (set for real at the tick's start)
+            float[] c = Guardian.preview(p);
+            cmdYaw = c[0]; cmdPitch = c[1];
+            planned = true;
+            return;
+        }
         float target = Nav.landing() ? Nav.landingPitch() : FlightDirector.commandedPitch();
         cmdPitch = Mth.clamp((float) (Nav.landing() ? FlightModel3D.easeLanding(cmdPitch, target)
                                                     : FlightModel3D.ease(cmdPitch, target)), -90f, 90f);
@@ -182,33 +197,19 @@ public class Autopilot {
             float maxTurn = (float) LandingModel.YAW_RATE;
             cmdYaw += Math.max(-maxTurn, Math.min(maxTurn, err));
         } else if (Settings.terrainAvoidance && TurnGuard.steering()) {
-            if (TurnGuard.action() == TurnPlanner.EMERGENCY) {
-                // imminent wall: hard bank toward the open side at elevated authority, the look slewed
-                // at a brisk human mouse-flick rate (not instant). A banked turn, not a stalling reverse.
-                // The side is the one planned, not re-read from the heading 179 deg away.
-                float velYaw = (float) Motion.trackYaw(p, cmdYaw);
-                float bankTarget = velYaw + (float) TurnController.bankOffset(TurnGuard.desiredHeading(), velYaw,
-                    TurnGuard.emergencySide(), FlightModel3D.EMERGENCY_DELTA);
-                float maxStep = EMERGENCY_FLICK_DPS / 20f;
-                cmdYaw += Math.max(-maxStep, Math.min(maxStep, Mth.wrapDegrees(bankTarget - cmdYaw)));
-            } else {
-                // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
-                // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
-                float velYaw = (float) Motion.trackYaw(p, cmdYaw);
-                float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
-                float dmax = (float) FlightModel3D.DELTA_MAX;
-                float place = velYaw + Math.max(-dmax, Math.min(dmax, raw));
-                if (yawCatchUp) {
-                    // after a server-set rotation the look may be far from the velocity: reach the placement at the
-                    // emergency bank's rate instead of in one tick; in steady flight the placement moves a few
-                    // degrees a tick and this never binds
-                    float maxStep = EMERGENCY_FLICK_DPS / 20f, err = Mth.wrapDegrees(place - cmdYaw);
-                    cmdYaw += Math.max(-maxStep, Math.min(maxStep, err));
-                    if (Math.abs(err) <= maxStep) yawCatchUp = false;
-                } else {
-                    cmdYaw = place;
-                }
-            }
+            // place the look at velYaw + clamp(heading - velYaw, +-DELTA_MAX), exactly as
+            // FlightModel3D.step simulates, so the planner's rollouts predict the flown path
+            float velYaw = (float) Motion.trackYaw(p, cmdYaw);
+            float raw  = Mth.wrapDegrees((float) TurnGuard.desiredHeading() - velYaw);
+            float dmax = (float) FlightModel3D.DELTA_MAX;
+            float place = velYaw + Math.max(-dmax, Math.min(dmax, raw));
+            // reached at a brisk flick's rate, never in one jump: the placement can be far from the look after a
+            // server-set rotation, on engaging off the track (as after a guardian rescue), or when the planner's turn
+            // flips side (velYaw - DELTA_MAX to velYaw + DELTA_MAX, 40 degrees). With the porpoise's 15 of pitch that
+            // stays under a 30-degree flick (seen 2026-10-14: 38 and 48 degrees in one tick, check.py R7). In steady
+            // flight the placement moves a few degrees a tick and this never binds.
+            float maxStep = CATCH_UP_DPS / 20f, err = Mth.wrapDegrees(place - cmdYaw);
+            cmdYaw += Math.max(-maxStep, Math.min(maxStep, err));
         } else if (Nav.steering()) {
             float err = Mth.wrapDegrees(Nav.desiredYaw(p) - cmdYaw);
             float maxTurn = NAV_TURN_DPS / 20f;
@@ -238,7 +239,6 @@ public class Autopilot {
         if (!rotationSet) return;
         rotationSet = false;
         holdView(p);
-        yawCatchUp = true;
     }
 
     // Take the current view as both the command and what we last set.
@@ -251,6 +251,24 @@ public class Autopilot {
     /** Engage for an aimed landing (Landing), even too low to arm: the landing law needs no flight director. */
     public static void engageForLanding(LocalPlayer p) {
         if (Settings.autopilot && p.isFallFlying()) engage(p);
+    }
+
+    /** Engage for the elytra guardian's rescue, past the arming gate (Guardian). An AUTOPILOT OFF countdown under way
+     *  ends: the rescue hands back with a new one. */
+    static void engageForRescue(LocalPlayer p) {
+        engage(p);
+    }
+
+    /** The guardian's look for this tick, set at its start before the turn (Guardian.onTickStart). */
+    static void setRescueCommand(float yaw, float pitch) {
+        cmdYaw = yaw; cmdPitch = Mth.clamp(pitch, -90f, 90f);
+        planned = true;
+    }
+
+    /** Let go without the AUTOPILOT OFF warning or its disconnect: the pilot took the guardian's rescue back. */
+    static void releaseQuietly() {
+        engaged = false; lastFrameNanos = 0L; tripTicks = 0;
+        resetWarn();
     }
 
     /** Engage at the end of a rocket takeoff, as J would. */

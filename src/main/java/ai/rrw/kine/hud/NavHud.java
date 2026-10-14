@@ -123,7 +123,8 @@ public final class NavHud {
 
         // If the elytra can't take us that far, flag it on the warning row.
         double range = RangeEndurance.rangeMeters();
-        if (!landing && range >= 0 && range < dist && !Takeoff.usesWarningRow() && !Landing.valid()) {
+        if (!landing && range >= 0 && range < dist && !Takeoff.usesWarningRow() && !Landing.valid()
+                && !ai.rrw.kine.autoflight.Guardian.rescuing()) {   // the guardian's TERRAIN has the row
             String wd = "INSUFFICIENT DURABILITY";
             g.text(mc.font, wd, cx - mc.font.width(wd) / 2, durY, HudColors.RED, true);
         }

@@ -19,9 +19,6 @@ public final class FlightModel3D {
 
     /** Max look-offset (deg) the steering will command in one tick: caps turn aggressiveness. */
     public static final double DELTA_MAX = 20.0;
-    /** Look offset for the emergency bank: a sharper turn that bleeds speed without the stall a look
-     *  flipped straight backwards would cause. */
-    public static final double EMERGENCY_DELTA = 45.0;
 
     // heading helpers (Minecraft yaw: 0 = +Z, 90 = -X, clockwise from above)
     /** Velocity heading (yaw, deg) of a horizontal velocity (vx,vz). */
@@ -83,13 +80,13 @@ public final class FlightModel3D {
 
     /** The Autopilot's pitch response to the porpoise law, per tick: SMOOTH of the way toward the command, capped at
      *  CAP degrees. */
-    static double ease(double pitch, double cmd) {
+    public static double ease(double pitch, double cmd) {
         pitch += Math.max(-CAP, Math.min(CAP, (cmd - pitch) * SMOOTH));
         return Math.max(-90.0, Math.min(90.0, pitch));
     }
 
     /** The same for the landing law's pitch, with the landing's own response. */
-    static double easeLanding(double pitch, double cmd) {
+    public static double easeLanding(double pitch, double cmd) {
         pitch += Math.max(-LANDING_CAP, Math.min(LANDING_CAP, (cmd - pitch) * LANDING_SMOOTH));
         return Math.max(-90.0, Math.min(90.0, pitch));
     }
@@ -112,7 +109,7 @@ public final class FlightModel3D {
         return step(s, targetHeading, DELTA_MAX);
     }
 
-    /** The same with another look offset limit (EMERGENCY_DELTA for the emergency bank). */
+    /** The same with another look offset limit. */
     public static double step(State s, double targetHeading, double maxDelta) {
         double vy0 = velYaw(s.vx, s.vz);
         double delta = Math.max(-maxDelta, Math.min(maxDelta, wrap180(targetHeading - vy0)));

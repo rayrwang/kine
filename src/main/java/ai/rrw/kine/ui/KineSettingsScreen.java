@@ -99,6 +99,11 @@ public class KineSettingsScreen extends Screen {
         "The autopilot reads the terrain ahead: it climbs over hills, turns around obstacles, banks away "
         + "from close walls, and hands back control if boxed in. It only arms when it finds a safe path.";
 
+    private static final String DESC_COLLISION =
+        "Gliding by hand or on the autopilot, it predicts where you will fly if nothing changes; if that would hurt you, "
+        + "the autopilot takes over at the last moment, turns or pulls up into clear air, then hands back with AUTOPILOT "
+        + "OFF. Move the mouse or press a key to take over. Needs the autopilot on. Survival and adventure only.";
+
     private static final String DESC_ELYTRA =
         "Leave this on; turn it off only if a bug of ours keeps getting in your way. Swaps in a fresh elytra "
         + "when the worn one is down to 3 durability. When the last one runs low, the autopilot lands; flying "
@@ -327,6 +332,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Aimed landing", DESC_LANDING, Settings.LANDING),
             Opt.of("Navigation", DESC_NAV, Settings.NAVIGATION),
             Opt.of("Terrain avoidance", DESC_TERRAIN, Settings.TERRAIN_AVOIDANCE),
+            Opt.of("Collision avoidance", DESC_COLLISION, Settings.COLLISION_AVOIDANCE),
         }),
         new Section(Settings.Section.WALK, new Opt[]{
             Opt.of("Pathfinder", DESC_WALK_PATHFINDER, Settings.WALK_PATHFINDER),

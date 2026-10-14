@@ -12,8 +12,7 @@ import net.minecraft.util.Mth;
  * after the flight director and the planner, while the autopilot is engaged and gliding.
  *
  * <p>Steering in the rollout, as in Autopilot.control: with terrain avoidance steering, straight at the
- * destination, or along the committed heading in a turn, or in an emergency the look held up to
- * EMERGENCY_DELTA off the velocity until the course has come round; without it, the look turned
+ * destination, or along the committed heading in a turn; without it, the look turned
  * toward the nav heading at the autopilot's nav turn rate, or the current heading held. Pitch follows
  * the porpoise law. While landing, the landing law ({@link LandingModel}) is rolled out instead, down to the spot.
  * On the way to a managed destination the rollout does, from where it comes within Nav's arrival radius, what Nav
@@ -42,7 +41,7 @@ public final class PathPrediction {
         count = 0;
         if (!Settings.shows(Settings.flightRibbon) && !Settings.shows(Settings.displayFlightProfile)) return;
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || !p.isFallFlying() || !Autopilot.isEngaged()) return;
+        if (p == null || mc.level == null || !p.isFallFlying() || !Autopilot.isEngaged() || Guardian.rescuing()) return;
 
         if (Nav.landing()) {
             var v = p.getDeltaMovement();
@@ -59,7 +58,6 @@ public final class PathPrediction {
         boolean avoidance = Settings.terrainAvoidance && TurnGuard.steering();
         int action = TurnGuard.action();
         double heading = TurnGuard.desiredHeading(), destX = TurnGuard.destX(), destZ = TurnGuard.destZ();
-        boolean emergency = avoidance && action == TurnPlanner.EMERGENCY;
         double look = p.getYRot();
         float navRate = (Nav.landing() ? Autopilot.LANDING_TURN_DPS : Autopilot.NAV_TURN_DPS) / 20f;   // per tick
         // circling over the destination: the circle, unless terrain avoidance is turning away from something
@@ -94,12 +92,7 @@ public final class PathPrediction {
             if (hold) {
                 FlightModel3D.stepLook(s, HoldModel.lookYaw(s.x, s.z, fixX, fixZ, FlightModel3D.velYaw(s.vx, s.vz), s.climbing));
             } else if (avoidance) {
-                if (emergency) {
-                    double course = FlightModel3D.velYaw(s.vx, s.vz);
-                    if (Math.abs(FlightModel3D.wrap180(heading - course)) <= TurnController.TURN_DONE_TOL) emergency = false;
-                }
-                if (emergency) FlightModel3D.step(s, heading, FlightModel3D.EMERGENCY_DELTA);
-                else if (action == TurnPlanner.STRAIGHT) FlightModel3D.step(s, FlightModel3D.velYaw(destX - s.x, destZ - s.z));
+                if (action == TurnPlanner.STRAIGHT) FlightModel3D.step(s, FlightModel3D.velYaw(destX - s.x, destZ - s.z));
                 else FlightModel3D.step(s, heading);
             } else {
                 if (Nav.steering()) look += Mth.clamp(Mth.wrapDegrees(Nav.desiredYaw(s.x, s.z, FlightModel3D.velYaw(s.vx, s.vz), s.climbing)

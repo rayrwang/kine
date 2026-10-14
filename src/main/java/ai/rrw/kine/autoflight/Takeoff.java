@@ -430,6 +430,26 @@ public final class Takeoff {
         Autopilot.engageFromTakeoff(p);
     }
 
+    /** The takeoff's own future commands for the elytra guardian (Guardian, TakeoffPilot), or null outside the climb.
+     *  Rockets go only through handleKeybinds, which the game runs only with no screen or overlay open. */
+    static TakeoffPilot pilot(Minecraft mc, LocalPlayer p) {
+        if (phase != Phase.CLIMB) return null;
+        FireworkRocketEntity r = attachedRocket(mc, p);
+        int burnLeft = r == null ? 0 : Math.max(1, (int) Math.round(RocketBurn.meanTicks(rocketDuration(r))) - r.tickCount);
+        int untilPush = (r == null && pending > 0) ? 1 : -1;
+        boolean keys = mc.screen == null && mc.getOverlay() == null;
+        int left = fired >= TakeoffModel.MAX_ROCKETS ? 0 : carriedRockets(p);
+        return new TakeoffPilot(yaw, lean, burnLeft, untilPush, (int) Math.round(RocketBurn.meanTicks(heldDuration(p))),
+            cruise, left, keys);
+    }
+
+    /** The elytra guardian takes the controls: stop, without the TAKEOFF STOPPED message. */
+    static void yieldToGuardian() {
+        if (!active()) return;
+        Kine.LOGGER.info("Kine takeoff: stopped in {} after {} rockets for the elytra guardian's rescue", phase, fired);
+        reset();
+    }
+
     /** Stop and leave the pilot flying, with a short message. */
     private static void stop() {
         if (active()) Kine.LOGGER.info("Kine takeoff: stopped in {} after {} rockets", phase, fired);

@@ -40,6 +40,11 @@ public final class BlockInfo {
     public static final int NO_FLUID = 0, WATER_FLUID = 1, LAVA_FLUID = 2;
     public final int fluid;
     public final float fluidHeight;
+    /** What a landing on this block does to the fall damage (its Block.fallOn), as a multiplier of the damage: 1 for
+     *  most blocks, 0.2 hay and honey, 0 slime (unless sneaking) and powder snow, 0.5 a bed (whose fallOn halves the
+     *  fall distance instead, which takes off more: the multiplier errs high). Read by the elytra guardian's damage
+     *  rules; the walk ignores it. */
+    public final float fallFactor;
 
     public static final BlockInfo AIR = new BlockInfo(Shape.EMPTY, 0.6F, 1.0F, 1.0F, 0);
     /** Outside the snapshot: solid, so nothing walks off the known world, and flagged so a plan that reaches it is
@@ -51,6 +56,11 @@ public final class BlockInfo {
     }
 
     public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags, int fluid, float fluidHeight) {
+        this(shape, friction, speedFactor, jumpFactor, flags, fluid, fluidHeight, 1.0F);
+    }
+
+    public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags, int fluid, float fluidHeight,
+                     float fallFactor) {
         this.shape = shape;
         this.friction = friction;
         this.speedFactor = speedFactor;
@@ -58,6 +68,7 @@ public final class BlockInfo {
         this.flags = flags;
         this.fluid = fluid;
         this.fluidHeight = fluidHeight;
+        this.fallFactor = fallFactor;
     }
 
     /** Whether it has any of these flags. */

@@ -73,6 +73,7 @@ public class Kine implements ClientModInitializer {
         Nav.register();
         NavHud.register();
         ElytraGuard.register();
+        ai.rrw.kine.autoflight.Guardian.register();   // after the takeoff, the autopilot, nav and the failsafe: it reads them
         InventoryClicks.register();
         WaterClutch.register();
         AutoTotem.register();             // after the clutch: each asks for the inventory at the end of a tick, in this order

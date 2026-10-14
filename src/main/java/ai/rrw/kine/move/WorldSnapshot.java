@@ -98,8 +98,17 @@ public final class WorldSnapshot {
                 : fs.is(net.minecraft.tags.FluidTags.LAVA) ? BlockInfo.LAVA_FLUID : BlockInfo.NO_FLUID;
             if (fluid != BlockInfo.NO_FLUID && !fs.isSource()) flags |= BlockInfo.CURRENT;
             return new BlockInfo(shape, b.getFriction(), b.getSpeedFactor(), b.getJumpFactor(), flags, fluid,
-                fluid == BlockInfo.NO_FLUID ? 0.0F : fs.getOwnHeight());
+                fluid == BlockInfo.NO_FLUID ? 0.0F : fs.getOwnHeight(), fallFactor(st));
         });
+    }
+
+    /** BlockInfo.fallFactor: the fallOn overrides that cut a landing's damage (HayBlock, HoneyBlock 0.2; BedBlock halves
+     *  the distance, taken as 0.5 of the damage; SlimeBlock and PowderSnowBlock none, slime as when not sneaking). */
+    static float fallFactor(BlockState st) {
+        if (st.is(Blocks.SLIME_BLOCK) || st.is(Blocks.POWDER_SNOW)) return 0.0F;
+        if (st.is(Blocks.HAY_BLOCK) || st.is(Blocks.HONEY_BLOCK)) return 0.2F;
+        if (st.is(BlockTags.BEDS)) return 0.5F;
+        return 1.0F;
     }
 
     /** The game's shape in the copy's form: its boundaries per axis and its full cells (a cell is full when its centre

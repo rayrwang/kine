@@ -459,7 +459,13 @@ public final class GroundPhysics {
         // checkFallDamage: LivingEntity's looks at the water again first when not in it, then Entity's counts the fall
         if (!s.inWater) updateFluid(s);
         if (!s.inWater && myv < 0.0) s.fallDistance -= (float) myv;
-        if (s.onGround) s.fallDistance = 0.0;
+        if (s.onGround) {
+            if (s.fallDistance > 0.0) {   // Block.fallOn on the block under the feet (getOnPosLegacy), then the reset
+                s.landedFall = s.fallDistance;
+                s.landedFallFactor = blockAt(onPos(s, 0.2F)).fallFactor;
+            }
+            s.fallDistance = 0.0;
+        }
         if (s.horizontalCollision) {
             if (xCollision) s.vx = 0.0;
             if (zCollision) s.vz = 0.0;

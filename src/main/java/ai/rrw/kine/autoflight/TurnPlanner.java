@@ -7,7 +7,10 @@ package ai.rrw.kine.autoflight;
  *   2. Straight, with the trough floor raised in steps (climb over the obstacle).
  *   3. TURN: the smallest heading offset whose path clears (with the same floor ladder) and makes
  *      forward progress along the destination bearing; else the smallest offset that clears at all.
- *   4. EMERGENCY: a wall inside the turn radius: reverse toward the more open side.
+ *   4. Boxed in, nothing clears: TURN toward the heading whose path meets terrain farthest away (at the
+ *      cruise floor), the most time for the way to open up; if it closes, the elytra guardian (Guardian)
+ *      rescues. Was, until 2026-10-14: an EMERGENCY reversal toward the open side and, after three, a
+ *      hand-back (DISENGAGE), purged once the guardian replaced them (RW 2026-10-11).
  *   5. Otherwise straight at the cruise floor, in case the path opens up as it nears.
  * Progress is measured along the destination bearing, not as straight-line distance, so sliding
  * sideways along an endless wall scores zero.
@@ -15,7 +18,7 @@ package ai.rrw.kine.autoflight;
 public final class TurnPlanner {
     private TurnPlanner() {}
 
-    public static final int STRAIGHT = 0, TURN = 1, EMERGENCY = 2, DISENGAGE = 3;
+    public static final int STRAIGHT = 0, TURN = 1;
     static final int CLEARS = 1, HITS = 0, INSUFFICIENT = -1;
     static final int CAUSE_NONE = 0, CAUSE_CORRIDOR = 1, CAUSE_GROUND = 2;
 
@@ -39,7 +42,9 @@ public final class TurnPlanner {
     // law flies its trough to.
     static final double FLOOR_STEP      = 4.0;   // trough-floor ladder increment (blocks)
     static final double FLOOR_RAISE_MAX = 60.0;  // most we lift the trough above the cruise floor before turning
-    static final double IMMINENT = 50.0;       // an obstacle closer than this can't be turned out of (about the turn radius)
+    /** Boxed in (stage 4): turn toward the heading that meets terrain farthest away (true), or fly straight on at the
+     *  cruise floor (false). Measured both ways, ~/_/kine_guardian_2026-10-14/ (BoxedInTest). */
+    static boolean boxedInTurns = true;
 
     /** Clamp scanning to how far terrain is loaded (blocks), set once per tick from the render distance.
      *  Servers often cap it at 8 to 12 chunks; scanning further only samples unloaded columns. Held between
@@ -111,12 +116,14 @@ public final class TurnPlanner {
         // find the lowest floor that clears; prefer the smallest turn that makes progress, else the
         // smallest that clears at all (paralleling a wall).
         double anyHeading = Double.NaN, anyFloor = Double.NaN, anyOff = Double.POSITIVE_INFINITY;
+        double farHeading = Double.NaN, farHit = straight.hitDist;   // stage 4: the heading that hits farthest away
         for (double off : OFFSETS) {
             for (int sgn = +1; sgn >= -1; sgn -= 2) {
                 double h = destBearing + sgn * off;
                 for (double f = cruiseFloor; f <= cruiseFloor + FLOOR_RAISE_MAX; f += FLOOR_STEP) {
                     Roll r = rollout(base, h, f, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ);
                     if (r.status == INSUFFICIENT) break;                       // unseen this way: higher floors too
+                    if (f == cruiseFloor && r.status == HITS && r.hitDist > farHit) { farHit = r.hitDist; farHeading = h; }
                     if (r.status != CLEARS) continue;
                     if (r.progress >= PROG_MIN) return new Plan(h, TURN, f);   // smallest progressing turn wins
                     if (off < anyOff) { anyOff = off; anyHeading = h; anyFloor = f; }  // smallest evasive, remember
@@ -125,16 +132,9 @@ public final class TurnPlanner {
             }
         }
         if (!Double.isNaN(anyHeading)) return new Plan(anyHeading, TURN, anyFloor);   // evasive turn
-        // Stage 3: nothing clears. A wall inside the turn radius can't be turned out of normally, so
-        // reverse hard toward the more open side. Otherwise keep straight at the cruise floor: the path
-        // may open up as it nears.
-        if (straight.status == HITS && straight.cause == CAUSE_CORRIDOR && straight.hitDist < IMMINENT) {
-            double course = FlightModel3D.velYaw(base.vx, base.vz);
-            boolean rightBlocked = imminentAhead(base, course + 90.0, terrain);
-            boolean leftBlocked  = imminentAhead(base, course - 90.0, terrain);
-            double side = (rightBlocked && !leftBlocked) ? -1.0 : 1.0;     // arc toward the open side
-            return new Plan(course + side * 179.0, EMERGENCY, cruiseFloor);
-        }
+        // Stage 4: nothing clears. Turn toward the heading that meets terrain farthest away, for the most time; the
+        // guardian rescues if it closes. Otherwise (stage 5) keep straight at the cruise floor: the path may open up.
+        if (boxedInTurns && !Double.isNaN(farHeading)) return new Plan(farHeading, TURN, cruiseFloor);
         return new Plan(destBearing, STRAIGHT, cruiseFloor);
     }
 
@@ -157,11 +157,5 @@ public final class TurnPlanner {
                 if (rollout(base, destBearing + sgn * off, cruiseFloor, terrain, HORIZON, MIN_LOOKAHEAD, destX, destZ).status == CLEARS)
                     return true;                             // some heading is flyable
         return false;                                        // no way out from here -> don't arm
-    }
-
-    /** True if flying `heading` runs into the climb corridor within IMMINENT (about the turn radius). */
-    public static boolean imminentAhead(FlightModel3D.State base, double heading, Terrain2D terrain) {
-        Roll r = rollout(base, heading, base.target, terrain, HORIZON, MIN_LOOKAHEAD, base.x, base.z);
-        return r.status == HITS && r.cause == CAUSE_CORRIDOR && r.hitDist < IMMINENT;
     }
 }

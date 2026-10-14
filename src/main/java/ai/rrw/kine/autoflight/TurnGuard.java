@@ -34,13 +34,9 @@ public final class TurnGuard {
     /** Trough altitude the live law should fly to, raised by the planner to climb over rising terrain. */
     public static double  desiredFloor()   { return desiredFloor; }
     public static int     action()         { return action; }
-    /** The emergency bank's side, fixed when planned (TurnController.emergencySide). */
-    public static int     emergencySide()  { return ctl.emergencySide(); }
     /** This tick's destination: the nav target, or a far point along the selected heading or the course. */
     public static double  destX()          { return destX; }
     public static double  destZ()          { return destZ; }
-    /** True when an emergency bank couldn't escape an endless wall and control should be handed back. */
-    public static boolean handOff()        { return steering && action == TurnPlanner.DISENGAGE; }
 
     /** Drop the steering latch and the committed-leg state (on disengage, or when not gliding). */
     public static void reset() {
