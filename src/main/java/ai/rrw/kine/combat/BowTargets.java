@@ -10,11 +10,16 @@ import java.util.List;
  * land.
  *
  * <p>The policies are those RW named (2026-10-14: the nearest, the one doing the most damage, ranged mobs first, the
- * one with the least health) and one more, THREAT: Smith's rule for a single shooter, the threat a mob poses (health a
+ * one with the least health) and three more. THREAT: Smith's rule for a single shooter, the threat a mob poses (health a
  * tick it takes off you, {@link #threat}) times the chance a shot hits, over the arrows it takes to kill. Shooting in
  * that order makes the total of each mob's threat times the time until it dies smallest when the mobs stand still and
  * keep their threat (a classic scheduling result: weighted shortest processing time first); the threat of a melee mob
- * grows as it comes, so the order is worked out again every few ticks.
+ * grows as it comes, so the order is worked out again every few ticks. SHARED_THREAT, the default: the same rule with
+ * the threat the bow takes off rather than the whole of it, since the kill aura deals with a creeper or a melee mob
+ * when it arrives and never reaches a ranged one ({@link #sharedThreat}). RANGED_THEN_THREAT: ranged mobs first, each
+ * group by THREAT. In the model-world study (BowStudy: 300 fights a scene and policy, six scenes) SHARED_THREAT and
+ * RANGED_THEN_THREAT lost the least health (12.6 and 12.7 a fight on average), then RANGED_FIRST 13.2, THREAT 14.2, MOST_DAMAGE
+ * 14.8, LEAST_HEALTH 15.8, NEAREST 17.2.
  */
 public final class BowTargets {
     private BowTargets() {}
@@ -30,7 +35,7 @@ public final class BowTargets {
 
     /** The ranking rules compared in the target-choice study. */
     public enum Policy {
-        NEAREST, RANGED_FIRST, LEAST_HEALTH, MOST_DAMAGE, THREAT;
+        NEAREST, RANGED_FIRST, LEAST_HEALTH, MOST_DAMAGE, THREAT, RANGED_THEN_THREAT, SHARED_THREAT;
 
         public static Policy parse(String s, Policy fallback) {
             if (s == null) return fallback;
@@ -73,6 +78,17 @@ public final class BowTargets {
         };
     }
 
+    /** The share of a creeper's or melee mob's threat the bow takes off, the kill aura taking the rest when it arrives. */
+    static final double MELEE_SHARE = Double.parseDouble(System.getProperty("kine.meleeShare", "0.25"));   // the study varies it
+
+    static double sharedThreat(Cand c) {
+        return switch (c.kind()) {
+            case RANGED -> c.dps();
+            case CREEPER -> MELEE_SHARE * BLAST / (Math.max(0.0, c.arrive()) + FUSE);
+            case MELEE -> MELEE_SHARE * c.dps() * SOON / (SOON + Math.max(0.0, c.arrive()));
+        };
+    }
+
     /** Full-power arrows it takes to kill the mob, on average. */
     public static double arrows(Cand c) {
         return Math.max(1.0, Math.ceil(c.health() / Math.max(0.5, c.arrowDamage())));
@@ -88,6 +104,12 @@ public final class BowTargets {
             case LEAST_HEALTH -> -arrows(c) * 1e4 + c.chance() * 100.0 - c.dist() * 1e-3;
             case MOST_DAMAGE -> threat(c) * 1e3 - c.dist() * 1e-6;
             case THREAT -> threat(c) * c.chance() / arrows(c);
+            // ranged mobs first (the melee aura never reaches them), each group by THREAT
+            case RANGED_THEN_THREAT -> (c.kind() == Kind.RANGED ? 1e6 : 0.0) + threat(c) * c.chance() / arrows(c);
+            // THREAT with the share of a mob's threat the bow takes off: a ranged mob's all of it, wherever it stands (it
+            // comes into its range); a creeper's and a melee mob's only MELEE_SHARE, the kill aura dealing with them when
+            // they arrive
+            case SHARED_THREAT -> sharedThreat(c) * c.chance() / arrows(c);
         };
     }
 

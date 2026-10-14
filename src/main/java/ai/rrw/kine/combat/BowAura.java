@@ -143,7 +143,7 @@ public final class BowAura {
     /** The angle Multishot's side arrows leave at (CrossbowItem.shoot: 10 degrees either way). */
     static final float MULTISHOT_DEG = 10.0F;
     /** The policy unless -Dkine.bowTarget names another (the target-choice study switches it at run time). */
-    public static final BowTargets.Policy DEFAULT_POLICY = BowTargets.Policy.THREAT;
+    public static final BowTargets.Policy DEFAULT_POLICY = BowTargets.Policy.SHARED_THREAT;
 
     /** Farthest mob shot at, eye to box centre (blocks): the setting. */
     static double range() {

@@ -66,6 +66,18 @@ class BowTargetsTest {
     }
 
     @Test
+    void sharedThreatPutsRangedMobsBeforeMeleeOnesTheKillAuraWillMeet() {
+        // a skeleton out of its range (it comes in) against a zombie 60 ticks out: the bow takes the skeleton, the kill
+        // aura will have the zombie
+        List<Cand> cs = List.of(zombie(1, 10, 20, 0.9, 60), skeleton(2, 24, 20, 0.8));
+        assertEquals(1, BowTargets.pick(cs, Policy.SHARED_THREAT, -1));
+        assertEquals(0, BowTargets.pick(cs, Policy.THREAT, -1));
+        // a creeper about to arrive still goes first
+        List<Cand> ds = List.of(skeleton(1, 24, 20, 0.8), creeper(2, 5, 0.9, 5));
+        assertEquals(1, BowTargets.pick(ds, Policy.SHARED_THREAT, -1));
+    }
+
+    @Test
     void unviableMobsAreNeverPicked() {
         List<Cand> cs = List.of(skeleton(1, 5, 20, 0.1), zombie(2, 8, 20, 0.29, 10));
         for (Policy p : Policy.values()) assertEquals(-1, BowTargets.pick(cs, p, -1), p.name());
