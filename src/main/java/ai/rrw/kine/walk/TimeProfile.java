@@ -136,8 +136,8 @@ public final class TimeProfile {
 
     /**
      * For each step of the grid path that swims, how much shorter the straight line is than the grid's way across
-     * open water: the tightened route keeps swims step by step on the eight-neighbour grid (up to 8.3% longer than the
-     * straight line), while layer 2 swims the straight line. A run of swimming steps that is a shortest way on the grid
+     * open water: the grid's way on its eight directions is up to 8.3% longer than the straight line, which the walk
+     * swims (layer 2, and since 2026-10-14 the tightened route too). A run of swimming steps that is a shortest way on the grid
      * between its ends (open water) is scaled by the straight line over the grid's length; a run that bends (a
      * channel) is left as it is. Measured 2026-10-13: the sea's planned time ran 5 to 8% high.
      */
