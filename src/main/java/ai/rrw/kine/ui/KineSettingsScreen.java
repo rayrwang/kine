@@ -153,7 +153,8 @@ public class KineSettingsScreen extends Screen {
         + "phantoms, pillagers, piglins and more), moves you with your movement keys so you take less damage: out "
         + "of reach between the kill aura's swings, off the lines of projectiles, clear of creepers about to blow. "
         + "Only while you press no movement key; press any to take over. Lets go near mobs it doesn't know (ghasts, "
-        + "guardians, shulkers, wardens). Avoids drops and lava. Stands down while the pathfinder walks you. "
+        + "guardians, shulkers, wardens). Ignores mobs more than 4 blocks above or below you. Avoids drops and lava. "
+        + "Stands down while the pathfinder walks you. "
         + "Survival and adventure only. Servers may ban it.";
     private static final String DESC_WALK_PATHFINDER =
         "Walks you to the destination in the nav screen's Walk tab (N), pressing your movement keys along a route it "

@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
  * <p>Control (RW's rule): it moves you only while you press no movement key (W, A, S, D, jump, sneak, sprint, read as
  * physical presses, so toggle sprint and toggle sneak don't hold it off). Press any and only your movement counts;
  * release and it moves you again at once; the search keeps running meanwhile. With no modelled mob within 8 blocks (a
- * skeleton within 16) it lets go completely and doesn't search. On foot only. It stands down when a hostile it doesn't
+ * skeleton within 16) and within 4 blocks above or below you it lets go completely and doesn't search. On foot only. It stands down when a hostile it doesn't
  * model is within 8 blocks, while you use an item, and when every plan it finds is unsafe. Fall prevention still acts
  * after it. Projectile dodge stands down while it moves you, so the two never press keys in the same tick; its plans
  * fly every projectile the dodge would consider and take their hits into account, so it dodges them itself.

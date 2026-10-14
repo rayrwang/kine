@@ -97,6 +97,10 @@ public final class FightSnapshot {
     public static final double RANGE = 16.0;
     /** A modelled mob this near engages the combat movement: a skeleton within its bow's reach, the rest within 8. */
     public static final double ENGAGE = 8.0, ENGAGE_BOW = 16.0;
+    /** ...and only if its feet are within this many blocks above or below yours (RW 2026-10-14: "a simple height above
+     *  or below guard", so mobs at the foot of a tower you stand on, which you can't fight, don't engage it; a stand-in
+     *  for a reachability test, filed for later). Past a safe 3-block drop and a step up. */
+    public static final double ENGAGE_DY = 4.0;
     /** The block snapshot's reach around the player: sideways, down and up. */
     public static final int GRID_R = 12, GRID_DOWN = 6, GRID_UP = 4;
 
@@ -214,14 +218,20 @@ public final class FightSnapshot {
     }
 
     /** Whether a mob combat movement models is within its engage distance (a ranged one within ENGAGE_BOW, the rest
-     *  within ENGAGE): the engage test of take(), without the snapshot (the bow aura asks every tick). */
+     *  within ENGAGE) and height (ENGAGE_DY): the engage test of take(), without the snapshot (the bow aura asks every
+     *  tick). */
     public static boolean engages(Minecraft mc, LocalPlayer p) {
         for (Entity e : mc.level.getEntities(p, p.getBoundingBox().inflate(RANGE))) {
             if (!(e instanceof LivingEntity le) || !le.isAlive() || !KillAura.targets(e, p)) continue;
             MobSim.Kind k = kindOf(e);
-            if (k != null && e.distanceTo(p) <= engageDistance(k)) return true;
+            if (k != null && engagesAt(k, e.distanceTo(p), e.getY() - p.getY())) return true;
         }
         return false;
+    }
+
+    /** Whether a modelled mob of this kind, this far away and this much higher (feet to feet), engages. */
+    static boolean engagesAt(MobSim.Kind k, double distance, double dy) {
+        return distance <= engageDistance(k) && Math.abs(dy) <= ENGAGE_DY;
     }
 
     /** How near a mob of this kind engages the combat movement. */
@@ -248,7 +258,7 @@ public final class FightSnapshot {
             if (k != null) {
                 zs.add(le);
                 nearest = Math.min(nearest, d);
-                engage |= d <= engageDistance(k);
+                engage |= engagesAt(k, d, e.getY() - p.getY());
             } else if (d <= ENGAGE) unsupported++;
         }
         BlockGrid grid = WorldSnapshot.around(mc.level, p, GRID_R, GRID_DOWN, GRID_UP);
