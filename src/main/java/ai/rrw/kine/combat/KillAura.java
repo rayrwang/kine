@@ -88,6 +88,7 @@ public final class KillAura {
     private record Hit(int tick, double damage) {}
 
     private static final Map<Integer, Hit> hits = new HashMap<>();
+    private static boolean aimedAtMob = false;   // this tick's fight turns toward a mob in reach (the bow aura's rotation waits)
     private static final Map<Integer, Integer> angryUntil = new HashMap<>();   // neutral entityId -> tick its anger lapses
     private static int tick = 0;
     private static int lastHurtTime = 0;        // player's hurtTime last tick, to spot a fresh incoming hit
@@ -163,10 +164,17 @@ public final class KillAura {
         // where the rotation sent rests when not fighting: your view, or while the pathfinder walks you its facing
         float[] rest = ai.rrw.kine.walk.Walk.restRotation(p, viewYaw, viewPitch);
         float[] want = rest;   // where the rotation sent should go: the rest unless fighting
+        aimedAtMob = false;
         if (on) {
             float[] aim = fight(mc, p, onFoot, rest[0], rest[1]);
             if (aim == null) { holdClicks(mc); return; }   // it swung: the rotation is set for this tick
             if (onFoot) want = aim;
+        }
+        // the bow aura, when the melee aura has no mob to turn to (it stands down by itself when the melee aura is
+        // active, BowAura.guard): the full-power shot it is drawing for
+        if (!aimedAtMob && onFoot) {
+            float[] bow = BowAura.plan(mc, p, viewYaw);
+            if (bow != null) want = bow;
         }
         if (!turned() && want[0] == viewYaw && want[1] == viewPitch) { holdClicks(mc); return; }   // idle, on your view: hands off
         float[] next = MouseTurn.limit(sentYaw, sentPitch, want[0], want[1], TURN_BUDGET);
@@ -226,11 +234,20 @@ public final class KillAura {
 
     // ---------------------------------------------------------------- your input
 
-    /** Whether you are acting yourself: using an item, or attack, use or pick block clicked or held. */
+    /** Whether you are acting yourself: using an item, or attack, use or pick block clicked or held. The bow aura's
+     *  draw and its hold of the use key aren't yours: the melee aura goes first, and the bow lets go (BowAura.guard). */
     private static boolean yourInput(Minecraft mc, LocalPlayer p) {
-        if (p.isUsingItem()) return true;
+        if (p.isUsingItem() && !BowAura.ownsUse(p)) return true;
         KeyMapping[] keys = {mc.options.keyAttack, mc.options.keyUse, mc.options.keyPickItem};
-        for (KeyMapping k : keys) if (((KeyMappingAccessor) k).kine$getClickCount() > 0 || k.isDown()) return true;
+        for (KeyMapping k : keys) {
+            boolean down = k.isDown() && !(k == mc.options.keyUse && BowAura.holdingUse());
+            if (((KeyMappingAccessor) k).kine$getClickCount() > 0 || down) return true;
+        }
+        return heldClicks[0] + heldClicks[1] + heldClicks[2] > 0;
+    }
+
+    /** Whether clicks of yours are being held back for the rotation to come back to your view. */
+    public static boolean clicksHeld() {
         return heldClicks[0] + heldClicks[1] + heldClicks[2] > 0;
     }
 
@@ -249,8 +266,9 @@ public final class KillAura {
                 }
             }
             MinecraftInvoker game = (MinecraftInvoker) mc;
-            if (mc.options.keyUse.isDown() && game.kine$getRightClickDelay() == 0 && !AutoEat.holdingUse())
-                game.kine$setRightClickDelay(1);   // auto eat's use isn't aimed: let it go at the rotation sent
+            if (mc.options.keyUse.isDown() && game.kine$getRightClickDelay() == 0 && !AutoEat.holdingUse()
+                && !BowAura.holdingUse())
+                game.kine$setRightClickDelay(1);   // auto eat's use isn't aimed, the bow aura's is: let them go at the rotation sent
             if (tick - heldClicksSince > CLICK_HOLD_TICKS) java.util.Arrays.fill(heldClicks, 0);
         } else if (heldClicks[0] + heldClicks[1] + heldClicks[2] > 0) {
             for (int i = 0; i < 3; i++) {
@@ -313,7 +331,9 @@ public final class KillAura {
 
         // Auto weapon: the sword or axe that sustains the most damage against these mobs. Switching waits a tick.
         boolean noSwing = false;
-        if (Settings.autoWeapon) {
+        // not in the tick the bow aura lets go of its draw: a slot change before the release would stop the use on the
+        // server first and lose the arrow (the switch comes next tick)
+        if (Settings.autoWeapon && !p.isUsingItem()) {
             boolean holdingWeapon = held.is(ItemTags.SWORDS) || held.is(ItemTags.AXES);
             if (!holdingWeapon || tick - lastWeaponTick >= WEAPON_PERIOD) {
                 lastWeaponTick = tick;
@@ -331,6 +351,9 @@ public final class KillAura {
         // A spear stabs along the rotation the server already has (the last move packet's), not this tick's, so a
         // swing could stab whatever that points at: none with one.
         if (held.has(DataComponents.PIERCING_WEAPON)) noSwing = true;
+        // The bow aura's draw, which it lets go of in this tick's keybind step now the melee aura is active: a vanilla
+        // client doesn't attack while an item is in use (handleKeybinds), so the swing waits a tick.
+        if (p.isUsingItem()) noSwing = true;
 
         // where each mob can be hit from, and whether this tick's turn can get there
         List<Target> ts = new ArrayList<>();
@@ -366,6 +389,7 @@ public final class KillAura {
             SwingPlan.Swing s = SwingPlan.decide(w, k, canSweep && w.sword(), canCrit, critIn, mobs, TURN_BUDGET);
             if (s.hit() < 0) {
                 float[] r = s.aim() >= 0 && onFoot ? ts.get(s.aim()).rot() : null;
+                aimedAtMob = r != null;
                 return r != null ? r : view;
             }
             Target t = ts.get(s.hit());
@@ -640,11 +664,48 @@ public final class KillAura {
     }
 
     /** Distance from the eye to the nearest point of a bounding box (how vanilla measures melee reach). */
-    private static double eyeToBox(Vec3 eye, AABB bb) {
+    static double eyeToBox(Vec3 eye, AABB bb) {
         double dx = Math.max(Math.max(bb.minX - eye.x, 0.0), eye.x - bb.maxX);
         double dy = Math.max(Math.max(bb.minY - eye.y, 0.0), eye.y - bb.maxY);
         double dz = Math.max(Math.max(bb.minZ - eye.z, 0.0), eye.z - bb.maxZ);
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    // ---------------------------------------------------------------- the melee aura's priority over the bow aura
+
+    /**
+     * Ticks until the melee aura has a target to swing at (BowAura.guard: the bow aura stands down when that comes before
+     * its shot is off). 0: a target is in reach with the crosshair able to reach it, as fight() finds them. 1: one is
+     * within reach and BowAura.REACH_MARGIN, in sight. Else the soonest a target in sight, closing on you at its present
+     * speed (its motion toward you less yours, per tick, as contact() reads it), comes within that; infinite if none.
+     * Whether the melee aura is on is the caller's to check.
+     */
+    public static double meleeTicks(Minecraft mc, LocalPlayer p) {
+        if (mc.level == null) return Double.POSITIVE_INFINITY;
+        double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
+        Vec3 eye = p.getEyePosition();
+        double best = Double.POSITIVE_INFINITY;
+        List<Entity> pickable = null;
+        for (Entity e : mc.level.getEntities(p, p.getBoundingBox().inflate(reach + 16.0), x -> isTarget(x, p))) {
+            LivingEntity t = (LivingEntity) e;
+            double gap = eyeToBox(eye, t.getBoundingBox()) - reach;
+            if (gap <= 0) {
+                if (pickable == null)
+                    pickable = mc.level.getEntities(p, p.getBoundingBox().inflate(reach + 1.0), x -> !x.isSpectator() && x.isPickable());
+                if (aimAt(p, eye, p.getLookAngle(), t, reach, pickable) != null) return 0.0;
+                continue;   // in reach but out of the crosshair's way (a block between): not the melee aura's yet
+            }
+            Vec3 c = t.getBoundingBox().getCenter();
+            if (p.level().clip(new ClipContext(eye, c, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p)).getType()
+                != HitResult.Type.MISS) continue;
+            if (gap <= BowAura.REACH_MARGIN) { best = Math.min(best, 1.0); continue; }
+            double dx = t.getX() - p.getX(), dz = t.getZ() - p.getZ(), d = Math.sqrt(dx * dx + dz * dz);
+            if (d < 1e-6) { best = Math.min(best, 1.0); continue; }
+            double vx = (t.getX() - t.xo) - (p.getX() - p.xo), vz = (t.getZ() - t.zo) - (p.getZ() - p.zo);
+            double closing = -(vx * dx + vz * dz) / d;
+            if (closing > 1e-3) best = Math.min(best, Math.max(1.0, gap / closing));
+        }
+        return best;
     }
 
     // ---------------------------------------------------------------- read by the combat movement's simulation (fight/)

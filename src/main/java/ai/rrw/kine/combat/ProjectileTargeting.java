@@ -401,7 +401,7 @@ public class ProjectileTargeting {
 
     // In view: a clear line from the eye to the target's centre or to its eyes (a target behind a low wall shows
     // its head). The reticle's ring can reach through a thin wall to a target behind it; this keeps those out.
-    private static boolean visible(ClientLevel level, LocalPlayer p, Vec3 eye, Entity e) {
+    static boolean visible(ClientLevel level, LocalPlayer p, Vec3 eye, Entity e) {
         return losClear(level, p, eye, e.getBoundingBox().getCenter()) || losClear(level, p, eye, e.getEyePosition());
     }
 
@@ -421,10 +421,16 @@ public class ProjectileTargeting {
     private static Ballistics.Course course(Level level, Entity target) {
         return courses.computeIfAbsent(target.getId(), id -> {
             if (target instanceof EnderDragonPart part) return dragonCourse(part);
-            Vec3 v = motion(target);
-            if (!(target instanceof LivingEntity le) || !falls(le)) return Ballistics.Course.straight(v);
-            return new Ballistics.Course(v, true, le.getGravity(), le.hasEffect(MobEffects.SLOW_FALLING), floor(level, le));
+            return courseOf(level, target);
         });
+    }
+
+    // The course of a target that isn't a dragon part, worked out afresh (the bow aura's, which runs before this tick's
+    // cache is made).
+    static Ballistics.Course courseOf(Level level, Entity target) {
+        Vec3 v = motion(target);
+        if (!(target instanceof LivingEntity le) || !falls(le)) return Ballistics.Course.straight(v);
+        return new Ballistics.Course(v, true, le.getGravity(), le.hasEffect(MobEffects.SLOW_FALLING), floor(level, le));
     }
 
     // Each dragon part's centre this tick onto its trail; trails of parts gone are dropped.
@@ -565,6 +571,14 @@ public class ProjectileTargeting {
 
         valid = false; hitBox = null; hitId = -1; noDamage = null; lastShown = null;
         courses.clear();
+        if (BowAura.ownsUse(p)) {
+            // the bow aura's draw: its shot goes along the rotation it sends, not your view, so no ring and no auto aim;
+            // the mob it aims at is boxed, with the chance of the shot as sent
+            dropLock();
+            Entity t = BowAura.targetId() >= 0 ? level.getEntity(BowAura.targetId()) : null;
+            if (t != null) { hitBox = t.getBoundingBox(); hitId = t.getId(); }
+            return;
+        }
         Held held = heldShot(p);
         if (held == null) { dropLock(); return; }
         Spec spec = held.spec();

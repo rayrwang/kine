@@ -213,6 +213,24 @@ public final class FightSnapshot {
         return kindOf(e) != null;
     }
 
+    /** Whether a mob combat movement models is within its engage distance (a ranged one within ENGAGE_BOW, the rest
+     *  within ENGAGE): the engage test of take(), without the snapshot (the bow aura asks every tick). */
+    public static boolean engages(Minecraft mc, LocalPlayer p) {
+        for (Entity e : mc.level.getEntities(p, p.getBoundingBox().inflate(RANGE))) {
+            if (!(e instanceof LivingEntity le) || !le.isAlive() || !KillAura.targets(e, p)) continue;
+            MobSim.Kind k = kindOf(e);
+            if (k != null && e.distanceTo(p) <= engageDistance(k)) return true;
+        }
+        return false;
+    }
+
+    /** How near a mob of this kind engages the combat movement. */
+    static double engageDistance(MobSim.Kind k) {
+        return k == MobSim.Kind.BOW || k == MobSim.Kind.CROSSBOW || k == MobSim.Kind.WITCH || k == MobSim.Kind.BLAZE
+            || k == MobSim.Kind.TRIDENT || k == MobSim.Kind.PHANTOM || k == MobSim.Kind.BREEZE
+            || k == MobSim.Kind.EVOKER || k == MobSim.Kind.VEX ? ENGAGE_BOW : ENGAGE;
+    }
+
     /** The whole snapshot, or null if the player can't be simulated now. */
     public static Shot take(Minecraft mc) {
         LocalPlayer p = mc.player;
@@ -230,9 +248,7 @@ public final class FightSnapshot {
             if (k != null) {
                 zs.add(le);
                 nearest = Math.min(nearest, d);
-                engage |= d <= (k == MobSim.Kind.BOW || k == MobSim.Kind.CROSSBOW || k == MobSim.Kind.WITCH || k == MobSim.Kind.BLAZE
-                    || k == MobSim.Kind.TRIDENT || k == MobSim.Kind.PHANTOM || k == MobSim.Kind.BREEZE
-                    || k == MobSim.Kind.EVOKER || k == MobSim.Kind.VEX ? ENGAGE_BOW : ENGAGE);
+                engage |= d <= engageDistance(k);
             } else if (d <= ENGAGE) unsupported++;
         }
         BlockGrid grid = WorldSnapshot.around(mc.level, p, GRID_R, GRID_DOWN, GRID_UP);

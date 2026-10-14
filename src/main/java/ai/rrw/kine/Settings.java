@@ -54,7 +54,7 @@ public final class Settings {
         noDarkness, noBlindness, noFireOverlay, noUnderwaterOverlay, noPumpkinOverlay, noFrostOverlay, noPortalOverlay,
         autopilot, takeoff, landing, navigation, terrainAvoidance, collisionAvoidance,
         elytraDuraFailsafe, fallPrevention, waterBucketClutch, autoTotem, autoEat, afkDamageProtection,
-        projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, combatMovement;
+        projectileReticle, projectileGlow, thinOutlines, projectileDodge, autoWeapon, autoAim, killAura, bowAura, combatMovement;
     /** Combat movement's balance, 0 (survive) to 100 (kill fast). */
     public static int combatBias;
     /** Collision avoidance's quiet time after it lets go, tenths of a second. */
@@ -214,6 +214,7 @@ public final class Settings {
     public static final Option AUTO_WEAPON                = toggle("autoWeapon", COMBAT, false, v -> autoWeapon = v);
     public static final Option AUTO_AIM                   = toggle("autoAim", COMBAT, false, v -> autoAim = v);
     public static final Option KILL_AURA                  = toggle("killAura", COMBAT, false, v -> killAura = v);
+    public static final Option BOW_AURA                   = toggle("bowAura", COMBAT, false, v -> bowAura = v);
     public static final Option COMBAT_MOVEMENT            = toggle("combatMovement", COMBAT, false, v -> combatMovement = v);
     public static final Option COMBAT_BIAS                = level("combatMovementBias", COMBAT, 0, 100, v -> combatBias = v);
 

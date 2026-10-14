@@ -111,6 +111,9 @@ public final class AutoEat {
     /** Whether it is holding the use key to eat (the kill aura lets that use through while its rotation is turned). */
     public static boolean holdingUse() { return holding; }
 
+    /** Whether a meal is under way, from fetching the food to putting your slot back (the bow aura waits). */
+    public static boolean busy() { return phase != Phase.IDLE; }
+
     // ---------------------------------------------------------------- the choice (pure, tested)
 
     /** Hunger and saturation a food would add now, after the game's caps. */
@@ -294,7 +297,7 @@ public final class AutoEat {
     private static boolean free(Minecraft mc, LocalPlayer p) {
         if (mc.screen != null || p.isUsingItem() || Takeoff.active() || p.getAbilities().flying) return false;
         if (InventoryClicks.isOpenTick() || now - lastClick < QUIET) return false;
-        if (CombatMovement.controlling()) return false;
+        if (CombatMovement.controlling() || BowAura.busy()) return false;
         if (Settings.killAura && mc.level != null && !mc.level.getEntitiesOfClass(LivingEntity.class,
                 p.getBoundingBox().inflate(FIGHT_RANGE), e -> e != p && KillAura.targets(e, p)).isEmpty()) return false;
         return true;

@@ -28,6 +28,7 @@
 		"GuiOverlayMixin",
 		"MoveEntityAccessor",
 		"MoveLivingAccessor",
+		"LivingFlagsAccessor",
 		"MoveLocalPlayerAccessor",
 		"ClientLevelBlockMixin",
     "FreecamCameraMixin",

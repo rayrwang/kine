@@ -81,6 +81,7 @@ public class Kine implements ClientModInitializer {
         AfkGuard.register();
         ProjectileTargeting.register();
         WeaponSelect.register();
+        ai.rrw.kine.combat.BowAura.register();   // after auto weapon: its bow fetch takes the open tick's batch when free
         CombatMovement.register();
         WalkTable.register();
         Walk.register();

@@ -138,6 +138,12 @@ public class KineSettingsScreen extends Screen {
         "Attacks hostile mobs in reach, and neutral ones like endermen after they hit you (piglins also while "
         + "you wear no gold). Hits mobs about to reach you first, and times swings for the most damage. Your view "
         + "stays put; the server sees turns no faster than a quick flick. Survival and adventure only. Servers may ban it.";
+    private static final String DESC_BOW_AURA =
+        "Shoots hostile mobs with a bow, full draws only, when the shot is likely to hit and nothing else is near its "
+        + "path; never your pets. Takes a bow from your hotbar or inventory and gives your slot back. The kill aura comes "
+        + "first: stands down while it fights or a mob is about to come into its reach, and while combat movement fights, "
+        + "the pathfinder walks you or you fly. Your view stays put; the server sees turns no faster than a quick flick. "
+        + "Survival and adventure only. Servers may ban it.";
     private static final String DESC_COMBAT_MOVE =
         "In fights with most hostile mobs (zombies, skeletons, creepers, spiders, witches, slimes, blazes, "
         + "phantoms, pillagers, piglins and more), moves you with your movement keys so you take less damage: out "
@@ -372,6 +378,7 @@ public class KineSettingsScreen extends Screen {
             Opt.of("Auto weapon", DESC_WEAPON, Settings.AUTO_WEAPON),
             Opt.of("Auto aim", DESC_AUTOAIM, Settings.AUTO_AIM),
             Opt.of("Kill aura", DESC_AURA, Settings.KILL_AURA),
+            Opt.of("Bow aura", DESC_BOW_AURA, Settings.BOW_AURA),
             Opt.of("Combat movement", DESC_COMBAT_MOVE, Settings.COMBAT_MOVEMENT),
             Opt.of("Survive or kill fast", DESC_COMBAT_BIAS, Settings.COMBAT_BIAS,
                    () -> Settings.killAura && Settings.combatMovement, KineSettingsScreen::biasText),

@@ -88,9 +88,7 @@ public final class AimAdvisor {
         };
         int id = target.getId();
         long now = level.getGameTime();
-        if (level != shapesLevel || now < shapesTime || now - shapesTime >= SHAPE_CACHE_TICKS) {
-            shapes.clear(); shapesLevel = level; shapesTime = now;
-        }
+        refreshShapes(level, now);
 
         if (doChance) {
             int maxTicks = ticksPast(shot, tgt);
@@ -136,6 +134,36 @@ public final class AimAdvisor {
                 });
             }
         }
+    }
+
+    // the block shapes read are kept for SHAPE_CACHE_TICKS, then read afresh
+    private static void refreshShapes(ClientLevel level, long now) {
+        if (level != shapesLevel || now < shapesTime || now - shapesTime >= SHAPE_CACHE_TICKS) {
+            shapes.clear(); shapesLevel = level; shapesTime = now;
+        }
+    }
+
+    /**
+     * The chance a shot hits, worked out now on the game thread (the bow aura's: it ranks its targets by it and lets an
+     * arrow go on it, so it can't wait for a worker): the shot from spawn along dir before the spread, at spec's speed,
+     * with the shooter's motion; the target moved leadTicks along its course; over `rolls` spread rolls. NaN when there
+     * are too many blocks to read.
+     */
+    public static double chanceNow(ClientLevel level, Vec3 spawn, Vec3 dir, Ballistics.Spec spec, Vec3 shooterMotion,
+                                   boolean onGround, Entity target, Ballistics.Course course, double leadTicks, int rolls) {
+        Shot shot = new Shot(spawn.x, spawn.y, spawn.z, dir.x, dir.y, dir.z, spec.speed(), 1.0,
+                             shooterMotion.x, onGround ? 0.0 : shooterMotion.y, shooterMotion.z);
+        Vec3 targetMotion = course.motion();
+        AABB bb = target.getBoundingBox().move(course.at(leadTicks));
+        Box box = new Box(bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ);
+        Target tgt = course.falls()
+            ? Target.falling(box, targetMotion.x, targetMotion.z, course.dyTable(leadTicks, MAX_FLIGHT_TICKS))
+            : new Target(box, targetMotion.x, targetMotion.y, targetMotion.z);
+        refreshShapes(level, level.getGameTime());
+        int maxTicks = ticksPast(shot, tgt);
+        List<List<Box>> perTick = blocksAlong(level, shot, maxTicks, 0.0);
+        if (perTick == null) return Double.NaN;
+        return HitChance.chance(shot, tgt, byAge(perTick), rolls, maxTicks);
     }
 
     private static HitChance.Blocks byAge(List<List<Box>> perTick) {

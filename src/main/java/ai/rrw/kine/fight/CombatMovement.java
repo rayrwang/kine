@@ -113,6 +113,21 @@ public final class CombatMovement {
             Identifier.fromNamespaceAndPath(Kine.MOD_ID, "combat_movement"), CombatMovement::render);
     }
 
+    /**
+     * Whether combat movement is in a fight it moves you in, or would if you let go of your keys: on, in survival or
+     * adventure, on foot (an item in use aside: it lets go while one is, but the fight is still its), the pathfinder not
+     * walking you, and a mob it models within its engage distance (FightSnapshot.engages). The bow aura stands down then
+     * (RW 2026-10-14: "since cm only works when close enogh to use melle, so use melle there").
+     */
+    public static boolean engagedFight(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        if (!Settings.combatMovement || p == null || mc.level == null || !GameModes.survivalLike(mc)
+            || ai.rrw.kine.walk.Walk.active()) return false;
+        if (!p.isAlive() || p.isSpectator() || p.isFallFlying() || p.isInWater() || p.isInLava() || p.isPassenger()
+            || p.onClimbable() || p.getAbilities().flying) return false;
+        return FightSnapshot.engages(mc, p);
+    }
+
     /** On foot, alive, not using an item: the only state the copy covers. */
     static boolean onFoot(LocalPlayer p) {
         return p.isAlive() && !p.isSpectator() && !p.isFallFlying() && !p.isInWater() && !p.isInLava() && !p.isPassenger()

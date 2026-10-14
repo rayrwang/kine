@@ -2,6 +2,7 @@ package ai.rrw.kine;
 
 import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Takeoff;
+import ai.rrw.kine.combat.BowAura;
 import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
@@ -18,6 +19,8 @@ import net.minecraft.world.entity.player.Input;
  * crosshair is on, attacks or uses in handleKeybinds, then reads its keys, moves, and sends its input and its
  * one rotation; the tick ends with a tick-end packet, and inventory clicks come from screens between ticks.
  * <ul>
+ *   <li>The bow aura draws and looses by holding and letting go of the use key before handleKeybinds, so the game
+ *       starts the use (with this tick's rotation) and sends the release itself.</li>
  *   <li>Attacks and item uses go through the game's own startAttack and startUseItem just before
  *       handleKeybinds ({@link #beforeKeybinds}), after a turn by whole mouse counts, so they hit what that
  *       rotation's crosshair is on and this tick's move packet carries that rotation.</li>
@@ -36,11 +39,13 @@ public final class VanillaActions {
     /** Just before handleKeybinds, with no screen or overlay open. One action a tick. */
     public static void beforeKeybinds(Minecraft mc) {
         if (mc.player == null || mc.level == null || mc.gameMode == null) return;
+        BowAura.guard(mc);   // first: a stand-down lets go of the bow before anything else acts
         if (InventoryClicks.isOpenTick()) { InventoryClicks.playOpen(); return; }   // the inventory "opens": no action this tick
         if (Takeoff.beforeKeybinds(mc)) return;
         if (Landing.beforeKeybinds(mc)) return;
         if (WaterClutch.beforeKeybinds(mc)) return;
-        KillAura.beforeKeybinds(mc);
+        KillAura.beforeKeybinds(mc);   // asks the bow aura where to turn when it has nothing to swing at
+        BowAura.act(mc);   // after the aura's turn and pick: hold use to draw, let go to loose
         ai.rrw.kine.combat.AutoEat.beforeKeybinds(mc);   // after the aura's turn and pick: hold use to eat
     }
 
