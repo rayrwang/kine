@@ -33,6 +33,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Press `N` and enter a destination (X, Z, optional Y) in the Walk tab; it walks you there while you look around freely.
 	- Plans a straight, taut route, then picks your keys each tick by simulating the game's own movement: sprint-jumps, swims (coming up for air), climbs out of water.
 	- Parkour (off by default): gap jumps up to 4 blocks, diagonals, and neos.
+	- A gait setting caps its pace: walk, sprint, sprint-jump (the default) or elytra hops; chased or about to be hurt, it goes faster for a while.
 	- Shows the distance and arrival time; an unreachable destination gets you as near as it can.
 - **Aimbot and targeting reticles for weapons.**
 	- Enable in settings (press `K` to open).
@@ -62,7 +63,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 - Projectiles red outline.
 - Fullbright, and switches for fog (water, lava, powder snow, Nether, rain, boss fight, render distance), Darkness, Blindness and screen overlays (fire, underwater, pumpkin, frost, portal).
 - Freecam (`F4`): fly the camera on its own while your player stays put.
-- Settings menu (press `K` to open); every feature can be switched off, by section, or all at once.
+- Settings menu (press `K` to open), its sections folded until you open them; every feature can be switched off, by section, or all at once.
 
 ## Planned
 
@@ -115,15 +116,17 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Nav screen: a map in Managed mode; saved per world and dimension, with waypoints and a home
 - Walking pathfinder:
 	- Breaking and placing blocks, bridging included, preferring common, easy to get blocks
-	- Gait setting (walk, sprint, sprint-jump, elytra hops), allowed faster when chased
 	- Setting for how much damage the walk may take, counting armour, Feather Falling and Protection
 	- Neo port and the triple neo for long routes
 	- Jump search from a moving start, so jumps chain without stopping on each landing
-	- Knight's moves for swims, and each water entry slid along the shore to the quickest crossing
+	- Each water entry slid along the shore to the quickest crossing
 	- Parkour risk setting
 	- Opening doors
 	- Combat aware routes, and pausing a walk for a fight
 	- Handing off between walking and elytra flight
+	- Boats
+	- Show which way the walk is crossing (route, jump search, movement search, template), as text or drawn
+	- Route lines and rails at consistent heights
 	- Saved map of seen chunks, for routes past render distance
 	- Destination targeting by right clicking with empty hand (uses Baritone if available, otherwise fall back to native pathfinding)
 	- Benchmarks against Baritone on random seeds, and a comparison video
@@ -159,6 +162,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Entity highlights?
 - General:
 	- Defaults reviewed, each setting's ban risk in its description, settings ordered by risk
+	- Greyed-out settings read OFF
 	- Black box log behind a setting; kine's log lines switchable
 	- User guide / help: controls & displays list and explanations
 	- Update pictures, add logo
@@ -169,7 +173,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 
 ## Technical Details
 
-Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (`K`), one feature at a time, a section at a time, or all at once, and the elytra and speed displays can show always, only while you wear an elytra, only in flight (gliding or taking off), or never. The choices are saved in `config/kine.json`.
+Built for Minecraft 26.1.2 (unobfuscated, Mojang names) on Fabric. Client-side only. Cheats are off by default; everything is switched on and off in the settings screen (`K`), one feature at a time, a section at a time, or all at once, and the elytra and speed displays can show always, only while you wear an elytra, only in flight (gliding or taking off), or never. Each section folds open and closed by its name, all folded when the game starts. The choices are saved in `config/kine.json`.
 
 ### Elytra autopilot
 
@@ -209,13 +213,15 @@ An elytra counts as spent at 3 durability or less (the game itself stops gliding
 
 ### Walking pathfinder
 
-The nav screen's Walk tab (`N`) has its own destination for each dimension: an X and Z, and an optional Y naming the floor to reach (left blank, any floor of that column). Go plans a route on foot over a table of every loaded column's floors: A* with straight, diagonal and knight's moves (the knight's moves, on foot only, cut the worst detour against the straight line from 8.2% to 2.7%), costs in ticks fitted from the movement search's own runs (Baritone's with the movement search off), then the grid path pulled taut by straight-walk checks against the blocks' own shapes, keeping a set margin from walls, hazards and drops; swims are pulled taut the same way, each straight swim kept over open water. Its moves: walking, sprinting above 6 food, steps up slabs and stairs, one-block jumps, drops of up to 3 (any height into water), ladders and vines, swimming; it never breaks or places blocks, and treats doors and gates as walls. A destination beyond the loaded area is headed for where the straight line leaves the loaded area, replanning as chunks load. The search runs on a worker thread within a fixed time budget (0.4 s for a new plan, 0.2 s for a replan): a quick pass first, so you start walking at once, then better passes while the time lasts, each started only if this machine's measured search speed says it will finish in time. If the destination can't be reached, it walks to the reachable floor nearest it and stops there ("stopped as near as it gets").
+The nav screen's Walk tab (`N`) has its own destination for each dimension: an X and Z, and an optional Y naming the floor to reach (left blank, any floor of that column). Go plans a route on foot over a table of every loaded column's floors: A* with straight, diagonal and knight's moves on foot, wading and swimming (a swim's only over open water; the knight's moves cut the worst detour against the straight line from 8.2% to 2.7%), costs in ticks fitted from the movement search's own runs at the fastest gait allowed (Baritone's with the movement search off), then the grid path pulled taut by straight-walk checks against the blocks' own shapes, keeping a set margin from walls, hazards and drops; swims and wades are pulled taut the same way, each straight swim kept over open water. Its moves: walking, sprinting above 6 food, steps up slabs and stairs, one-block jumps, drops of up to 3 (any height into water), ladders and vines, swimming; it never breaks or places blocks, and treats doors and gates as walls. A destination beyond the loaded area is headed for where the straight line leaves the loaded area, replanning as chunks load. The search runs on a worker thread within a fixed time budget (0.4 s for a new plan, 0.2 s for a replan): a quick pass first, so you start walking at once, then better passes while the time lasts, each started only if this machine's measured search speed says it will finish in time. If the destination can't be reached, it walks to the reachable floor nearest it and stops there ("stopped as near as it gets").
 
-Along the route the movement search (on by default) chooses your keys. Every tick, on a worker thread, it tries short runs of movement keys (eleven headings; walking, sprinting, sprint-jumping, jumping or sneaking; held a few ticks and chained) in an exact copy of the game's movement code, water, climbing and gliding included, and presses the first tick of the fastest safe one. So it sprint-jumps on open ground, swims under the surface, climbs out at a bank, and keeps enough air to come up before it would drown, sprint-swimming with its eyes just out of the water on long crossings. With no route to a destination within 48 blocks, it searches toward it on its own. Elytra hops (off by default, since gliding wears the elytra) let it glide off ledges and over gaps.
+Along the route the movement search (on by default) chooses your keys. Every tick, on a worker thread, it tries short runs of movement keys (eleven headings; walking, sprinting, sprint-jumping, jumping or sneaking; held a few ticks and chained) in an exact copy of the game's movement code, water, climbing and gliding included, and presses the first tick of the fastest safe one. So it sprint-jumps on open ground, swims under the surface, climbs out at a bank, and keeps enough air to come up before it would drown, sprint-swimming with its eyes just out of the water on long crossings. With no route to a destination within 48 blocks, it searches toward it on its own.
 
-Parkour (off by default: a jump that falls short lands in the gap) adds gap jumps to the route, each measured in the movement copy: straight across up to 4 empty blocks (the longest from a block of run-up), diagonals to 3 by 3, the knight's and other lines between, one up across up to 3, one down. Near a jump the search also tries any heading to the degree and the jump on any tick, turning toward the landing in the air. Tricks a route can't hold, such as a neo round a wall, come from a jump search in the copy for the run, jump and turn that land. When a far destination's route stops short of a crossing, it walks without a route to the next floor past it (within 8 blocks) and plans on from there, ending as near as it gets after three failed tries in a row. Air above a column's highest floor counts as open sky, so it sees gaps over drops of any depth.
+The gait setting caps the walk's pace, like an aircraft's thrust lever: Walk never sprints (the sprint key is held back, and a sprint already running is ended); Sprint sprints, but a jump that lands level, where nothing needed it, counts as costing about 5 s, so it jumps only for a step up, a gap or out of water (a head hitter under a low ceiling included); Sprint-jump (the default) sprint-jumps wherever that is faster; Elytra hops, the top level (off by default, since gliding wears the elytra), also glides off ledges and over gaps with an elytra worn. The route's costs and the arrival time use the fastest gait allowed. Like an aircraft's alpha floor, which commands full thrust past the lever near a stall, it lifts the gait to Sprint-jump when a hostile mob in sight within 16 blocks has closed on you over the last second, a projectile is on course to hit, a lit creeper is within 7, you burn or stand in lava, you were just hurt, or your air runs low under water; it drops back 3 s after the last of these, and after 30 s it waits for them all to clear. The game's own limit stays: no sprinting at 6 food or less.
 
-It walks by pressing your movement keys. The camera stays yours; only the server sees you face where you walk, turned at most 30 degrees a tick. Pressing a movement key, the tab's Pause or arriving pauses it and hands control back, with the route still drawn so you can walk back along it; Cancel clears it, and a new destination cancels the old route. The route draws as a magenta line between rails near you (a fixed width apart, on the surface of water and snow), the destination as a green pillar, and the movement search's tries as thin lines of the feet, the chosen run in gold; replaying the route search in the world is a setting, off by default. While it walks, the HUD's nav block shows the distance left along the route and the arrival time in cyan, as the Walk tab does; on the ground it takes the flight readout's place. The arrival time is the plan's time left, corrected by how the walk has gone so far, and counts hunger stopping the sprint. Fall prevention lets the walk's own steps into water through.
+Parkour (off by default: a jump that falls short lands in the gap; and off below the Sprint-jump gait, since it needs sprint-jumps) adds gap jumps to the route, each measured in the movement copy: straight across up to 4 empty blocks (the longest from a block of run-up), diagonals to 3 by 3, the knight's and other lines between, one up across up to 3, one down. Near a jump the search also tries any heading to the degree and the jump on any tick, turning toward the landing in the air. Tricks a route can't hold, such as a neo round a wall, come from a jump search in the copy for the run, jump and turn that land. When a far destination's route stops short of a crossing, it walks without a route to the next floor past it (within 8 blocks) and plans on from there, ending as near as it gets after three failed tries in a row. Air above a column's highest floor counts as open sky, so it sees gaps over drops of any depth.
+
+It walks by pressing your movement keys. The camera stays yours; only the server sees you face where you walk, turned at most 30 degrees a tick. Pressing a movement key, the tab's Pause or arriving pauses it and hands control back, with the route still drawn so you can walk back along it; Cancel clears it, and a new destination cancels the old route. The route draws as a magenta line between rails near you (a fixed width apart, on the surface of water and snow, curving where the ground steps up or down), the destination as a green pillar, and the movement search's tries as thin lines of the feet, the chosen run in gold; replaying the route search in the world is a setting, off by default. While it walks, the HUD's nav block shows the distance left along the route and the arrival time in cyan, as the Walk tab does; on the ground it takes the flight readout's place. The arrival time is the plan's time left, corrected by how the walk has gone so far, and counts hunger stopping the sprint. Fall prevention lets the walk's own steps into water through.
 
 ### Combat
 
