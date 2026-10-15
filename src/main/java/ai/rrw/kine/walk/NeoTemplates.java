@@ -169,9 +169,16 @@ final class NeoTemplates {
         return null;
     }
 
+    /** Never let go: the fitting outside a walk's jump search. */
+    static final java.util.function.BooleanSupplier NEVER = () -> false;
+    /** Whether the jump search fitting now has been let go (Layer2.searchGen; set and read on the search's one
+     *  thread): every fit from then on is null at once. */
+    static java.util.function.BooleanSupplier stop = NEVER;
+
     /** One template from key block (bx, by, bz) onto l, every way it can lie; null if it doesn't fit or land. */
     static Recipe fitTemplate(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, Template t, boolean climbOnly) {
         int dx = l[0] - bx, dz = l[2] - bz;
+        if (stop.getAsBoolean()) return null;
         {
             if (climbOnly && !t.climb()) return null;
             // the landing's height by its feet, not its block: in play a landing's block is the one under its feet

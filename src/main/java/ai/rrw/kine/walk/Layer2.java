@@ -148,6 +148,7 @@ public final class Layer2 {
         recipe = null;
         if (recipeJob != null) recipeJob.cancel(false);
         recipeJob = null;
+        searchGen++;
         recipeTryKey = Long.MIN_VALUE;
         groundY = Double.NaN;
         lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
@@ -184,6 +185,7 @@ public final class Layer2 {
         recipe = null;
         if (recipeJob != null) recipeJob.cancel(false);
         recipeJob = null;
+        searchGen++;
         dropChain();
     }
 
@@ -247,6 +249,15 @@ public final class Layer2 {
     /** Standing spots, with the landing searched for, whose search found nothing (the copy is deterministic: standing
      *  there again finds nothing again). Cleared with the walk. */
     private static final java.util.Set<Long> spotsEmpty = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Counts the jump searches let go (a walk's reset, a new try). A search already running when its job is cancelled
+     * ran on to its end on the one search thread: a stopped walk's search that finds nothing (nopath's, some 32 s) held
+     * the next walk's up while that walk stood waiting for it (pkNeo after nopath: 189 ticks, or the test's 600), and
+     * its findings went into the next walk's memos. A search checks this between its parts and stops once it changes,
+     * leaving the memos as they are.
+     */
+    private static volatile int searchGen = 0;
     /**
      * Chained jumps (RW 2026-10-14 00:57:04, the jump search from a moving start, "yea hfiel as todo": the walk chains
      * jumps without stopping on each landing, as a player does). While a copy-found jump to a hop's floor is played and
@@ -615,14 +626,18 @@ public final class Layer2 {
             if (routed) routeJumpNone = true; else hopJumpNone = true;
             return;
         }
+        int gen = searchGen;
         recipeJob = RECIPES.submit(() -> {
             long t0 = System.nanoTime();
             Recipe result = null;
+            NeoTemplates.stop = () -> gen != searchGen;
             try {
-                result = searchAll(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz);
+                result = searchAll(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz, gen);
                 if (result != null) result.fromRest = true;
                 return result;
             } finally {
+                NeoTemplates.stop = NeoTemplates.NEVER;
+                boolean letGo = gen != searchGen;
                 if (SEARCH_LOG) {
                     StringBuilder ls = new StringBuilder();
                     for (int[] l : land) ls.append(' ').append(l[0]).append(',').append(l[1]).append(',').append(l[2]);
@@ -630,10 +645,10 @@ public final class Layer2 {
                     if (cl.length > 0) ls.append(" climbs");
                     for (int[] l : cl) ls.append(' ').append(l[0]).append(',').append(l[1]).append(',').append(l[2]);
                     Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk layer 2: search from %.3f %.3f %.3f (block %d %d %d, %s) to%s: %s in %.0f ms",
-                        s.x, s.y, s.z, bx, by, bz, routed ? "routed" : "hop", ls, result == null ? "none" : result.how,
+                        s.x, s.y, s.z, bx, by, bz, routed ? "routed" : "hop", ls, letGo ? "let go" : result == null ? "none" : result.how,
                         (System.nanoTime() - t0) / 1e6));
                 }
-                if (result == null) failedSearches.add(key);
+                if (result == null && !letGo) failedSearches.add(key);
                 lastSearchNanos = System.nanoTime() - t0;
                 searchNanos += lastSearchNanos;
                 maxSearchNanos = Math.max(maxSearchNanos, lastSearchNanos);
@@ -644,15 +659,17 @@ public final class Layer2 {
 
     /** The search itself (submitSearch's job): from here, the spots, the templates; the first way found, or null. */
     private static Recipe searchAll(MoveState s, float sent, float sentPitch, BlockGrid g, Body body, Field f, RunSim.Goal goal,
-                                    int[][] land, int bx, int by, int bz) throws InterruptedException {
+                                    int[][] land, int bx, int by, int bz, int gen) throws InterruptedException {
         // a climb template first, onto a ladder chain's far ladder (found offline for that layout: ladder_90_spiral,
         // whose hops went ladder by ladder and hung on the second; the jump search finds the first hop and stops there)
         for (int[] l : climbs(f, g, s)) {
             Recipe t = NeoTemplates.fit(new GroundPhysics(g, body), s, sent, bx, by, bz, l, true);
             if (t != null) return t;
         }
+        if (gen != searchGen) return null;
         Recipe here = searchLands(new GroundPhysics(g, body), s, sent, land, true);
         if (here != null) return here;
+        if (gen != searchGen) return null;
         double[][] near = Recipe.spots(bx, bz, s.x, s.z, land[0][0] + 0.5, land[0][2] + 0.5);
         double[][] back = Recipe.backSpots(new GroundPhysics(g, body), bx, by, bz, s.y, land[0][0] + 0.5, land[0][2] + 0.5);
         java.util.List<java.util.concurrent.Callable<Recipe>> jobs = new java.util.ArrayList<>();
@@ -664,6 +681,7 @@ public final class Layer2 {
             if (spotsEmpty.contains(k)) continue;
             keys.add(k);
             jobs.add(() -> {
+                if (gen != searchGen) return null;
                 GroundPhysics ph = new GroundPhysics(g, body);
                 Recipe a = far ? Recipe.approachFar(ph, s, sent, sp[0], sp[1]) : Recipe.approach(ph, s, sent, sp[0], sp[1]);
                 if (a == null) return null;
@@ -680,11 +698,12 @@ public final class Layer2 {
             for (int i = 0; i < fs.size(); i++) {
                 Recipe r;
                 try { r = fs.get(i).get(); } catch (Exception ex) { r = null; }
-                if (r == null) spotsEmpty.add(keys.get(i));
+                if (r == null) { if (gen == searchGen) spotsEmpty.add(keys.get(i)); }
                 else if (found == null) found = r;
             }
             if (found != null) return found;
         }
+        if (gen != searchGen) return null;
         // a template found offline (a neo, a long jump, a ladder chain) when neither search makes it from any spot:
         // fitted from the block the walk stands on and then from the floors of its level near it (its take-off: the walk
         // may rest short of it, as on RW's triple neo, 3 blocks back on the walkway), onto the search's landings and
