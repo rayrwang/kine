@@ -2,8 +2,9 @@ package ai.rrw.kine.walk;
 
 /**
  * A path to walk: waypoints (feet positions) and the move into each, the first being where it starts. Between two
- * waypoints joined by WALK the player walks straight, by SWIM swims straight across open water; the other moves are the
- * grid's own (a jump up, a ladder, into and out of water).
+ * waypoints joined by WALK the player walks straight, by SWIM swims straight across open water, by WADE wades straight
+ * through shallow water (each leg checked by the tightening); the other moves are the grid's own (a jump up, a ladder,
+ * into and out of deep water).
  * Also the ground's height sampled densely along it (for the rails), the lengths and times the report gives, and the
  * straight line on to a goal beyond the loaded area.
  */

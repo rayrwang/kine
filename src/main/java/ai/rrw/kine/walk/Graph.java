@@ -4,7 +4,7 @@ package ai.rrw.kine.walk;
  * The moves out of a floor, with their costs: the search's graph, worked out when a floor is expanded rather than
  * stored. Horizontal moves go to the eight neighbouring columns and the eight knight's moves (one over, two across),
  * which bring the worst detour of a grid path against the straight line from 8.2% (straight and diagonal only) to
- * 2.7%. Vertical moves: ladders up and down, and dropping down a shaft.
+ * 2.7%, on foot and swimming. Vertical moves: ladders up and down, and dropping down a shaft.
  *
  * <p>Whether a move fits is decided from the table where the floors are plain (their top covers the cell and the cell
  * is as free as the middle): heights, the free height above each floor, and for diagonal and knight's moves the cells
@@ -13,12 +13,12 @@ package ai.rrw.kine.walk;
  *
  * <ul>
  *   <li>WALK: to a floor within a step (0.6) up or down, straight, diagonal or knight's; WADE when water is at the feet
- *       at either end (water's cost);</li>
+ *       at either end (water's cost; its diagonal and knight's moves cross cells of water at the feet too);</li>
  *   <li>DROP: straight off an edge to a floor more than a step and at most 3 below (any height when landing in
  *       water);</li>
  *   <li>JUMP: straight up onto a floor more than a step and at most 1.25 above;</li>
- *   <li>WATER_IN, SWIM, WATER_OUT: into deep water from a bank (any height), across its top with jump held, and out
- *       onto a bank at most a quarter block above the water's top;</li>
+ *   <li>WATER_IN, SWIM, WATER_OUT: into deep water from a bank (any height), across its top with jump held (straight,
+ *       diagonal or knight's), and out onto a bank at most a quarter block above the water's top;</li>
  *   <li>CLIMB_ON, CLIMB_UP, CLIMB_DOWN, CLIMB_OFF: walking (or swimming) into a ladder, up and down it, and off it
  *       sideways or at its top;</li>
  *   <li>EXIT: from a floor at the edge of what is loaded to a goal beyond it, the rest charged as a straight line at
@@ -54,8 +54,6 @@ final class Graph {
     boolean goalUnknown;
     /** Ticks a block past the loaded edge, the same for every way out (PathSearch sets it). */
     double beyondRate;
-    /** The type of the floor expand() last expanded (ChunkFloors.GROUND, SWIM or CLIMB). */
-    int expandedType;
 
     // the moves found by expand()
     int n;
@@ -91,9 +89,9 @@ final class Graph {
         if (a == null) return;
         int ai = a.index(x & 15, z & 15, i);
         int type = a.type(ai);
-        expandedType = type;
         float ah = a.h(ai);
         boolean edge = false;
+        if (type == ChunkFloors.SWIM) waterRound(x, z, ah);
 
         // vertical moves in the same column
         int cnt = a.count(x & 15, z & 15);
@@ -122,7 +120,7 @@ final class Graph {
             int bx = x + DX[d], bz = z + DZ[d];
             ChunkFloors b = v.chunk(bx, bz);
             if (b == null) { if (d < 8) edge = true; continue; }
-            if (d >= 8 && type != ChunkFloors.GROUND) continue;     // knight's moves on foot only
+            if (d >= 8 && type == ChunkFloors.CLIMB) continue;      // knight's moves on foot and swimming
             boolean straight = d < 4, diagonal = d >= 4 && d < 8;
             int bc = b.count(bx & 15, bz & 15);
             for (int j = 0; j < bc; j++) {
@@ -204,8 +202,15 @@ final class Graph {
         double len = LEN[d];
         if (btype == ChunkFloors.SWIM && (straight || diagonal)) {
             if (Math.abs(dh) > 1e-4) return;
-            if (diagonal && (!sideOpenWater(x + DX[d], z, ah) || !sideOpenWater(x, z + DZ[d], ah))) return;
+            if (diagonal && (!sideOpenWater(DX[d], 0, x, z, ah) || !sideOpenWater(0, DZ[d], x, z, ah))) return;
             add(target, len * c.water + c.waterPenalty, SWIM);
+        } else if (btype == ChunkFloors.SWIM) {
+            // a knight's move across open water: the box passes over every column of the two by three it spans, each
+            // a swimming floor at this water's top (without them a swim off the axes and diagonals was priced up to
+            // 8.2% high, and from a shore the search swam off at 0 or 45 degrees only). Its penalty is the two moves'
+            // it stands for, so a zigzag of knight's moves never undercuts a straight swim on a penalty per move.
+            if (Math.abs(dh) > 1e-4 || !knightOverWater(d)) return;
+            add(target, len * c.water + 2 * c.waterPenalty, SWIM);
         } else if (btype == ChunkFloors.GROUND && straight) {
             // out onto a bank no more than a quarter block above the water's top, or a shore at or below it
             if (dh > 0.25 + 1e-5 || dh < -1.0) return;
@@ -405,16 +410,22 @@ final class Graph {
         if (a.head(ai) < top - ah + H - 1e-4 || b.head(bj) < top - bh + H - 1e-4) return false;
         boolean fast = plain(a, ai) && plain(b, bj)
             && a.clearTop(ai) >= top + H - 1e-4 && b.clearTop(bj) >= top + H - 1e-4;
+        boolean wade = ((a.flags(ai) | b.flags(bj)) & ChunkFloors.WADE) != 0;
         if (fast && d >= 4 && d < 8) {
-            fast = sideFree(x + DX[d], z, top) && sideFree(x, z + DZ[d], top);
+            fast = sideFree(x + DX[d], z, top) && sideFree(x, z + DZ[d], top)
+                || wade && wadeable(x + DX[d], z, ah, bh) && wadeable(x, z + DZ[d], ah, bh);
         } else if (fast && d >= 8) {
             int sx = Integer.signum(DX[d]), sz = Integer.signum(DZ[d]);
             if (Math.abs(DX[d]) == 1) {   // one over in x, two across in z
                 fast = crossed(x, z + sz, ah, bh) && crossed(x + sx, z + sz, ah, bh)
-                    && sideFree(x + sx, z, top) && sideFree(x, z + 2 * sz, top);
+                    && sideFree(x + sx, z, top) && sideFree(x, z + 2 * sz, top)
+                    || wade && wadeable(x, z + sz, ah, bh) && wadeable(x + sx, z + sz, ah, bh)
+                    && wadeable(x + sx, z, ah, bh) && wadeable(x, z + 2 * sz, ah, bh);
             } else {
                 fast = crossed(x + sx, z, ah, bh) && crossed(x + sx, z + sz, ah, bh)
-                    && sideFree(x, z + sz, top) && sideFree(x + 2 * sx, z, top);
+                    && sideFree(x, z + sz, top) && sideFree(x + 2 * sx, z, top)
+                    || wade && wadeable(x + sx, z, ah, bh) && wadeable(x + sx, z + sz, ah, bh)
+                    && wadeable(x, z + sz, ah, bh) && wadeable(x + 2 * sx, z, ah, bh);
             }
         }
         if (fast) return true;
@@ -477,8 +488,38 @@ final class Graph {
         return false;
     }
 
-    /** A diagonal swim's side cell: water at the same top or open air over the water level. */
-    private boolean sideOpenWater(int x, int z, float top) {
+    /** Open water round the swimming floor being expanded, at its water's top: a bit for each of the eight columns
+     *  round it and the four two away along the axes (all the columns a diagonal or knight's swim from it passes over
+     *  besides its ends), worked out once per expansion. */
+    private int water;
+
+    private static int waterBit(int dx, int dz) {
+        return 1 << ((dx + 2) * 5 + dz + 2);
+    }
+
+    private void waterRound(int x, int z, float top) {
+        water = 0;
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+                if ((Math.abs(dx) <= 1 && Math.abs(dz) <= 1 || dx == 0 || dz == 0) && (dx != 0 || dz != 0) && swimAt(x + dx, z + dz, top))
+                    water |= waterBit(dx, dz);
+    }
+
+    private boolean waterAt(int dx, int dz) {
+        return (water & waterBit(dx, dz)) != 0;
+    }
+
+    /** The four other columns of the two by three a knight's move in direction d spans from the floor being expanded
+     *  (the player's box passes over all of them): each a swimming floor at its water's top. */
+    private boolean knightOverWater(int d) {
+        int sx = Integer.signum(DX[d]), sz = Integer.signum(DZ[d]);
+        if (Math.abs(DX[d]) == 1)   // one over in x, two across in z
+            return waterAt(0, sz) && waterAt(sx, sz) && waterAt(sx, 0) && waterAt(0, 2 * sz);
+        return waterAt(sx, 0) && waterAt(sx, sz) && waterAt(0, sz) && waterAt(2 * sx, 0);
+    }
+
+    /** A swimming floor in column (x, z) at the water's top `top`. */
+    private boolean swimAt(int x, int z, float top) {
         ChunkFloors c = v.chunk(x, z);
         if (c == null) return false;
         int lx = x & 15, lz = z & 15, n = c.count(lx, lz);
@@ -486,7 +527,36 @@ final class Graph {
             int idx = c.index(lx, lz, i);
             if (c.type(idx) == ChunkFloors.SWIM && Math.abs(c.h(idx) - top) < 1e-4) return true;
         }
-        return sideFree(x, z, top - 1);
+        return false;
+    }
+
+    /**
+     * A cell a diagonal or knight's wade crosses or clips (water at the feet at either end): a plain floor within a step
+     * of both ends, water at its feet or not, room for the player above it over the whole cell, and nothing that hurts
+     * from the floor block to head height. The dry checks (sideFree, crossed) refuse water at the feet, so a shallow
+     * lake was waded in straight steps only, a staircase on the axes up to 41% longer than the straight line (measured
+     * 2026-10-14: 120 blocks of grid for 84.9 straight at 45 degrees).
+     */
+    private boolean wadeable(int x, int z, float ah, float bh) {
+        ChunkFloors c = v.chunk(x, z);
+        if (c == null) return false;
+        int lx = x & 15, lz = z & 15, n = c.count(lx, lz);
+        for (int i = 0; i < n; i++) {
+            int idx = c.index(lx, lz, i);
+            if (c.type(idx) != ChunkFloors.GROUND || !plain(c, idx)) continue;
+            float h = c.h(idx);
+            if (Math.abs(h - ah) > STEP + 1e-5 || Math.abs(h - bh) > STEP + 1e-5) continue;
+            float top = Math.max(h, Math.max(ah, bh));
+            if (c.clearTop(idx) < top + H - 1e-4) continue;
+            return !v.hazardIn(x, z, (int) Math.floor(h - 1e-4), (int) Math.floor(top + H - 1e-4));
+        }
+        return false;
+    }
+
+    /** A diagonal swim's side cell (dx, dz from the floor being expanded at (x, z)): water at the same top or open air
+     *  over the water level. */
+    private boolean sideOpenWater(int dx, int dz, int x, int z, float top) {
+        return waterAt(dx, dz) || sideFree(x + dx, z + dz, top - 1);
     }
 
     /** The extra for a floor next to hazards: each of the eight columns around with one at body height. */

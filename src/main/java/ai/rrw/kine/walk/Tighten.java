@@ -4,15 +4,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Pulls the grid path taut. The path is cut into runs of plain walking (walks and drops on dry ground) and runs of
- * swimming (across a water's top); jumps, ladders, wading and the ways into and out of water stay as they are. In each
- * run, from each point the farthest later point reachable in a straight walk (or swim) is taken, trying far to near
- * (the walk-straight check, {@link Sweep}, with the safety margin; for a swim, open water under the box grown by the
- * margin); then each bend is slid toward its neighbours, replaced by two points on its two legs as far out as a
- * straight walk between them allows (a chamfer), which shortens the path around a corner toward the taut line at the
- * margin. Every new leg is checked, so the route never goes through a wall, over a hole, off a drop of more than 3,
- * near a hazard or out of open water, and every leg is no longer than the grid path it replaces (a straight line
- * between two of its points).
+ * Pulls the grid path taut. The path is cut into runs of plain walking (walks and drops on dry ground), runs of
+ * swimming (across a water's top) and runs of wading (water at the feet, standing on the bottom); jumps, ladders and
+ * the ways into and out of deep water stay as they are. In each run, from each point the farthest later point
+ * reachable in a straight walk (or swim, or wade) is taken, trying far to near (the walk-straight check, {@link Sweep},
+ * with the safety margin; for a swim, open water under the box grown by the margin; for a wade, wadeable ground under
+ * it); then each bend is slid toward its neighbours, replaced by two points on its two legs as far out as a straight
+ * walk between them allows (a chamfer), which shortens the path around a corner toward the taut line at the margin.
+ * Every new leg is checked, so the route never goes through a wall, over a hole, off a drop of more than 3, near a
+ * hazard, out of open water or out of wadeable ground, and every leg is no longer than the grid path it replaces (a
+ * straight line between two of its points).
  */
 final class Tighten {
     /** How many grid points ahead the farthest-point search looks. */
@@ -34,13 +35,15 @@ final class Tighten {
     }
 
     /** The kind of run a move belongs to: WALK for plain walking (walks and drops on dry ground), SWIM for swimming
-     *  across a water's top, -1 for the grid's other moves, which stay as they are. Swims were kept step by step until
-     *  2026-10-14, so across open water the route was a staircase on the grid's eight directions, up to 13.7 blocks off
-     *  the straight line over 70, and layer 2's corridor followed it (RW, 2026-10-13: "path tightneing over water
-     *  doenst' seem to work"). */
+     *  across a water's top, WADE for wading, -1 for the grid's other moves, which stay as they are. Swims were kept
+     *  step by step until 2026-10-14, so across open water the route was a staircase on the grid's eight directions, up
+     *  to 13.7 blocks off the straight line over 70, and layer 2's corridor followed it (RW, 2026-10-13: "path
+     *  tightneing over water doenst' seem to work"); wades too until later that day (a staircase on the axes across a
+     *  shallow lake, a waypoint a block). */
     private static int runKind(int move) {
         if (move == Graph.WALK || move == Graph.DROP) return Graph.WALK;
         if (move == Graph.SWIM) return Graph.SWIM;
+        if (move == Graph.WADE) return Graph.WADE;
         return -1;
     }
 
@@ -123,9 +126,64 @@ final class Tighten {
         return sweep.walk(ax, ay, az, bx, bz) && Math.abs(sweep.endH - by) < 0.05;
     }
 
-    /** A straight walk, or for a run of swims a straight swim, from a to b. */
+    /** A straight walk, or for a run of swims a straight swim, or for a run of wades a straight wade, from a to b. */
     private boolean reaches(int kind, double ax, double ay, double az, double bx, double by, double bz) {
-        return kind == Graph.SWIM ? swims(ax, ay, az, bx, bz) : walks(ax, ay, az, bx, by, bz);
+        if (kind == Graph.SWIM) return swims(ax, ay, az, bx, bz);
+        if (kind == Graph.WADE) return wades(ax, ay, az, bx, bz) && Math.abs(wadeH - by) < 0.05;
+        return walks(ax, ay, az, bx, by, bz);
+    }
+
+    /** The feet's height at the end of the last wade checked (wades). */
+    private double wadeH;
+
+    /**
+     * A straight wade from a to b through shallow water: at every step along the line (as a swim's is checked), every
+     * column under the player's box grown by the margin holds wadeable ground within a step of the feet (a plain floor,
+     * water at its feet or not, room for the player above it over the whole cell, nothing that hurts from the floor
+     * block to head height: the graph's own test for the cells a diagonal or knight's wade crosses), the feet following
+     * the floor under the line's middle. So the line keeps the margin off deep water, holes, walls and hazards. Sets
+     * wadeH, the feet's height at b.
+     */
+    private boolean wades(double ax, double ay, double az, double bx, double bz) {
+        checks++;
+        double len = Math.hypot(bx - ax, bz - az);
+        int steps = Math.max(1, (int) Math.ceil(len / (Sweep.STEP / 2)));
+        double r = Sweep.HALF + sweep.margin - 1e-6;
+        double h = ay;
+        int lx0 = Integer.MIN_VALUE, lx1 = 0, lz0 = 0, lz1 = 0;
+        double lh = Double.NaN;
+        for (int s = 0; s <= steps; s++) {
+            double t = s / (double) steps, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+            double f = wadeFloor((int) Math.floor(x), (int) Math.floor(z), h);
+            if (Double.isNaN(f)) return false;
+            h = f;
+            int x0 = (int) Math.floor(x - r), x1 = (int) Math.floor(x + r), z0 = (int) Math.floor(z - r), z1 = (int) Math.floor(z + r);
+            if (x0 == lx0 && x1 == lx1 && z0 == lz0 && z1 == lz1 && h == lh) continue;   // the same columns and feet as the last step
+            lx0 = x0; lx1 = x1; lz0 = z0; lz1 = z1; lh = h;
+            for (int cx = x0; cx <= x1; cx++)
+                for (int cz = z0; cz <= z1; cz++)
+                    if (Double.isNaN(wadeFloor(cx, cz, h))) return false;
+        }
+        wadeH = h;
+        return true;
+    }
+
+    /** The height of wadeable ground in column (x, z) within a step of feet at h (see wades), or NaN. */
+    private double wadeFloor(int x, int z, double h) {
+        ChunkFloors c = v.chunk(x, z);
+        if (c == null) return Double.NaN;
+        int lx = x & 15, lz = z & 15, n = c.count(lx, lz);
+        for (int i = 0; i < n; i++) {
+            int idx = c.index(lx, lz, i);
+            if (c.type(idx) != ChunkFloors.GROUND || !Graph.plain(c, idx)) continue;
+            float fh = c.h(idx);
+            if (Math.abs(fh - h) > Graph.STEP + 1e-5) continue;
+            double top = Math.max(fh, h);
+            if (c.clearTop(idx) < top + Graph.H - 1e-4) continue;
+            if (v.hazardIn(x, z, (int) Math.floor(fh - 1e-4), (int) Math.floor(top + Graph.H - 1e-4))) return Double.NaN;
+            return fh;
+        }
+        return Double.NaN;
     }
 
     /** A straight swim from a to b across open water: at every step along the line, every column under the player's
@@ -210,6 +268,16 @@ final class Tighten {
                     best = p; bestQ = q;
                     break;
                 }
+                if (kind == Graph.WADE) {
+                    // wadeable ground from the leg's start to p, p to q, q on to c, the heights from the ground under them
+                    if (!wades(a[0], a[1], a[2], p[0], p[2])) continue;
+                    p[1] = wadeH;
+                    if (!wades(p[0], p[1], p[2], q[0], q[2])) continue;
+                    q[1] = wadeH;
+                    if (!reaches(kind, q[0], q[1], q[2], c[0], c[1], c[2])) continue;
+                    best = p; bestQ = q;
+                    break;
+                }
                 // heights: walk out from the leg's start to p, then p to q, then q on to c
                 if (!walks2(a, p)) continue;
                 p[1] = sweep.endH;
@@ -269,18 +337,25 @@ final class Tighten {
                 for (int s = 1; s < sweep.samples; s++) g.add(new float[]{(float) sweep.sx[s], (float) sweep.sh[s], (float) sweep.sz[s]});
                 time += sweep.time;
             } else {
-                if (r.move[i] == Graph.SWIM) {
-                    // a swim pulled taut can be long: its line sampled every half block, so what follows the route's
-                    // ground (layer 2's corridor, the rails) takes in all of it, not only its ends
+                if (r.move[i] == Graph.SWIM || r.move[i] == Graph.WADE) {
+                    // a swim or a wade pulled taut can be long: its line sampled every half block (a wade's at the ground
+                    // under it), so what follows the route's ground (layer 2's corridor, the rails, the replan's check
+                    // of changed columns) takes in all of it, not only its ends
                     int k = (int) Math.ceil(seg / 0.5);
+                    double h = r.y[i - 1];
                     for (int s = 1; s < k; s++) {
-                        double t = s / (double) k;
-                        g.add(new float[]{(float) (r.x[i - 1] + (r.x[i] - r.x[i - 1]) * t), (float) (r.y[i - 1] + (r.y[i] - r.y[i - 1]) * t),
-                            (float) (r.z[i - 1] + (r.z[i] - r.z[i - 1]) * t)});
+                        double t = s / (double) k, x = r.x[i - 1] + (r.x[i] - r.x[i - 1]) * t, z = r.z[i - 1] + (r.z[i] - r.z[i - 1]) * t;
+                        double y = r.y[i - 1] + (r.y[i] - r.y[i - 1]) * t;
+                        if (r.move[i] == Graph.WADE) {
+                            double f = wadeFloor((int) Math.floor(x), (int) Math.floor(z), h);
+                            if (!Double.isNaN(f)) y = h = f;
+                        }
+                        g.add(new float[]{(float) x, (float) y, (float) z});
                     }
                 }
                 g.add(new float[]{(float) r.x[i], (float) r.y[i], (float) r.z[i]});
-                time += seg / 0.2;   // the grid's own moves: about walking pace (ladders and water are slower; see gridCost)
+                // the grid's own moves: about walking pace (ladders and water are slower; see gridCost); a wade at its rate
+                time += r.move[i] == Graph.WADE ? seg * c.wade : seg / 0.2;
             }
         }
         sweep.record = false;

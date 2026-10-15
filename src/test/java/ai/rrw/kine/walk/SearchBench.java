@@ -83,6 +83,47 @@ public class SearchBench {
             }
     }
 
+    /** What knight's moves for swims cost the search (2026-10-14): a sea the size of render distance 12, 3 deep, with
+     *  islands (4% of 8 by 8 cells), goals 100 to 300 blocks away at 0, 25 and 45 degrees, and a sea at render
+     *  distance 4 (9 by 9 chunks) with goals 448 and 320 past it (the ocean scenes' oceanFar and oceanDiag), each
+     *  weight of the planner's passes, layer 2's costs; the best of three runs. */
+    @Test
+    void timesAtSea() {
+        for (boolean near : new boolean[]{true, false}) {
+            int half = near ? 200 : 80;
+            TestWorld w = blocks(-half, -half, half - 1, half - 1);
+            w.fill(-half, 6, -half, half - 1, 6, half - 1, STONE).fill(-half, 7, -half, half - 1, 10, half - 1, WATER);
+            Random r = new Random(11);
+            for (int cx = -half; cx < half; cx += 8)
+                for (int cz = -half; cz < half; cz += 8)
+                    if (r.nextDouble() < 0.04 && Math.abs(cx) + Math.abs(cz) > 16) w.fill(cx, 6, cz, cx + 7, 12, cz + 7, STONE);
+            int[][] goals = near ? new int[][]{{100, 0}, {180, 84}, {150, 150}, {-170, 120}} : new int[][]{{448, 209}, {320, 320}};
+            for (int[] g : goals) if (near) w.fill(g[0] - 1, 7, g[1] - 1, g[0] + 1, 12, g[1] + 1, WATER).fill(g[0] - 1, 11, g[1] - 1, g[0] + 1, 12, g[1] + 1, Palette.AIR);
+            View v = w.view();
+            long start = v.nodeAt(0, 11, 0);
+            assertNotEquals(View.NONE, start);
+            Costs c = Costs.layer2();
+            for (int[] g : goals) {
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format(java.util.Locale.ROOT, "KINEMEASURE bench sea %s goal %d,%d (%.0f blocks):", near ? "rd12" : "rd4 ", g[0], g[1], Math.hypot(g[0], g[1])));
+                for (double wt : Planner.WEIGHTS) {
+                    PathSearch.Result best = null;
+                    for (int k = 0; k < 3; k++) {
+                        PathSearch.Result res = new PathSearch(v, c).run(start, g[0], g[1], wt, Long.MAX_VALUE, 3_000_000, false);
+                        if (best == null || res.nanos < best.nanos) best = res;
+                    }
+                    assertTrue(best.found, best.reason);
+                    double len = 0;
+                    for (int i = 1; i < best.path.length; i++)
+                        len += Math.hypot(View.nodeX(best.path[i]) - View.nodeX(best.path[i - 1]), View.nodeZ(best.path[i]) - View.nodeZ(best.path[i - 1]));
+                    sb.append(String.format(java.util.Locale.ROOT, " w=%.2f %.1f ms %d expanded cost %.0f grid %.1f%s;", wt, best.nanos / 1e6,
+                        best.expanded, best.viaExit ? best.totalCost : best.cost, len, best.viaExit ? " viaExit" : ""));
+                }
+                System.out.println(sb);
+            }
+        }
+    }
+
     @Test
     void timesByDensityAndDistance() {
         for (double density : new double[]{0.0, 0.06, 0.15}) {

@@ -198,7 +198,6 @@ public final class PathSearch {
         int sx = View.nodeX(start), sz = View.nodeZ(start);
         int bestExit = -1;
         double bestExitScore = Double.MAX_VALUE, bandLimit = Double.MAX_VALUE;
-        boolean bestExitWater = false;
         it.unimi.dsi.fastutil.ints.IntArrayList exitIds = new it.unimi.dsi.fastutil.ints.IntArrayList();
         it.unimi.dsi.fastutil.doubles.DoubleArrayList exitScores = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
         while (hn > 0) {
@@ -211,7 +210,7 @@ public final class PathSearch {
                 if (!exitReached) {
                     goalId = id;
                     exitReached = true;
-                    bandLimit = ff + (bestExitWater ? EXIT_BAND_WATER : EXIT_BAND) * g[parent[id]] + 1.0;
+                    bandLimit = ff + EXIT_BAND * g[parent[id]] + 1.0;
                 }
                 continue;
             }
@@ -238,9 +237,8 @@ public final class PathSearch {
             for (int k = 0; k < graph.n; k++) {
                 long to = graph.to[k];
                 if (graph.move[k] == Graph.EXIT) {
-                    boolean water = graph.expandedType == ChunkFloors.SWIM;
-                    double sc = exitScore(g[id], graph.cost[k], water, sx, sz, View.nodeX(key), View.nodeZ(key));
-                    if (sc < bestExitScore) { bestExitScore = sc; bestExit = id; bestExitWater = water; }
+                    double sc = exitScore(g[id], graph.cost[k], sx, sz, View.nodeX(key), View.nodeZ(key));
+                    if (sc < bestExitScore) { bestExitScore = sc; bestExit = id; }
                     exitIds.add(id);
                     exitScores.add(sc);
                 }
@@ -360,29 +358,30 @@ public final class PathSearch {
     }
 
     /** How far past the first way out found (a share of its cost inside) the search goes on looking for a better floor
-     *  to leave from: the grid's anisotropy, at most 2.7% on foot (knight's moves) and 8.3% swimming (eight
-     *  neighbours only). */
-    static final double EXIT_BAND = 0.03, EXIT_BAND_WATER = 0.09;
+     *  to leave from: the grid's anisotropy, at most 2.7% with knight's moves, on foot and (since 2026-10-14) swimming;
+     *  swimming had 9% while its moves were the eight neighbours only (8.3%). */
+    static final double EXIT_BAND = 0.03;
     /** Ways out within this share of the best's cost inside count as as good, and the one nearest the line is taken. */
     static final double EXIT_TIE = 0.01;
 
     /**
      * A way out past the loaded area, scored as the walk will take it: the cost to the floor, scaled from the grid's
      * way there to the straight line, and the way on past the edge (a straight line at the floor's rate). Inside, the
-     * grid's moves (eight neighbours, and knight's moves on foot) make a way up to 2.7% longer than the straight line
-     * on foot and 8.3% swimming, while the way on past the edge is charged as a straight line; so the cheapest way out
+     * grid's moves (eight neighbours and knight's moves, on foot and swimming) make a way up to 2.7% longer than the
+     * straight line, while the way on past the edge is charged as a straight line; so the cheapest way out
      * had been one along an axis or a diagonal and then the straight line, not the straight line itself (RW,
      * 2026-10-12: "when the target is off teh rendred chunks, the pathfingin goes in liek one axis direction, rather
      * than a straight line"). The tightened route (and layer 2's field) take the straight line, so the cost inside is
      * scaled to it.
      */
-    private double exitScore(double inside, double onward, boolean water, int sx, int sz, int x, int z) {
-        double grid = water ? octileLength(x - sx, z - sz) : gridLength(x - sx, z - sz);
+    private double exitScore(double inside, double onward, int sx, int sz, int x, int z) {
+        double grid = gridLength(x - sx, z - sz);
         double straight = Math.hypot(x - sx, z - sz);
         return (grid < 1e-9 ? inside : inside * straight / grid) + onward;
     }
 
-    /** The length of the shortest way across open water by eight-neighbour moves. */
+    /** The length of the shortest way by eight-neighbour moves only (straight and diagonal): across water where knight's
+     *  moves don't fit (a channel two wide). */
     static double octileLength(int dx, int dz) {
         int u = Math.max(Math.abs(dx), Math.abs(dz)), v = Math.min(Math.abs(dx), Math.abs(dz));
         return u - v + v * Math.sqrt(2);

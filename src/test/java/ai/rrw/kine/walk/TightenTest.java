@@ -94,6 +94,10 @@ public class TightenTest {
         checkAgainstWorld(w, r);
     }
 
+    static boolean special(byte m) {
+        return m != Graph.WALK && m != Graph.DROP && m != Graph.START && m != Graph.SWIM && m != Graph.WADE;
+    }
+
     @Test
     void neverLongerThanTheGridPath() {
         for (long seed = 1; seed <= 40; seed++) {
@@ -106,10 +110,11 @@ public class TightenTest {
             if (!res.found) continue;
             Route r = new Tighten(v, new Costs(), MARGIN, true).route(res, gx, gz);
             assertTrue(r.length <= r.gridLength + 1e-9, "seed " + seed + ": " + r.length + " > " + r.gridLength);
-            // and it still visits the grid path's special moves in order
+            // and it still visits the grid path's special moves in order (not the runs pulled taut: walks, drops,
+            // swims and, since 2026-10-14, wades)
             int specials = 0, kept = 0;
-            for (byte m : res.moves) if (m != Graph.WALK && m != Graph.DROP && m != Graph.START) specials++;
-            for (byte m : r.move) if (m != Graph.WALK && m != Graph.DROP && m != Graph.START) kept++;
+            for (byte m : res.moves) if (special(m)) specials++;
+            for (byte m : r.move) if (special(m)) kept++;
             assertEquals(specials, kept, "seed " + seed);
         }
     }

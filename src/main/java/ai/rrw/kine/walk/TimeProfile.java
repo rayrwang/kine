@@ -136,10 +136,11 @@ public final class TimeProfile {
 
     /**
      * For each step of the grid path that swims, how much shorter the straight line is than the grid's way across
-     * open water: the grid's way on its eight directions is up to 8.3% longer than the straight line, which the walk
-     * swims (layer 2, and since 2026-10-14 the tightened route too). A run of swimming steps that is a shortest way on the grid
-     * between its ends (open water) is scaled by the straight line over the grid's length; a run that bends (a
-     * channel) is left as it is. Measured 2026-10-13: the sea's planned time ran 5 to 8% high.
+     * open water: the grid's way is up to 2.7% longer than the straight line with knight's moves (8.3% on the eight
+     * directions alone, where knight's moves don't fit), which the walk swims (layer 2, and since 2026-10-14 the
+     * tightened route too). A run of swimming steps that is a shortest way on the grid between its ends (open water),
+     * with knight's moves or without, is scaled by the straight line over that length; a run that bends (a channel) is
+     * left as it is. Measured 2026-10-13: the sea's planned time ran 5 to 8% high.
      */
     static double[] swimStraighten(PathSearch.Result r, double[] x, double[] z) {
         int n = r.path.length;
@@ -151,10 +152,13 @@ public final class TimeProfile {
             int j = i;
             double len = 0;
             while (j < n - 1 && r.moves[j + 1] == Graph.SWIM) { len += Math.hypot(x[j + 1] - x[j], z[j + 1] - z[j]); j++; }
-            double dx = x[j] - x[i], dz = z[j] - z[i];
-            double grid = PathSearch.octileLength((int) Math.round(dx), (int) Math.round(dz)), straight = Math.hypot(dx, dz);
-            if (grid > 1e-6 && Math.abs(len - grid) <= 0.01 * grid + 1e-6)
-                for (int k = i; k < j; k++) f[k] = straight / grid;
+            double dx = x[j] - x[i], dz = z[j] - z[i], straight = Math.hypot(dx, dz);
+            int ix = (int) Math.round(dx), iz = (int) Math.round(dz);
+            for (double grid : new double[]{PathSearch.gridLength(ix, iz), PathSearch.octileLength(ix, iz)})
+                if (grid > 1e-6 && Math.abs(len - grid) <= 0.01 * grid + 1e-6) {
+                    for (int k = i; k < j; k++) f[k] = straight / grid;
+                    break;
+                }
             i = j;
         }
         return f;
