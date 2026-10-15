@@ -288,6 +288,9 @@ public final class Layer2 {
         return (j != null && !j.isDone()) || recipe != null;
     }
 
+    /** Still enough to start a searched recipe from (squared horizontal speed). */
+    static final double REST2 = 1e-12;
+
     private static final java.util.regex.Pattern TEMPLATE_HOW = java.util.regex.Pattern.compile("template (\\S+) (r\\dm?)");
 
     /** Ticks in a row the player has stood still on the ground (the walk's end of tick). */
@@ -435,6 +438,20 @@ public final class Layer2 {
         if (r == null || grid == null) return false;
         if (recipeT >= r.ticks) { recipe = null; recipesPlayed++; return false; }
         GroundPhysics phys = new GroundPhysics(grid, WorldSnapshot.body(p));
+        // a searched recipe starts from rest, as its search did (submitSearch): keys up until the player is still
+        if (recipeT == 0 && r.fromRest && p.onGround()) {
+            var dv = p.getDeltaMovement();
+            if (dv.x * dv.x + dv.z * dv.z > REST2) {
+                action = RunModel.STOP;
+                yaw = KillAura.lastSentYaw(p);
+                recipeKeys = 0;
+                recipeKeysTick = tick;
+                safe = true;
+                controlling = true;
+                lastWhy = "recipe: coming to rest";
+                return true;
+            }
+        }
         if (!r.stillLands(phys, WorldSnapshot.state(p), recipeT, r.lx, r.ly, r.lz)) {
             recipe = null;
             recipesDropped++;
@@ -581,6 +598,11 @@ public final class Layer2 {
     private static void submitSearch(LocalPlayer p, Field f, BlockGrid g, Body body, int[][] land, boolean routed) {
         MoveState s = WorldSnapshot.state(p);
         float sent = KillAura.lastSentYaw(p), sentPitch = KillAura.lastSentPitch(p);
+        // from where the player comes to rest, keys up (a search starts with it still sliding up to 0.01 a tick, and
+        // its result, seconds later, is played from rest: a thin template, diag_4x2's, then dropped at its first tick,
+        // why88 tries 3 and 4); the recipe waits for rest before its first tick (playRecipe)
+        GroundPhysics rest = new GroundPhysics(g, body);
+        for (int i = 0; i < 60 && s.onGround && s.vx * s.vx + s.vz * s.vz > REST2; i++) rest.step(s, 0, sent, sentPitch);
         int bx = s.hasSupport ? s.supX : p.getBlockX(), bz = s.hasSupport ? s.supZ : p.getBlockZ();
         int by = s.hasSupport ? s.supY : (int) Math.floor(s.y - 1e-3);
         RunSim.Goal goal = searchGoal;
@@ -598,6 +620,7 @@ public final class Layer2 {
             Recipe result = null;
             try {
                 result = searchAll(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz);
+                if (result != null) result.fromRest = true;
                 return result;
             } finally {
                 if (SEARCH_LOG) {

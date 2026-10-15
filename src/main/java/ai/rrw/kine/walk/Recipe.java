@@ -392,6 +392,8 @@ public final class Recipe {
 
     /** The landing block it was found for. */
     public int lx, ly, lz;
+    /** Searched from the state the player comes to rest in (Layer2.submitSearch): its first tick waits for rest. */
+    public boolean fromRest;
 
     // ------------------------------------------------------------------ standing spots (RW 2026-10-14, #67)
 
