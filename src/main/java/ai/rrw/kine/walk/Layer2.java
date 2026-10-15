@@ -153,6 +153,7 @@ public final class Layer2 {
         lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
         spotsEmpty.clear();
         failedSearches.clear();
+        NeoTemplates.dropped.clear();
         hopJumpNone = false;
         dropChain();
         stillTicks = 0;
@@ -286,6 +287,8 @@ public final class Layer2 {
         Future<Recipe> j = recipeJob;
         return (j != null && !j.isDone()) || recipe != null;
     }
+
+    private static final java.util.regex.Pattern TEMPLATE_HOW = java.util.regex.Pattern.compile("template (\\S+) (r\\dm?)");
 
     /** Ticks in a row the player has stood still on the ground (the walk's end of tick). */
     public static int stillTicks() {
@@ -436,6 +439,10 @@ public final class Layer2 {
             recipe = null;
             recipesDropped++;
             lastRecipeTry = tick;
+            // a template that dropped in play is not fitted again this walk, and the floor may be searched again (RW's
+            // triple neo: a thin neo_chained template fitted first, dropped, and no search followed on that block)
+            java.util.regex.Matcher m = TEMPLATE_HOW.matcher(r.how == null ? "" : r.how);
+            if (m.find()) { NeoTemplates.dropped.add(m.group(1) + " " + m.group(2)); recipeTryKey = Long.MIN_VALUE; }
             return false;
         }
         action = RunModel.STOP;
@@ -623,12 +630,6 @@ public final class Layer2 {
         }
         Recipe here = searchLands(new GroundPhysics(g, body), s, sent, land, true);
         if (here != null) return here;
-        // a template found offline (a neo, a long jump, a ladder chain), before the slower standing spots: fitted from
-        // the block the walk stands on and from the floors of its level near it (its take-off: the walk may rest short
-        // of it, as on RW's triple neo, 3 blocks back on the walkway), onto the search's landings and every joined floor
-        // nearer the goal within reach (RW's triple's landing, right past the wall, was not among the search's four)
-        Recipe tpl = templates(f, g, body, s, sent, land, bx, by, bz);
-        if (tpl != null) return tpl;
         double[][] near = Recipe.spots(bx, bz, s.x, s.z, land[0][0] + 0.5, land[0][2] + 0.5);
         double[][] back = Recipe.backSpots(new GroundPhysics(g, body), bx, by, bz, s.y, land[0][0] + 0.5, land[0][2] + 0.5);
         java.util.List<java.util.concurrent.Callable<Recipe>> jobs = new java.util.ArrayList<>();
@@ -661,10 +662,25 @@ public final class Layer2 {
             }
             if (found != null) return found;
         }
-        return null;
+        // a template found offline (a neo, a long jump, a ladder chain) when neither search makes it from any spot:
+        // fitted from the block the walk stands on and then from the floors of its level near it (its take-off: the walk
+        // may rest short of it, as on RW's triple neo, 3 blocks back on the walkway), onto the search's landings and
+        // every joined floor nearer the goal within reach (RW's triple's landing, right past the wall, was not among the
+        // search's four). (Tried before the spots, de95110, the course's unbroken walks fell from 87 to 78 and 19:
+        // templates took jumps the spots make; after them, as before.)
+        return templates(f, g, body, s, sent, land, bx, by, bz);
     }
 
     private static Recipe templates(Field f, BlockGrid g, Body body, MoveState s, float sent, int[][] land, int bx, int by, int bz) {
+        // first as before RW's triple neo (the block stood on, the search's landings, the file's order: what the course's
+        // walks made 87 of 121 with, c20); then the wider pass. Wider at once, the walks fell to 78 and 19 (templates
+        // before the spots, de95110) and to 31 and 81 (after them, a2f2c36: a template from another key or landing,
+        // more robust in the generator but not here, taken where the narrow pass took the one that plays)
+        GroundPhysics phys0 = new GroundPhysics(g, body);
+        for (int[] l : land) {
+            Recipe t0 = NeoTemplates.fit(phys0, s, sent, bx, by, bz, l);
+            if (t0 != null) return t0;
+        }
         java.util.LinkedHashMap<Long, int[]> lands = new java.util.LinkedHashMap<>();
         for (int[] l : land) lands.put(cellKey(l), l);
         java.util.LinkedHashMap<Long, int[]> keys = new java.util.LinkedHashMap<>();

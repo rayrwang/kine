@@ -148,6 +148,9 @@ final class NeoTemplates {
     static final int RUN_ON = 6;
 
     public static int fitsTried = 0, fitsFound = 0;
+    /** Templates, each with the way it lay ("id r1m"), that dropped in play this walk: not fitted again (Layer2.reset
+     *  clears it). */
+    static final java.util.Set<String> dropped = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * A recipe from the state s (standing on block (bx, by, bz), the view at sent) onto the landing block l by a template,
@@ -181,6 +184,7 @@ final class NeoTemplates {
                 for (int r = 0; r < 4; r++) {
                     double[] o = turn(t.ldx(), t.ldz(), r, m == 1);
                     if (Math.round(o[0]) != dx || Math.round(o[1]) != dz) continue;
+                    if (!dropped.isEmpty() && dropped.contains(t.id() + " r" + r + (m == 1 ? "m" : ""))) continue;
                     fitsTried++;
                     Recipe found = fitOne(phys, s, sent, bx, by, bz, l, t, r, m == 1);
                     if (found != null) { fitsFound++; return found; }
