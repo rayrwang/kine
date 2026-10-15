@@ -277,8 +277,9 @@ public final class GroundPhysics {
      * A turtle helmet gives 10 s of water breathing whenever the eyes are out (Player.tick's turtleHelmetTick). The
      * server sees the eyes Body.airEyeLag ticks after the client does (measured: 2), and a breathing effect a tick
      * longer than the client's count of it (so it lasts while the count is 0 too; none is -1). Up to 1.21.4 the
-     * client runs the rule too, on its own eyes, after the server's value (when it changed) has replaced its own
-     * (Rules.CLIENT_TICKS_AIR): MoveState.air is then the client's and MoveState.serverAir the server's as heard.
+     * client runs the rule too, on its own eyes and its own effects, after the server's value (when it changed) has
+     * replaced its own (Rules.CLIENT_TICKS_AIR): MoveState.air is then the client's and MoveState.serverAir the
+     * server's as heard.
      */
     private void air(MoveState s, boolean wasEyeInWater) {
         if (s.eyesHistory == MoveState.UNSET) s.eyesHistory = wasEyeInWater ? 0x3FFFFFFF : 0;
@@ -292,7 +293,11 @@ public final class GroundPhysics {
             double heard = s.serverAir;
             s.serverAir = airStep(s, s.serverAir, eyes, breathing, true);
             if (s.serverAir != heard) s.air = s.serverAir;   // the entity data, sent when it changes, before the client's step
-            s.air = airStep(s, s.air, s.eyesInWater, breathing, false);
+            // the client keeps a breathing effect until the server's remove packet (LivingEntity.tickEffects removes it on
+            // the server only), which comes two ticks before the server's drained air: while the count is 2 or more
+            // (measured on 1.21.4, Water Breathing and a turtle shell running out: the client's air drops when the
+            // count reads 1, the server's when it reads -1)
+            s.air = airStep(s, s.air, s.eyesInWater, s.waterBreathingTicks >= 2, false);
         } else {
             s.air = airStep(s, s.air, eyes, breathing, true);
         }

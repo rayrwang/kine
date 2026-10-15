@@ -19,6 +19,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.DynamicUniforms;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
@@ -151,6 +152,22 @@ final class World implements WorldDraw {
             };
             Matrix4f mv = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(pose).translate(dx, dy, dz);
             Vector4f tint = new Vector4f(1.0F, 1.0F, 1.0F, alpha);
+            // one draw for each run of segments of the same width, each with its own transforms (the line width is in
+            // them); all written before the render pass opens: writing maps a buffer, which the command encoder refuses
+            // while a pass is open
+            int end = Math.min(first + count, lines);
+            if (end <= first) return;
+            int runs = 0;
+            for (int k = first; k < end; k++) if (k == first || width[k] != width[k - 1]) runs++;
+            int[] start = new int[runs + 1];
+            DynamicUniforms.Transform[] t = new DynamicUniforms.Transform[runs];
+            for (int k = first, r = 0; k < end; k++) {
+                if (k != first && width[k] == width[k - 1]) continue;
+                start[r] = k;
+                t[r++] = new DynamicUniforms.Transform(mv, tint, new Vector3f(), new Matrix4f(), width[k]);
+            }
+            start[runs] = end;
+            GpuBufferSlice[] transforms = RenderSystem.getDynamicUniforms().writeTransforms(t);
             RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(VertexFormat.Mode.LINES);
             GpuBuffer ib = indices.getBuffer(count * 6);
             RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
@@ -164,15 +181,9 @@ final class World implements WorldDraw {
                 RenderSystem.bindDefaultUniforms(pass);
                 pass.setVertexBuffer(0, buffer);
                 pass.setIndexBuffer(ib, indices.type());
-                int end = Math.min(first + count, lines);
-                for (int run = first; run < end; ) {
-                    int next = run + 1;
-                    while (next < end && width[next] == width[run]) next++;
-                    GpuBufferSlice transforms = RenderSystem.getDynamicUniforms()
-                        .writeTransform(mv, tint, new Vector3f(), new Matrix4f(), width[run]);
-                    pass.setUniform("DynamicTransforms", transforms);
-                    pass.drawIndexed(run * 4, 0, (next - run) * 6, 1);   // four vertices a segment
-                    run = next;
+                for (int r = 0; r < runs; r++) {
+                    pass.setUniform("DynamicTransforms", transforms[r]);
+                    pass.drawIndexed(start[r] * 4, 0, (start[r + 1] - start[r]) * 6, 1);   // four vertices a segment
                 }
             }
         }

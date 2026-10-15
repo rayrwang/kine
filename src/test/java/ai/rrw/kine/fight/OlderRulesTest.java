@@ -86,6 +86,26 @@ public class OlderRulesTest {
         assertEquals(2, UnderRelease.get("1.21.2", BreezeUpClose.class));
     }
 
+    /** A zombie's walking speed, blocks a tick at full speed on the ground. */
+    public static final class ZombieWalk implements Supplier<Double> {
+        public Double get() {
+            MobSim m = new MobSim();
+            m.speed = 0.23;
+            return m.walkSpeed();
+        }
+    }
+
+    /** Rules.MOB_INPUT_CUT: up to 1.21.4 LivingEntity.aiStep cuts a mob's zza to 0.98 after its move control set it, so
+     *  it walks at 0.98 of 1.21.5's speed (a zombie villager measured in a 1.21.4 lockstep test: 0.11419 a tick). */
+    @Test
+    void mobsWalkAt098UpTo1214() {
+        double now = new ZombieWalk().get();
+        assertEquals(0.23 * 0.23 / (1.0 - 0.6F * 0.91F), now, 1e-12);
+        assertEquals(now, UnderRelease.get("1.21.5", ZombieWalk.class), 0.0);
+        assertEquals(now * 0.98F, UnderRelease.get("1.21.4", ZombieWalk.class), 1e-12);
+        assertEquals(0.11419, UnderRelease.get("1.21.4", ZombieWalk.class), 1e-5);
+    }
+
     /** The hit margin of a projectile on its first tick. */
     public static final class FirstTickMargin implements Supplier<Double> {
         public Double get() {

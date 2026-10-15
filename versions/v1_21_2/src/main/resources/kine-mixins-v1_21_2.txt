@@ -17,6 +17,7 @@ v1_21_2.FogRendererMixin
 v1_21_2.CloudFogMixin
 v1_21_2.ProjectileGlowMixin
 v1_21_2.KeyboardInputMixin
+v1_21_2.SprintKeyMixin
 v1_21_2.ClientPacketListenerMixin
 v1_21_2.GameRendererFovInvoker
 # the server's fall distance for the local player on 1.21.4 (compat.v1_21_2.ServerFall; nothing on 1.21.2 and 1.21.3)

@@ -31,7 +31,8 @@ import java.util.SplittableRandom;
  *       swell before the goals). Its melee goal's hit does nothing (Creeper.doHurtTarget).</li>
  * </ul>
  * Walking: MoveControl calls Mob.setSpeed, which sets zza to the speed (0.23 for a zombie, 0.345 a baby) after
- * LivingEntity.aiStep's applyInput has scaled the last tick's by 0.98, so the 0.98 never reaches the move; pushed by
+ * LivingEntity.aiStep's applyInput has scaled the last tick's by 0.98, so the 0.98 never reaches the move (up to 1.21.4
+ * aiStep scales it after the move control instead, and a mob moves at 0.98 of it: Rules.MOB_INPUT_CUT); pushed by
  * zza * speed * 0.216 / f^3 on the ground (f = 0.6), 0.02 * zza in the air; drag f * 0.91 after a move that started on
  * the ground, 0.91 in the air, (vy - 0.08) * 0.98 vertically (LivingEntity.travelInAir). A zombie walks 0.1165 blocks a
  * tick (as the recorded real ones do).
@@ -246,6 +247,7 @@ public final class MobSim {
             return hopSpeed;
         }
         double sp = speed * speedModifier;
+        if (Rules.MOB_INPUT_CUT) return sp * 0.98F * sp / (1.0 - GROUND_FRICTION);   // up to 1.21.4: zza cut to 0.98
         return sp * sp / (1.0 - GROUND_FRICTION);
     }
 
@@ -692,6 +694,7 @@ public final class MobSim {
                 double d = Math.sqrt(dx * dx + dz * dz);
                 double sp = speed * speedModifier;
                 double push = wasOnGround ? sp * sp * (0.21600002F / (0.6F * 0.6F * 0.6F)) : sp * 0.02F;
+                if (Rules.MOB_INPUT_CUT) push *= 0.98F;   // up to 1.21.4 aiStep cuts zza after the move control set it
                 ax = dx / d * push; az = dz / d * push;
                 yRot = (float) AuraSim.yawTo(x, z, pathX, pathZ);
             }
@@ -701,6 +704,7 @@ public final class MobSim {
             double r = Math.toRadians(yRot);
             ax = -Math.sin(r) * speed * scale;
             az = Math.cos(r) * speed * scale;
+            if (Rules.MOB_INPUT_CUT) { ax *= 0.98F; az *= 0.98F; }   // up to 1.21.4: zza cut to 0.98
             if (hopNow) { vy = jumpPower; }
         } else if (op == OP_STRAFE) {
             // MoveControl.strafe: setSpeed(0.25 * speed), zza and xxa the strafe's; the input (xxa, 0, zza), under
@@ -711,6 +715,7 @@ public final class MobSim {
             double xa = strafeR * scale, za = strafeF * scale;
             ax = xa * cos - za * sin;
             az = za * cos + xa * sin;
+            if (Rules.MOB_INPUT_CUT) { ax *= 0.98F; az *= 0.98F; }   // up to 1.21.4: xxa and zza cut to 0.98
         }
         if (Math.abs(vx) < 0.003) vx = 0;
         if (Math.abs(vz) < 0.003) vz = 0;

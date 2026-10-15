@@ -161,6 +161,13 @@ public final class Rules {
 
     // ---------------------------------------------------------------- mobs
 
+    /** Up to 1.21.4: LivingEntity.aiStep cuts xxa and zza to 0.98F after serverAiStep, so a mob moves at 0.98 of the
+     *  input its MoveControl set (walking, strafing, a slime's hop). From 1.21.5 applyInput cuts them before
+     *  serverAiStep, whose MoveControl sets them again (Mob.setSpeed), so the cut never reaches a mob's move. (The local
+     *  player keeps it on every release: LocalPlayer's own input, GroundPhysics.) Measured in 1.21.4 lockstep client
+     *  tests: a zombie villager walks 0.11419 a tick against 26.1.2's 0.11652, a vindicator 0.26443 against 0.26982. */
+    public static final boolean MOB_INPUT_CUT = !GameVersion.atLeast("1.21.5");
+
     /** Up to 1.21.1: the breeze's Shoot starts only with the target more than 2 blocks away (isTargetWithinRange:
      *  `4.0 < d2 < 256.0`, feet to feet; once started the shot goes). From 1.21.2 `d2 < 256.0`. The facing test it also
      *  had then (`view . toTarget > 0.5`, right after looking at the target's feet) always passes beyond 2 blocks, since
