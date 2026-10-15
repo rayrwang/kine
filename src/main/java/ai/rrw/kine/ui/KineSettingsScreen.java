@@ -20,7 +20,8 @@ import java.util.function.IntFunction;
  * feature: on/off, or for the elytra, speed and altitude displays off, in flight, elytra only or always, or a slider. A feature
  * whose section or the whole mod is switched off greys out and keeps its own setting, as does one that needs
  * another feature switched on. Hovering a row shows its description on the right. A folder row (the Visibility
- * section's) lists its settings in the right pane when clicked, and closes when clicked again.
+ * section's) lists its settings in the right pane when clicked, and closes when clicked again. A section's name opens
+ * and closes its rows; every section starts closed when the game starts.
  */
 public class KineSettingsScreen extends Screen {
 
@@ -35,7 +36,11 @@ public class KineSettingsScreen extends Screen {
     private final Screen parent;
 
     // layout: every scrolling widget with its content-space y and the text shown when it's hovered
-    private static final int ALL = -2, OPTION = -1;   // Row.switchOf: the whole mod, a feature, else a section's index
+    private static final int ALL = -2, OPTION = -1, NAME_ROW = -3;   // Row.switchOf: the whole mod, a feature, a section's
+                                                                  // name (opens and closes it), else a section's index
+    /** The sections shown open; every section starts closed when the game starts. */
+    private static final java.util.EnumSet<Settings.Section> EXPANDED = java.util.EnumSet.noneOf(Settings.Section.class);
+    private static final String DESC_HEADER = "Click to show or hide this section's settings. Every section starts closed.";
     private record Row(AbstractWidget button, int baseY, String desc, Opt opt, int switchOf) {}
     private final List<Row> rows = new ArrayList<>();
     private final List<Row> paneRows = new ArrayList<>();   // the open folder's settings, in the right pane (not scrolled)
@@ -417,13 +422,18 @@ public class KineSettingsScreen extends Screen {
             .bounds(rowX, viewTop, colW, ROW_H).build();
         rows.add(new Row(addRenderableWidget(all), cY, DESC_ALL, null, ALL));
         cY += ROW_STEP + GAP;
+        if (openFolder != null && !EXPANDED.contains(openFolder.section())) openFolder = null;
         for (int s = 0; s < SECTIONS.length; s++) {
             Settings.Section sec = SECTIONS[s].section();
             baseHeaderY[s] = cY;
             Button sw = Button.builder(onOff(Settings.sectionOn(sec)), b -> { Settings.setSectionOn(sec, !Settings.sectionOn(sec)); changed(); })
                 .bounds(rowX + colW - SWITCH_W, viewTop + cY, SWITCH_W, ROW_H).build();
             rows.add(new Row(addRenderableWidget(sw), cY, DESC_SECTION, null, s));
+            Button name = Button.builder(headerLabel(sec), b -> { if (!EXPANDED.remove(sec)) EXPANDED.add(sec); rebuildWidgets(); })
+                .bounds(rowX, viewTop + cY, colW - SWITCH_W - 4, ROW_H).build();
+            rows.add(new Row(addRenderableWidget(name), cY, DESC_HEADER, null, NAME_ROW));
             cY += headH;
+            if (!EXPANDED.contains(sec)) { cY += GAP; continue; }
             for (Opt opt : SECTIONS[s].opts()) {
                 AbstractWidget b = !opt.isFolder() && opt.option().isLevel()
                     ? new LevelSlider(rowX, viewTop + cY, colW, ROW_H, opt)
@@ -490,6 +500,8 @@ public class KineSettingsScreen extends Screen {
         for (Row r : rows) {
             if (r.switchOf() == ALL) {
                 r.button().setMessage(allLabel());
+            } else if (r.switchOf() == NAME_ROW) {
+                r.button().active = true;
             } else if (r.switchOf() >= 0) {
                 r.button().setMessage(onOff(Settings.sectionOn(SECTIONS[r.switchOf()].section())));
                 r.button().active = Settings.enabled();
@@ -511,6 +523,10 @@ public class KineSettingsScreen extends Screen {
 
     private static Component allLabel() {
         return Component.literal("All features: " + (Settings.enabled() ? "ON" : "OFF"));
+    }
+
+    private static Component headerLabel(Settings.Section sec) {
+        return Component.literal((EXPANDED.contains(sec) ? "▼ " : "▶ ") + sec.title);
     }
 
     private static Component onOff(boolean on) {
@@ -573,10 +589,7 @@ public class KineSettingsScreen extends Screen {
         graphics.enableScissor(0, viewTop, this.width, viewBottom);
         for (int s = 0; s < SECTIONS.length; s++) {
             int hy = viewTop + baseHeaderY[s] - scrollOffset;
-            int ty = hy + (ROW_H - this.font.lineHeight) / 2;
-            boolean on = Settings.enabled() && Settings.sectionOn(SECTIONS[s].section());
-            graphics.text(this.font, Component.literal(SECTIONS[s].section().title), rowX, ty, on ? HEADER : 0xFF777777);
-            int dy = hy + ROW_H + 1;
+            int dy = hy - GAP / 2 - 2;   // above each section, in the gap after the one before (was: under its name)
             graphics.fill(rowX, dy, rowX + colW, dy + 1, DIVIDER);
         }
         graphics.disableScissor();
