@@ -1,9 +1,9 @@
 package ai.rrw.kine.util;
 
+import ai.rrw.kine.compat.Compat;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.input.InputQuirks;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 
@@ -31,7 +31,7 @@ public final class InventoryClicks {
     /** Whether the player's inventory could be opened and clicked now: no screen up, no container open,
      *  nothing on the cursor, and not riding something whose inventory the server opens instead. */
     public static boolean available(Minecraft mc, LocalPlayer p) {
-        return mc.screen == null && mc.gameMode != null && !mc.gameMode.isServerControlledInventory()
+        return Compat.screen(mc) == null && mc.gameMode != null && !mc.gameMode.isServerControlledInventory()
             && p.containerMenu == p.inventoryMenu && p.inventoryMenu.getCarried().isEmpty();
     }
 
@@ -66,8 +66,7 @@ public final class InventoryClicks {
      *  toggled keys restored, and no attack until the tick after next (MouseHandler.grabMouse, Minecraft.setScreen). */
     public static void closeAsVanilla(Minecraft mc, LocalPlayer p) {
         close(mc, p);
-        if (InputQuirks.RESTORE_KEY_STATE_AFTER_MOUSE_GRAB) KeyMapping.setAll();
-        KeyMapping.restoreToggleStatesOnScreenClosed();
+        Compat.keysAfterInventoryClose(mc);
         mc.missTime = 10000;
     }
 }

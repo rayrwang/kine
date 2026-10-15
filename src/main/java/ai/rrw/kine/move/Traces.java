@@ -108,6 +108,7 @@ public final class Traces {
             }
             w.println(sb);
             if (k.fluid != BlockInfo.NO_FLUID) w.printf(Locale.ROOT, "fluid %d %d %s%n", i, k.fluid, f(k.fluidHeight));
+            if (k.bounce != 0.0F) w.printf(Locale.ROOT, "bounce %d %s%n", i, f(k.bounce));
         }
         StringBuilder cells = new StringBuilder("cells");
         int last = -2, count = 0;
@@ -169,6 +170,7 @@ public final class Traces {
                     body.jumpStrength = pf(p[4]); body.jumpBoost = pf(p[5]); body.gravity = pd(p[6]);
                     body.stepHeight = pf(p[7]); body.movementEfficiency = pf(p[8]); body.width = pf(p[9]);
                     body.height = pf(p[10]); body.crouchHeight = pf(p[11]); body.canSprint = Boolean.parseBoolean(p[12]);
+                    body.enoughFood = body.canSprint;   // the recordings carry no blindness: canSprint is the food
                     body.sprintWindow = Integer.parseInt(p[13]); body.canGlide = Boolean.parseBoolean(p[14]);
                     body.knockbackResistance = pd(p[15]);
                 }
@@ -198,7 +200,13 @@ public final class Traces {
                     int i = Integer.parseInt(p[1]);
                     BlockInfo k = kinds.get(i);
                     kinds.set(i, new BlockInfo(k.shape, k.friction, k.speedFactor, k.jumpFactor, k.flags,
-                        Integer.parseInt(p[2]), pf(p[3])));
+                        Integer.parseInt(p[2]), pf(p[3]), k.fallFactor, k.bounce));
+                }
+                case "bounce" -> {   // 26.2+ (Rules.BOUNCE_RESTITUTION)
+                    int i = Integer.parseInt(p[1]);
+                    BlockInfo k = kinds.get(i);
+                    kinds.set(i, new BlockInfo(k.shape, k.friction, k.speedFactor, k.jumpFactor, k.flags, k.fluid,
+                        k.fluidHeight, k.fallFactor, pf(p[2])));
                 }
                 case "body2" -> {
                     body.swimHeight = pf(p[1]); body.eyeHeight = pf(p[2]); body.crouchEyeHeight = pf(p[3]);

@@ -1,15 +1,12 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.util.Smoothing;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
@@ -45,18 +42,15 @@ public final class FlightPathVector {
     private static long lastNanos = 0L;
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "flightdir"),
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "fpv"),
-            FlightPathVector::render);
+        Compat.hudAfter("flightdir", "fpv", FlightPathVector::render);
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (!Settings.shows(Settings.displayFlightPathVector)) { have = false; return; }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) { have = false; return; }
-        if (!(p.isFallFlying() || p.fallDistance > FALL_SHOW)) { have = false; return; }   // flight or a real fall only
+        if (!(p.isFallFlying() || Compat.fallDistance(p) > FALL_SHOW)) { have = false; return; }   // flight or a real fall only
 
         Vec3 vel = p.getDeltaMovement();
         if (vel.lengthSqr() < MIN_SPEED * MIN_SPEED) { have = false; return; }
@@ -76,8 +70,7 @@ public final class FlightPathVector {
         if (len < 1.0e-6) return;
 
         // project the velocity direction, a camera-relative offset, through the view-projection matrix
-        Camera camera = mc.gameRenderer.getMainCamera();
-        Matrix4f vp = camera.getViewRotationProjectionMatrix(new Matrix4f());
+        Matrix4f vp = Compat.viewProjection(mc);
         Vector4f v = new Vector4f((float)(vx / len) * RAY, (float)(vy / len) * RAY, (float)(vz / len) * RAY, 1.0f);
         vp.transform(v);
         if (v.w <= NEAR_W) return;                          // moving away from the view direction: nothing to mark
@@ -96,7 +89,7 @@ public final class FlightPathVector {
     }
 
     /** The winged-ring velocity symbol, screen-aligned, centred on (cx, cy). Drawn with fill only. */
-    private static void symbol(GuiGraphicsExtractor g, int cx, int cy, int color) {
+    private static void symbol(Gui2D g, int cx, int cy, int color) {
         circle(g, cx, cy, RADIUS, color);
         g.fill(cx - RADIUS - WING, cy, cx - RADIUS, cy + 1, color);   // left wing
         g.fill(cx + RADIUS, cy, cx + RADIUS + WING, cy + 1, color);   // right wing
@@ -104,7 +97,7 @@ public final class FlightPathVector {
     }
 
     /** 1px circle outline via the midpoint algorithm (8-way symmetry). */
-    private static void circle(GuiGraphicsExtractor g, int cx, int cy, int r, int color) {
+    private static void circle(Gui2D g, int cx, int cy, int r, int color) {
         int x = r, y = 0, err = 1 - r;
         while (x >= y) {
             px(g, cx + x, cy + y, color); px(g, cx + y, cy + x, color);
@@ -117,7 +110,7 @@ public final class FlightPathVector {
         }
     }
 
-    private static void px(GuiGraphicsExtractor g, int x, int y, int color) {
+    private static void px(Gui2D g, int x, int y, int color) {
         g.fill(x, y, x + 1, y + 1, color);
     }
 }

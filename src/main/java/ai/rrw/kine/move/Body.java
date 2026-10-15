@@ -21,6 +21,10 @@ public final class Body {
     public float waterMovementEfficiency = 0.0F;
     public boolean dolphinsGrace = false;
     public boolean canSprint = true;
+    /** The two halves of canSprint, which the sprint rules up to 1.21.4 read apart (Rules.KEY_IMPULSES: blindness
+     *  blocks a start but stops no sprint; 1.21.4's shouldStopSprinting stops one on blindness): food enough to sprint
+     *  (hasEnoughFoodToSprint: above 6, or able to fly), and Blindness. */
+    public boolean enoughFood = true, blind = false;
     public int sprintWindow = 7;
     public boolean canGlide = false;
     /** Copy gliding (a jump pressed in the air with a glider worn starts it) instead of only marking it (wouldGlide):

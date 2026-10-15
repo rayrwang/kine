@@ -7,6 +7,7 @@ import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.Ballistics.Spec;
 import ai.rrw.kine.combat.RangedWeapons.Arms;
 import ai.rrw.kine.combat.RangedWeapons.Kind;
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
@@ -14,7 +15,6 @@ import ai.rrw.kine.util.Enchant;
 import ai.rrw.kine.util.GameModes;
 import ai.rrw.kine.util.Hotbar;
 import ai.rrw.kine.util.InventoryClicks;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -57,7 +57,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -244,12 +243,12 @@ public final class BowAura {
         if (holding && !p.isUsingItem() && tick - pressTick >= 1) letGo(mc);   // no use started, it ended, or a press fired
         cancelHold = false;
         if (scrollBack >= 0) {   // the second half of a cancel's scroll
-            if (p.getInventory().getSelectedSlot() == lastSlot) { select(p, scrollBack); lastSlot = scrollBack; }
+            if (Compat.selectedSlot(p.getInventory()) == lastSlot) { select(p, scrollBack); lastSlot = scrollBack; }
             scrollBack = -1;
         }
         if (tridentOut >= 0 && (tick - tridentOut > 400 || tick - tridentOut > 5 && !tridentInAir(mc, p))) tridentOut = -1;
         Inventory inv = p.getInventory();
-        if (lastSlot >= 0 && inv.getSelectedSlot() != lastSlot) { restoreSlot = -1; weaponSlot = -1; }   // someone else picked a slot
+        if (lastSlot >= 0 && Compat.selectedSlot(inv) != lastSlot) { restoreSlot = -1; weaponSlot = -1; }   // someone else picked a slot
         if (yourClick(mc)) lastClick = tick;
 
         String why = hardStandDown(mc, p);
@@ -275,7 +274,7 @@ public final class BowAura {
             targetId = -1;
             fetchFrom = -1;
         }
-        lastSlot = inv.getSelectedSlot();
+        lastSlot = Compat.selectedSlot(inv);
     }
 
     /** Ticks until the shot under way, or the one the weapon in hand would start now, is off. */
@@ -309,12 +308,12 @@ public final class BowAura {
     private static String hardStandDown(Minecraft mc, LocalPlayer p) {
         if (!Settings.bowAura) return "off";
         if (!p.isAlive() || !GameModes.survivalLike(mc)) return "not alive in survival or adventure";
-        if (mc.screen != null || mc.getOverlay() != null) return "a screen open";
+        if (!Compat.noScreen(mc)) return "a screen open";
         if (ai.rrw.kine.walk.Walk.active()) return "the pathfinder walking";
         if (p.isFallFlying() || Takeoff.active() || Autopilot.isEngaged()) return "elytra flight";
         // airborne with an elytra on: a glide may open any tick, and the rotation sent would then steer it while it
         // turns back to your view, so it turns back now, before the glide (RW: "that would make you fly wildly off course")
-        if (!p.onGround() && p.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).has(DataComponents.GLIDER))
+        if (!p.onGround() && Compat.isGlider(p.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)))
             return "elytra flight";
         if (!onFoot(p)) return "not on foot";
         if (CombatMovement.engagedFight(mc)) return "combat movement fighting";
@@ -352,7 +351,7 @@ public final class BowAura {
         int used = ownUse ? p.getTicksUsingItem() : 0;
         Vec3 motion = new Vec3(p.getX() - p.xOld, p.getY() - p.yOld, p.getZ() - p.zOld);
         double ping = pingTicks(mc, p);
-        Holder<DamageType> arrow = level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.ARROW);
+        Holder<DamageType> arrow = Compat.damageType(level, DamageTypes.ARROW);
 
         // a bow or a trident drawn full: the release, when the shot the server would fire now (along the rotation sent
         // last tick, from where the last move packet put you) hits often enough with nothing else in its way
@@ -422,7 +421,7 @@ public final class BowAura {
         Vec3 spawn = shotSpawn(eye, motion, kind), sm = shotMotion(motion, kind);
         double lead = shotLead(kind, ping);
         Ballistics.Course course = ProjectileTargeting.courseOf(level, target);
-        Vec3 best = AimAdvisor.aimOffset(target, spawn, level.getGameTime());
+        Vec3 best = AimAdvisor.aimOffset(target, spawn, Compat.gameTime(level));
         if (best.equals(Vec3.ZERO)) best = new Vec3(0, targetUp, 0);   // no search result for it yet: the choice's point
         Vec3 center = target.getBoundingBox().getCenter().add(course.at(lead)).add(best);
         Ballistics.Solution sol = Ballistics.solve(spawn, center, course, lead, spec, sm, p.onGround());
@@ -515,8 +514,8 @@ public final class BowAura {
         LocalPlayer p = mc.player;
         if (p == null || mc.gameMode == null) { fetchFrom = -1; fetchedTo = -1; return; }
         if (fetchedTo >= 0 && fetchFrom < 0) {   // the tick after the swap: select it
-            if (kindOf(p.getInventory().getNonEquipmentItems().get(fetchedTo)) != null) {
-                if (restoreSlot < 0) restoreSlot = p.getInventory().getSelectedSlot();
+            if (kindOf(Compat.mainItems(p.getInventory()).get(fetchedTo)) != null) {
+                if (restoreSlot < 0) restoreSlot = Compat.selectedSlot(p.getInventory());
                 select(p, fetchedTo);
                 weaponSlot = fetchedTo;
                 lastSlot = fetchedTo;
@@ -531,7 +530,7 @@ public final class BowAura {
         if (!InventoryClicks.available(mc, p) || !InventoryClicks.claimBatch()) return;
         AbstractContainerMenu menu = p.inventoryMenu;
         if (ItemStack.matches(menu.getSlot(from).getItem(), want)) {
-            int to = Hotbar.slotToDisplace(p.getInventory().getNonEquipmentItems()::get);
+            int to = Hotbar.slotToDisplace(Compat.mainItems(p.getInventory())::get);
             mc.gameMode.handleContainerInput(menu.containerId, from, to, ContainerInput.SWAP, p);   // number-key swap
             fetchedTo = to;
             fetches++;
@@ -555,7 +554,7 @@ public final class BowAura {
         boolean piercing = kind == Kind.CROSSBOW && Enchant.level(main, Enchantments.PIERCING) > 0;
         int multishot = kind == Kind.CROSSBOW ? Enchant.level(main, Enchantments.MULTISHOT) : 0;
         Holder<DamageType> type = kind == Kind.TRIDENT
-            ? level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.TRIDENT) : arrow;
+            ? Compat.damageType(level, DamageTypes.TRIDENT) : arrow;
         List<BowTargets.Cand> cands = new ArrayList<>();
         List<Double> ups = new ArrayList<>();
         List<Entity> others = bystanders(mc, p);
@@ -817,8 +816,8 @@ public final class BowAura {
         // a vanilla player cancels a draw by scrolling to another slot: the server stops the use on the slot change. The
         // key stays down this tick so the keybind step doesn't loose the shot first; let go once the use has ended.
         Inventory inv = p.getInventory();
-        int now = inv.getSelectedSlot();
-        int to = restoreSlot >= 0 && restoreSlot != now ? restoreSlot : (now + 1) % Inventory.SELECTION_SIZE;
+        int now = Compat.selectedSlot(inv);
+        int to = restoreSlot >= 0 && restoreSlot != now ? restoreSlot : (now + 1) % Hotbar.SIZE;
         if (to != restoreSlot) scrollBack = now;   // your own weapon: scroll back to it next tick
         else { restoreSlot = -1; weaponSlot = -1; }
         select(p, to);
@@ -857,7 +856,7 @@ public final class BowAura {
 
     /** A loaded crossbow (with arrows, not a rocket). */
     static boolean charged(ItemStack st) {
-        ChargedProjectiles cp = st.get(DataComponents.CHARGED_PROJECTILES);
+        ChargedProjectiles cp = Compat.component(st, DataComponents.CHARGED_PROJECTILES);
         return st.is(Items.CROSSBOW) && cp != null && !cp.isEmpty() && !cp.contains(Items.FIREWORK_ROCKET);
     }
 
@@ -869,11 +868,11 @@ public final class BowAura {
      */
     static boolean usable(Minecraft mc, LocalPlayer p, ItemStack st) {
         Kind k = kindOf(st);
-        if (k == null || st.nextDamageWillBreak()) return false;
+        if (k == null || Compat.nextDamageWillBreak(st)) return false;
         return switch (k) {
             case BOW -> p.hasInfiniteMaterials() || !p.getProjectile(st).isEmpty();
             case CROSSBOW -> {
-                ChargedProjectiles cp = st.get(DataComponents.CHARGED_PROJECTILES);
+                ChargedProjectiles cp = Compat.component(st, DataComponents.CHARGED_PROJECTILES);
                 if (cp != null && !cp.isEmpty()) yield !cp.contains(Items.FIREWORK_ROCKET);
                 ItemStack ammo = p.getProjectile(st);
                 yield ammo.isEmpty() ? p.hasInfiniteMaterials() : !ammo.is(Items.FIREWORK_ROCKET);
@@ -910,17 +909,17 @@ public final class BowAura {
         int best = -1;
         double bestRate = -1, mainRate = mainOk ? weaponRate(main, dist, armour, tough, impalable) * kindChance(mc, p, target, kindOf(main), chance) : -1;
         for (int i = 0; i < 36; i++) {
-            ItemStack st = inv.getNonEquipmentItems().get(i);
+            ItemStack st = Compat.mainItems(inv).get(i);
             if (!usable(mc, p, st)) continue;
             double r = weaponRate(st, dist, armour, tough, impalable) * kindChance(mc, p, target, kindOf(st), chance);
-            if (r > bestRate + 1e-9 || Math.abs(r - bestRate) <= 1e-9 && best >= Inventory.SELECTION_SIZE && i < Inventory.SELECTION_SIZE) {
+            if (r > bestRate + 1e-9 || Math.abs(r - bestRate) <= 1e-9 && best >= Hotbar.SIZE && i < Hotbar.SIZE) {
                 best = i; bestRate = r;
             }
         }
         if (best < 0) return false;
-        if (mainOk && (best == inv.getSelectedSlot() || bestRate < mainRate * SWITCH_GAIN)) return true;
-        if (best < Inventory.SELECTION_SIZE) {
-            if (restoreSlot < 0) restoreSlot = inv.getSelectedSlot();
+        if (mainOk && (best == Compat.selectedSlot(inv) || bestRate < mainRate * SWITCH_GAIN)) return true;
+        if (best < Hotbar.SIZE) {
+            if (restoreSlot < 0) restoreSlot = Compat.selectedSlot(inv);
             select(p, best);
             weaponSlot = best;
             lastSlot = best;
@@ -928,7 +927,7 @@ public final class BowAura {
         }
         if (InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick() && !AutoEat.busy()) {
             fetchFrom = best;
-            fetchStack = inv.getNonEquipmentItems().get(best);
+            fetchStack = Compat.mainItems(inv).get(best);
             InventoryClicks.requestOpen();
         }
         return false;
@@ -960,7 +959,7 @@ public final class BowAura {
 
     /** Your slot back, if the bow aura changed it and it is still on the weapon it chose. */
     private static void restore(LocalPlayer p) {
-        if (restoreSlot >= 0 && weaponSlot >= 0 && p.getInventory().getSelectedSlot() == weaponSlot && !ownUse) {
+        if (restoreSlot >= 0 && weaponSlot >= 0 && Compat.selectedSlot(p.getInventory()) == weaponSlot && !ownUse) {
             select(p, restoreSlot);
             lastSlot = restoreSlot;
         }
@@ -969,7 +968,7 @@ public final class BowAura {
 
     /** A number key: the game sends the slot change itself before the next use or attack, or at the next tick. */
     private static void select(LocalPlayer p, int slot) {
-        p.getInventory().setSelectedSlot(slot);
+        Compat.setSelectedSlot(p.getInventory(), slot);
     }
 
     /** Whether the server's last word on the player says it is using an item (the synced flag). */
@@ -982,7 +981,7 @@ public final class BowAura {
     /** On foot: as the kill aura's turn can stay away from the view only then. */
     static boolean onFoot(LocalPlayer p) {
         return !p.isFallFlying() && !p.isInWater() && !p.isInLava() && !p.isPassenger() && !p.onClimbable()
-            && !p.getAbilities().flying && p.fallDistance < 2.0;
+            && !p.getAbilities().flying && Compat.fallDistance(p) < 2.0;
     }
 
     /** Your own attack or use, read from the mouse or keyboard itself (the use key may be held by this feature). */
@@ -997,11 +996,7 @@ public final class BowAura {
     }
 
     private static boolean physical(Minecraft mc, KeyMapping km) {
-        InputConstants.Key key = ((KeyMappingAccessor) km).kine$getKey();
-        if (key.getType() == InputConstants.Type.KEYSYM) return InputConstants.isKeyDown(mc.getWindow(), key.getValue());
-        if (key.getType() == InputConstants.Type.MOUSE)
-            return GLFW.glfwGetMouseButton(mc.getWindow().handle(), key.getValue()) == GLFW.GLFW_PRESS;
-        return false;
+        return Compat.held(mc, km);
     }
 
     /** The round trip in ticks: the ping (a lockstep test sets kine.pingMs, its injected lag being invisible to the game). */

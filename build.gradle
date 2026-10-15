@@ -2,18 +2,30 @@ plugins {
 	id 'net.fabricmc.fabric-loom' version "${loom_version}"
 }
 
+// The Minecraft releases come from versions/versions.txt and gradle.properties' dev_version (versions/README.md):
+// this project builds and runs the development version, with its epoch's game code, and its jar also takes in the
+// other epochs of the same family (the subprojects), so one jar covers the whole family.
+apply from: 'versions/table.gradle'
+def family = kineFamily(kineDev.family)
+def otherEpochs = family.epochs.keySet().findAll { it != kineDev.epoch }.sort()
+
 repositories {
 	mavenCentral()
 }
 
-version = "${project.mod_version}+${project.minecraft_version}"
+version = "${project.mod_version}+${family.label}"
 group = project.maven_group
 
+// the family's folder (code every release of the family shares, e.g. its GUI) and the development release's epoch
+sourceSets.main.java.srcDir "versions/${kineDev.family}/src/main/java"
+sourceSets.main.java.srcDir "versions/${kineDev.epoch}/src/main/java"
+sourceSets.main.resources.srcDir "versions/${kineDev.epoch}/src/main/resources"
+
 dependencies {
-	// Versions are set in gradle.properties.
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	// Versions are set in versions/versions.txt, the development one by gradle.properties' dev_version.
+	minecraft "com.mojang:minecraft:${kineDev.minecraft}"
+	implementation "net.fabricmc:fabric-loader:${kineDev.loader}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${kineDev.fabricApi}"
 
 	// Unit tests for the classes without game state (flight model, laws, planner, formats, ballistics).
 	testImplementation platform("org.junit:junit-bom:5.14.4")
@@ -26,26 +38,85 @@ test {
 	// Minecraft's log4j setup writes logs/latest.log in the working directory; keep it out of the repo
 	workingDir = layout.buildDirectory.dir("test-run").get().asFile
 	doFirst { workingDir.mkdirs() }
+	// the release whose rules the copies follow (compat/Rules.java): the development one
+	systemProperty 'kine.minecraft', kineDev.minecraft
 }
 
-processResources {
-	def version = project.version
-	inputs.property "version", version
+// The physics and mob copies replayed against another release's recorded traces (versions/README.md):
+//   ./gradlew traceTest -Prelease=26.3 -Ptraces=/path/to/dir
+// where the directory holds that release's recordings as move/<name> (glide_traces.txt, water_traces.txt, ...): they
+// come first on the class path, and only the tests whose recordings are there run, with that release's rules.
+def allReleases = layout.buildDirectory.dir('generated/trace-epochs')
+def writeAllReleases = tasks.register('writeAllReleases') {
+	def table = kineRows.collect { it.minecraft + ' ' + it.epoch }.join('\n') + '\n'
+	inputs.property 'table', table
+	outputs.dir allReleases
+	doLast {
+		def f = allReleases.get().file('kine-epochs.txt').asFile
+		f.parentFile.mkdirs()
+		f.text = table
+	}
+}
+tasks.register('traceTest', Test) {
+	group = 'verification'
+	description = 'Replays a release\'s recorded traces through the copies.'
+	def tracesDir = project.findProperty('traces')
+	def release = project.findProperty('release') ?: kineDev.minecraft
+	testClassesDirs = sourceSets.test.output.classesDirs
+	// the release must be in the epoch table GameVersion reads; the jar's holds only the development family, so every
+	// release's rows come first here (only the release counts: the copies run no epoch code)
+	classpath = files(tracesDir ?: []) + files(allReleases).builtBy(writeAllReleases) + sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	workingDir = layout.buildDirectory.dir("trace-test-run").get().asFile
+	doFirst { workingDir.mkdirs() }
+	systemProperty 'kine.minecraft', release
+	def byFile = ['physics_traces.txt': 'ai.rrw.kine.move.GroundPhysicsTest', 'water_traces.txt': 'ai.rrw.kine.move.WaterPhysicsTest',
+				  'air_traces.txt': 'ai.rrw.kine.move.AirPhysicsTest', 'glide_traces.txt': 'ai.rrw.kine.move.GlidePhysicsTest',
+				  'scaffold_traces.txt': 'ai.rrw.kine.move.ScaffoldPhysicsTest', 'zombie_traces.txt': 'ai.rrw.kine.fight.ZombieModelTest',
+				  'mob_traces.txt.gz': 'ai.rrw.kine.fight.MobModelTest',
+				  // the recordings of the moves whose rules differ between releases (ct2 ProofPhysicsTest, ProofFightTest)
+				  'proof_traces.txt': 'ai.rrw.kine.move.RulesTraceTest', 'proof_fight.txt': 'ai.rrw.kine.fight.RulesFightTest']
+	filter {
+		failOnNoMatchingTests = false
+		def found = tracesDir == null ? [] : byFile.findAll { new File("${tracesDir}/move/${it.key}").exists() }.values().toList()
+		if (found.isEmpty()) excludeTestsMatching '*'
+		found.unique().each { includeTestsMatching it }
+	}
+}
 
-	filesMatching("fabric.mod.json") {
-		expand "version": version
+// The family's epochs, oldest release first: the jar picks the one for the running game (compat/Compat.java).
+def epochTable = family.rows.collect { it.minecraft + ' ' + it.epoch }.join('\n') + '\n'
+def generatedResources = layout.buildDirectory.dir('generated/kine-resources')
+def writeEpochTable = tasks.register('writeEpochTable') {
+	inputs.property 'table', epochTable
+	outputs.dir generatedResources
+	doLast {
+		def f = generatedResources.get().file('kine-epochs.txt').asFile
+		f.parentFile.mkdirs()
+		f.text = epochTable
+	}
+}
+sourceSets.main.resources.srcDir(files(generatedResources).builtBy(writeEpochTable))
+
+processResources {
+	def props = [version: project.version, minecraft: family.mcRange, fabricApi: family.fabricApiMin,
+				 loader: family.loaderMin, java: family.java]
+	inputs.properties props
+
+	filesMatching(["fabric.mod.json", "kine.mixins.json"]) {
+		expand props
 	}
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 25
+	it.options.release = kineDev.java
 }
 
 java {
 	withSourcesJar()
 
-	sourceCompatibility = JavaVersion.VERSION_25
-	targetCompatibility = JavaVersion.VERSION_25
+	sourceCompatibility = JavaVersion.toVersion(kineDev.java)
+	targetCompatibility = JavaVersion.toVersion(kineDev.java)
 }
 
 jar {
@@ -55,4 +126,22 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_$projectName"}
 	}
+	// the other epochs' game code (each compiled against its own release)
+	otherEpochs.each { e ->
+		dependsOn ":${e}:classes"
+		from { project(":${e}").sourceSets.main.output }
+	}
 }
+
+// `./gradlew build` checks that the jar runs on every release of the family (versions/check.gradle)
+def versionChecks = tasks.register('versionCheck') {
+	group = 'verification'
+	description = 'The shared code compiles to the same bytes against every release of the family.'
+}
+gradle.projectsEvaluated {
+	versionChecks.configure { t -> subprojects.findAll { it.name.startsWith('check-') }.each { t.dependsOn("${it.path}:versionCheck") } }
+}
+tasks.named('check') { dependsOn versionChecks }
+
+// and each older family's jar (versions/family.gradle)
+tasks.named('assemble') { t -> kineFamilies.findAll { it != kineDev.family }.each { f -> t.dependsOn(":family-${f}:familyJar") } }

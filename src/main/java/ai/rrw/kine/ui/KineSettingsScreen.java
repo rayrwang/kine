@@ -1,8 +1,9 @@
 package ai.rrw.kine.ui;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.hud.ThinOutlines;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
@@ -23,7 +24,10 @@ import java.util.function.IntFunction;
  * section's) lists its settings in the right pane when clicked, and closes when clicked again. A section's name opens
  * and closes its rows; every section starts closed when the game starts.
  */
-public class KineSettingsScreen extends Screen {
+public abstract class KineSettingsScreen extends Screen {
+    // Abstract: each family's subclass (Compat.settingsScreen) adds that release's render override, which calls
+    // renderScreen below (versions/README.md).
+
 
     private static final int MARGIN  = 16;
     private static final int DIVIDER = 0xFF555555;
@@ -51,7 +55,7 @@ public class KineSettingsScreen extends Screen {
     private int viewTop, viewBottom, contentHeight, maxScroll, scrollOffset;
     private int descTextTop;   // top of the description text on the right, below the reset button
 
-    public KineSettingsScreen(Screen parent) {
+    protected KineSettingsScreen(Screen parent) {
         super(Component.literal("Kine settings"));
         this.parent = parent;
     }
@@ -435,9 +439,11 @@ public class KineSettingsScreen extends Screen {
             cY += headH;
             if (!EXPANDED.contains(sec)) { cY += GAP; continue; }
             for (Opt opt : SECTIONS[s].opts()) {
-                AbstractWidget b = !opt.isFolder() && opt.option().isLevel()
-                    ? new LevelSlider(rowX, viewTop + cY, colW, ROW_H, opt)
-                    : Button.builder(label(opt), btn -> {
+                // an if, not a ?: (whose type, the two widgets' common class, is one that 1.21.11 added: the jar
+                // would name it where older releases lack it)
+                AbstractWidget b;
+                if (!opt.isFolder() && opt.option().isLevel()) b = new LevelSlider(rowX, viewTop + cY, colW, ROW_H, opt);
+                else b = Button.builder(label(opt), btn -> {
                             if (opt.isFolder()) { openFolder = openFolder == opt ? null : opt; rebuildWidgets(); }
                             else { opt.option().cycle(); changed(); }
                         })
@@ -579,10 +585,10 @@ public class KineSettingsScreen extends Screen {
         return super.mouseScrolled(mx, my, dx, dy);
     }
 
-    @Override
-    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+    /** The screen's frame: lay out, let vanilla draw the background and the widgets, then draw over them. */
+    protected void renderScreen(Gui2D graphics, int mouseX, int mouseY, float a, Runnable vanilla) {
         layout();
-        super.extractRenderState(graphics, mouseX, mouseY, a);
+        vanilla.run();
         graphics.centeredText(this.font, this.title, this.width / 2, 12, 0xFFFFFFFF);
 
         // section headers + dividers, clipped to the scrolling viewport
@@ -637,6 +643,6 @@ public class KineSettingsScreen extends Screen {
     @Override
     public void onClose() {
         Settings.save();
-        this.minecraft.setScreen(parent);
+        Compat.setScreen(this.minecraft, parent);
     }
 }

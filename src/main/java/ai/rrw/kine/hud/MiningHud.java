@@ -1,16 +1,13 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -23,11 +20,7 @@ public class MiningHud {
     private static BlockPos target = null;    // block being broken
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "mining"),
-            MiningHud::render
-        );
+        Compat.hud("mining", MiningHud::render);
         ClientTickEvents.END_CLIENT_TICK.register(MiningHud::tick);
     }
 
@@ -55,7 +48,7 @@ public class MiningHud {
         active = true;
     }
 
-    private static void render(GuiGraphicsExtractor graphics, DeltaTracker delta) {
+    private static void render(Gui2D graphics, DeltaTracker delta) {
         if (!active || !Settings.displayMiningProgress) return;
         Minecraft mc = Minecraft.getInstance();
 

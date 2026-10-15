@@ -1,6 +1,7 @@
 package ai.rrw.kine.fight;
 
 import ai.rrw.kine.combat.SwingPlan;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.move.GroundPhysics;
 import ai.rrw.kine.move.MoveState;
 
@@ -176,7 +177,7 @@ public final class FightWorld {
                     if (m.thinkVex(player.x, player.y, player.z, pb)) lost += hurtByMob(m, phys);
                 }
                 case BREEZE -> {
-                    if (m.thinkBreeze()) windCharge(m, rnd);
+                    if (m.thinkBreeze(player.x, player.y, player.z)) windCharge(m, rnd);
                 }
                 case BLAZE -> {
                     int act = m.thinkBlaze(player.x, player.y, player.z);
@@ -296,11 +297,13 @@ public final class FightWorld {
     }
 
     /** A breeze's wind charge (Shoot, BreezeWindCharge): from its middle 0.3 up toward 0.3 of the player's height,
-     *  speed 0.7, straight, spread 5 - 4 x difficulty; 1 damage on a hit, and a burst of radius 3 where it stops. */
+     *  speed 0.7, straight, spread 5 - 4 x difficulty; 1 damage on a hit, and a burst of radius 3 where it stops. Up to
+     *  1.21.1 from its snout (the eyes less 0.4), aimed from its middle (Rules.BREEZE_SHOOTS_FROM_SNOUT). */
     void windCharge(MobSim m, SplittableRandom rnd) {
         ArrowSim a = new ArrowSim();
-        a.x = m.x; a.y = m.y + m.height / 2 + 0.3; a.z = m.z;
-        double xd = player.x - m.x, yd = player.y + 1.8 * 0.3 - a.y, zd = player.z - m.z;
+        a.x = m.x; a.y = Rules.BREEZE_SHOOTS_FROM_SNOUT ? m.y + m.eyeHeight - 0.4 : m.y + m.height / 2 + 0.3; a.z = m.z;
+        double fromY = Rules.BREEZE_SHOOTS_FROM_SNOUT ? m.y + m.height * 0.5 : a.y;
+        double xd = player.x - m.x, yd = player.y + 1.8 * 0.3 - fromY, zd = player.z - m.z;
         double len = Math.sqrt(xd * xd + yd * yd + zd * zd);
         if (len < 1e-6) return;
         double dev = 0.0172275 * Math.max(0, 5 - difficulty * 4);
@@ -342,8 +345,8 @@ public final class FightWorld {
     /** The witch's potion this throw (Witch.performRangedAttack): slowness if the player is 8 or more away and not
      *  slowed, else poison if it has 8 health or more and isn't poisoned, else harming (weakness a quarter of the time
      *  within 3, taken as harming: the worse); thrown at the player's position one tick on (its velocity), at its eyes
-     *  less 1.1, raised by a fifth of the distance, speed 0.75 (0.45 within 2), spread 8. The player's effects are the
-     *  snapshot's. */
+     *  less 1.1, raised by a fifth of the distance, speed 0.75 (from 26.1 0.45 within 2, Rules.WITCH_THROWS_SLOWER_NEAR),
+     *  spread 8. The player's effects are the snapshot's. */
     public boolean slowed, poisoned;
 
     void throwPotion(MobSim m, SplittableRandom rnd) {
@@ -353,11 +356,11 @@ public final class FightWorld {
         double dist = Math.sqrt(xd * xd + zd * zd);
         yd += dist * 0.2;
         double len = Math.sqrt(xd * xd + yd * yd + zd * zd);
-        double dev = 0.0172275 * 8.0, speed = dist <= 2.0 ? 0.45F : 0.75F;
+        double dev = 0.0172275 * 8.0, speed = Rules.WITCH_THROWS_SLOWER_NEAR && dist <= 2.0 ? 0.45F : 0.75F;
         a.vx = (xd / len + dev * (rnd.nextDouble() - rnd.nextDouble())) * speed;
         a.vy = (yd / len + dev * (rnd.nextDouble() - rnd.nextDouble())) * speed;
         a.vz = (zd / len + dev * (rnd.nextDouble() - rnd.nextDouble())) * speed;
-        a.gravity = 0.05; a.drag = 0.99; a.gravityFirst = true;
+        a.gravity = 0.05; a.drag = 0.99; a.gravityFirst = !Rules.PROJECTILES_MOVE_FIRST;
         a.splash = true;
         if (dist >= 8.0 && !slowed) { a.splashCost = 3.0; slowed = true; }
         else if (health >= 8.0 && !poisoned) { a.splashCost = 8.0; poisoned = true; }   // 45 s of poison, never the last health

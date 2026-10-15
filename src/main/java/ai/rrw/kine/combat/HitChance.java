@@ -1,5 +1,7 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.compat.Rules;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -259,8 +261,10 @@ public final class HitChance {
         return Math.min(pow, 1.0F);
     }
 
-    /** How far past a target's box an arrow still hits it, by the arrow's age (1 on its first tick). */
+    /** How far past a target's box an arrow still hits it, by the arrow's age (1 on its first tick): ProjectileUtil
+     *  .computeMargin; up to 1.21.5 a fixed 0.3F (Rules.FIXED_HIT_MARGIN). */
     public static double margin(int age) {
+        if (Rules.FIXED_HIT_MARGIN) return 0.3F;
         return Math.max(0.0F, Math.min(0.3F, (age - 2) / 20.0F));
     }
 

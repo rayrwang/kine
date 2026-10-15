@@ -1,20 +1,17 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.PathPrediction;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
 
@@ -64,10 +61,7 @@ public final class FlightProfile {
     private static int      ticks = 0;
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "flight_profile"),
-            FlightProfile::render);
+        Compat.hud("flight_profile", FlightProfile::render);
         ClientTickEvents.END_CLIENT_TICK.register(FlightProfile::tick);
     }
 
@@ -147,7 +141,7 @@ public final class FlightProfile {
         have = true;
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (!have || cells == null) return;
         Font font = Minecraft.getInstance().font;
 
@@ -198,7 +192,7 @@ public final class FlightProfile {
     }
 
     /** A distance tick + number on the x-axis. align: 0 left, 1 centre, 2 right (keeps text inside the plot). */
-    private static void xTick(GuiGraphicsExtractor g, Font font, int plotX, int ayTick, int ayText,
+    private static void xTick(Gui2D g, Font font, int plotX, int ayTick, int ayText,
                               double d, String lab, int align) {
         int sx = plotX + (int) Math.round(d / rangeX * PLOT_W);
         g.fill(sx, ayTick, sx + 1, ayTick + 3, LABEL);
@@ -220,7 +214,7 @@ public final class FlightProfile {
     }
 
     // anti-aliased line (Wu's algorithm): two coverage-weighted pixels per step, clipped to the plot
-    private static void aaLine(GuiGraphicsExtractor g, int plotX, int plotY,
+    private static void aaLine(Gui2D g, int plotX, int plotY,
                                double x0, double y0, double x1, double y1) {
         boolean steep = Math.abs(y1 - y0) > Math.abs(x1 - x0);
         if (steep) { double t; t = x0; x0 = y0; y0 = t; t = x1; x1 = y1; y1 = t; }
@@ -237,7 +231,7 @@ public final class FlightProfile {
         }
     }
 
-    private static void plot(GuiGraphicsExtractor g, int plotX, int plotY, boolean steep, int u, int v, double cov) {
+    private static void plot(Gui2D g, int plotX, int plotY, boolean steep, int u, int v, double cov) {
         if (cov <= 0.02) return;
         int sx = steep ? v : u, sy = steep ? u : v;          // undo the steep swap
         if (sx < 0 || sx >= PLOT_W || sy < 0 || sy >= PLOT_H) return;

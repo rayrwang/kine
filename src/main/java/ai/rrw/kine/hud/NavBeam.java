@@ -1,26 +1,17 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.WorldDraw;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Nav;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.rendertype.RenderSetup;
-import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
-import java.util.Optional;
 
 /**
  * The beam over a managed destination, from the ground up to at least 45 degrees above the eye (never below the top of
@@ -54,45 +45,35 @@ public final class NavBeam {
                                                         // when looking level at the default field of view (70)
     private static final double TOP_TAN     = Math.tan(Math.toRadians(TOP_DEG));
 
-    // debugQuads with no depth test, for the faint copy (the game has no position-colour quads without one)
-    private static final RenderPipeline SEE_THROUGH_PIPELINE = RenderPipelines.register(
-        RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
-            .withLocation(Identifier.fromNamespaceAndPath(Kine.MOD_ID, "pipeline/see_through_quads"))
-            .withCull(false)
-            .withDepthStencilState(Optional.empty())
-            .build());
-    private static final RenderType SEE_THROUGH = RenderType.create(
-        "kine_see_through_quads", RenderSetup.builder(SEE_THROUGH_PIPELINE).sortOnUpload().createRenderSetup());
 
     /** The faint copy: register before the rails. */
     public static void registerFaint() {
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(ctx -> draw(ctx, true));
+        Compat.world().afterTranslucentTerrain(pose -> draw(pose, true));
     }
 
     /** The depth-tested beam: register after the rails. */
     public static void register() {
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(ctx -> draw(ctx, false));
+        Compat.world().afterTranslucentTerrain(pose -> draw(pose, false));
     }
 
-    private static void draw(LevelRenderContext ctx, boolean faint) {
+    private static void draw(Matrix4f mat, boolean faint) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
-        if (level == null || mc.player == null || mc.options.hideGui) return;
+        if (level == null || mc.player == null || Compat.hudHidden(mc)) return;
         if (!Settings.shows(Settings.displayNavReadouts) || Nav.mode() != Nav.Mode.MANAGED || !Nav.hasTarget()) return;
 
         // while landing on a known spot (a safe column found near the target, or the aimed one), the beam stands on it
         boolean spot = Nav.hasSpot();
         int bx = spot ? Mth.floor(Nav.spotX()) : Nav.targetX(), bz = spot ? Mth.floor(Nav.spotZ()) : Nav.targetZ();
         double ground = spot ? Nav.spotTop() : columnTop(level, bx, bz);
-        double baseY = Double.isNaN(ground) ? level.getMinY() : ground;
+        double baseY = Double.isNaN(ground) ? Compat.minY(level) : ground;
         double wx = bx + 0.5, wz = bz + 0.5;
 
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
-        Matrix4f mat = ctx.poseStack().last().pose();
+        Vec3 cam = Compat.cameraPos(mc);
         double dx = wx - cam.x, dz = wz - cam.z, dist = Math.sqrt(dx * dx + dz * dz);
         // the top at least TOP_DEG above the eye at any distance, so a far beam looks as tall as a near one and stands
         // above you at cruise (RW: "it shoudl amingain same ange not smae world wehgiht"); never below the top of the world
-        double topY = Math.max(level.getMaxY() + 1, cam.y + dist * TOP_TAN);
+        double topY = Math.max(Compat.maxY(level) + 1, cam.y + dist * TOP_TAN);
         // across the strip, square to the line of sight; straight above the column, any direction will do
         double ax = dist > 1.0e-3 ? -dz / dist : 1.0, az = dist > 1.0e-3 ? dx / dist : 0.0;
         // one gui pixel at the beam's distance, in blocks: the old HUD beam's widths were in gui pixels
@@ -113,35 +94,35 @@ public final class NavBeam {
         boolean showFace = !Double.isNaN(ground) && !scaled;
 
         if (faint) {
-            VertexConsumer vc = ctx.bufferSource().getBuffer(SEE_THROUGH);
+            WorldDraw.Quads vc = Compat.world().quads(WorldDraw.QuadStyle.SEE_THROUGH);
             strip(vc, mat, cam, wx, wz, ax, az, body, baseY, topY, GHOST_BODY);
             strip(vc, mat, cam, wx, wz, ax, az, core, baseY, topY, GHOST_CORE);
             if (showFace) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, GHOST_FACE);
-            ctx.bufferSource().endBatch(SEE_THROUGH);
+            vc.end();
             return;
         }
-        VertexConsumer vc = ctx.bufferSource().getBuffer(RenderTypes.debugQuads());
+        WorldDraw.Quads vc = Compat.world().quads(WorldDraw.QuadStyle.TESTED);
         strip(vc, mat, cam, wx, wz, ax, az, body, baseY, topY, BODY);
         strip(vc, mat, cam, wx, wz, ax, az, core, baseY, topY, CORE);
         if (showFace) face(vc, mat, cam, bx, ground + FACE_LIFT, bz, edge, FACE);
-        ctx.bufferSource().endBatch(RenderTypes.debugQuads());
+        vc.end();
 
         // depth for the core and the face's edges (both windings: waterMask culls back faces)
-        VertexConsumer mvc = ctx.bufferSource().getBuffer(RenderTypes.waterMask());
+        WorldDraw.Quads mvc = Compat.world().quads(WorldDraw.QuadStyle.DEPTH_ONLY);
         stripMask(mvc, mat, cam, wx, wz, ax, az, core, baseY, topY);
         if (showFace) faceMask(mvc, mat, cam, bx, ground + FACE_LIFT, bz, edge);
-        ctx.bufferSource().endBatch(RenderTypes.waterMask());
+        mvc.end();
     }
 
     // The top of a column where the client has its chunk (the MOTION_BLOCKING heightmap, as the landing spot search
     // reads it), else NaN.
     private static double columnTop(ClientLevel level, int x, int z) {
-        if (!level.hasChunkAt(new BlockPos(x, level.getMinY(), z))) return Double.NaN;
+        if (!level.hasChunkAt(new BlockPos(x, Compat.minY(level), z))) return Double.NaN;
         return level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
     }
 
     // A vertical strip centred on (cx, cz), half width h along (ax, az), from y0 to y1.
-    private static void strip(VertexConsumer vc, Matrix4f mat, Vec3 cam, double cx, double cz, double ax, double az,
+    private static void strip(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double cx, double cz, double ax, double az,
                               double h, double y0, double y1, int argb) {
         vertex(vc, mat, cam, cx - ax * h, y0, cz - az * h, argb);
         vertex(vc, mat, cam, cx + ax * h, y0, cz + az * h, argb);
@@ -149,7 +130,7 @@ public final class NavBeam {
         vertex(vc, mat, cam, cx - ax * h, y1, cz - az * h, argb);
     }
 
-    private static void stripMask(VertexConsumer vc, Matrix4f mat, Vec3 cam, double cx, double cz, double ax, double az,
+    private static void stripMask(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double cx, double cz, double ax, double az,
                                   double h, double y0, double y1) {
         double[][] q = {{cx - ax * h, y0, cz - az * h}, {cx + ax * h, y0, cz + az * h},
                         {cx + ax * h, y1, cz + az * h}, {cx - ax * h, y1, cz - az * h}};
@@ -157,11 +138,11 @@ public final class NavBeam {
     }
 
     // The four edges of the block's top face at height y, each a flat strip of half width e along the edge.
-    private static void face(VertexConsumer vc, Matrix4f mat, Vec3 cam, int x, double y, int z, double e, int argb) {
+    private static void face(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, int x, double y, int z, double e, int argb) {
         for (double[][] q : faceEdges(x, y, z, e)) for (double[] v : q) vertex(vc, mat, cam, v[0], v[1], v[2], argb);
     }
 
-    private static void faceMask(VertexConsumer vc, Matrix4f mat, Vec3 cam, int x, double y, int z, double e) {
+    private static void faceMask(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, int x, double y, int z, double e) {
         for (double[][] q : faceEdges(x, y, z, e)) quadMask(vc, mat, cam, q);
     }
 
@@ -174,17 +155,16 @@ public final class NavBeam {
             {{x1 - e, y, z0 + e}, {x1 + e, y, z0 + e}, {x1 + e, y, z1 - e}, {x1 - e, y, z1 - e}}};  // east edge
     }
 
-    private static void quadMask(VertexConsumer vc, Matrix4f mat, Vec3 cam, double[][] q) {
+    private static void quadMask(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double[][] q) {
         for (int i = 0; i < 4; i++) posVertex(vc, mat, cam, q[i]);        // one winding
         for (int i = 3; i >= 0; i--) posVertex(vc, mat, cam, q[i]);       // and the other
     }
 
-    private static void posVertex(VertexConsumer vc, Matrix4f mat, Vec3 cam, double[] v) {
-        vc.addVertex(mat, (float) (v[0] - cam.x), (float) (v[1] - cam.y), (float) (v[2] - cam.z));
+    private static void posVertex(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double[] v) {
+        vc.vertex(mat, (float) (v[0] - cam.x), (float) (v[1] - cam.y), (float) (v[2] - cam.z), 0);
     }
 
-    private static void vertex(VertexConsumer vc, Matrix4f mat, Vec3 cam, double x, double y, double z, int argb) {
-        int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF, a = (argb >>> 24) & 0xFF;
-        vc.addVertex(mat, (float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z)).setColor(r, g, b, a);
+    private static void vertex(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double x, double y, double z, int argb) {
+        vc.vertex(mat, (float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z), argb);
     }
 }

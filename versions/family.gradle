@@ -1,0 +1,52 @@
+// An older family's jar (versions/README.md), e.g. kine-<version>+1.21-1.21.11.jar in the root's build/libs: the
+// shared code as compiled against the family's base release and remapped (its check project), every epoch's remapped
+// game code, and the resources with the family's values (versions/<family>/src/main/resources overrides the shared
+// ones: the resource pack's formats and shaders, for example).
+apply plugin: 'base'
+apply from: rootProject.file('versions/table.gradle')
+
+def fam = project.name.substring('family-'.length())
+def family = kineFamily(fam)
+def base = ":check-${family.base.minecraft}"
+def epochs = family.epochs.keySet().sort()
+
+def epochTable = family.rows.collect { it.minecraft + ' ' + it.epoch }.join('\n') + '\n'
+def generated = layout.buildDirectory.dir('generated')
+def writeEpochTable = tasks.register('writeEpochTable') {
+	inputs.property 'table', epochTable
+	outputs.dir generated
+	doLast {
+		def f = generated.get().file('kine-epochs.txt').asFile
+		f.parentFile.mkdirs()
+		f.text = epochTable
+	}
+}
+
+def props = [version: "${rootProject.property('mod_version')}+${family.label}", minecraft: family.mcRange,
+			 fabricApi: family.fabricApiMin, loader: family.loaderMin, java: family.java]
+
+def familyJar = tasks.register('familyJar', Jar) {
+	group = 'build'
+	description = "The jar for Minecraft ${family.label}."
+	archiveBaseName = 'kine'
+	archiveVersion = props.version
+	destinationDirectory = rootProject.layout.buildDirectory.dir('libs')
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE   // the family's resources come first, so they win
+	inputs.properties props
+	dependsOn writeEpochTable, "${base}:remapJar"
+	epochs.each { e -> dependsOn ":${e}:remapJar" }
+	from(rootProject.file("versions/${fam}/src/main/resources")) {
+		filesMatching(['fabric.mod.json', 'kine.mixins.json']) { expand props }
+	}
+	from(rootProject.file('src/main/resources')) {
+		filesMatching(['fabric.mod.json', 'kine.mixins.json']) { expand props }
+	}
+	from(generated)
+	from({ zipTree(project(base).tasks.named('remapJar').get().archiveFile) }) { exclude 'META-INF/**' }
+	epochs.each { e -> from({ zipTree(project(":${e}").tasks.named('remapJar').get().archiveFile) }) { exclude 'META-INF/**' } }
+	from(rootProject.file('LICENSE')) { rename { "${it}_kine" } }
+	// as Loom's remapJar writes them (its own manifests are left out above): the names the classes use, and that the
+	// mixins name their targets directly (no refmap), so a Loom dev setup that depends on this jar remaps those too
+	manifest { attributes('Fabric-Mapping-Namespace': 'intermediary', 'Fabric-Loom-Mixin-Remap-Type': 'static') }
+}
+tasks.named('assemble') { dependsOn familyJar }

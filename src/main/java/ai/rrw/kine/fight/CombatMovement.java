@@ -2,25 +2,21 @@ package ai.rrw.kine.fight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
-import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.move.GroundPhysics;
 import ai.rrw.kine.move.WorldSnapshot;
 import ai.rrw.kine.search.EffortTuner;
 import ai.rrw.kine.search.RecedingSearch;
 import ai.rrw.kine.util.GameModes;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
-import net.minecraft.world.entity.player.Input;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -109,8 +105,7 @@ public final class CombatMovement {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(CombatMovement::endTick);
-        HudElementRegistry.attachElementAfter(VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "combat_movement"), CombatMovement::render);
+        Compat.hud("combat_movement", CombatMovement::render);
     }
 
     /**
@@ -305,16 +300,14 @@ public final class CombatMovement {
 
     private static boolean physical(Minecraft mc, KeyMapping km, boolean toggle) {
         if (!toggle) return km.isDown();
-        InputConstants.Key key = ((KeyMappingAccessor) km).kine$getKey();
-        if (key.getType() == InputConstants.Type.KEYSYM) return InputConstants.isKeyDown(mc.getWindow(), key.getValue());
-        return km.isDown();
+        return Compat.isKeyboard(km) ? Compat.held(mc, km) : km.isDown();
     }
 
     /** The indicator: MOVE in green on the right, under AP, in the row WALK uses (the two never show together), while
      *  it moves you. */
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
-        if (!controlling || mc.player == null || mc.options.hideGui) return;
+        if (!controlling || mc.player == null || Compat.hudHidden(mc)) return;
         int w = mc.getWindow().getGuiScaledWidth(), h = mc.getWindow().getGuiScaledHeight();
         int x = HudLayout.apLeftEdge(w / 2, 0);
         g.text(mc.font, "MOVE", x, HudLayout.annunciatorLower(h, mc.font.lineHeight), HudColors.GREEN, true);

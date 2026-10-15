@@ -2,11 +2,10 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.hud.NavHud;
-import ai.rrw.kine.ui.KineNavScreen;
 import ai.rrw.kine.util.Motion;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -18,7 +17,6 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.Set;
 
@@ -146,7 +144,7 @@ public class Nav {
             // nothing dry or wet in reach: straight down, as a destination landing falls back. But only onto terrain the
             // client has: a column not yet sent (just after a teleport or a join) reads as empty, its surface the world's
             // bottom, and the law would brake far below the real ground. Then wait, flying on, until it arrives.
-            if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, px, pz) <= level.getMinY()) return;
+            if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, px, pz) <= Compat.minY(level)) return;
             spot = new int[]{ px, pz };
         }
         int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, spot[0], spot[1]);   // fluids count: the water's surface
@@ -186,8 +184,7 @@ public class Nav {
     }
 
     public static void register() {
-        navKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.nav", GLFW.GLFW_KEY_N, Kine.KEY_CATEGORY));
+        navKey = Compat.key("key.kine.nav", "n");
         ClientTickEvents.END_CLIENT_TICK.register(Nav::tick);
     }
 
@@ -195,7 +192,7 @@ public class Nav {
         if (mc.isPaused()) return;   // singleplayer paused: the game's ticks still come, but the world stands still
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
-        while (navKey.consumeClick()) if (Settings.navigation || Settings.walkPathfinder) mc.setScreen(new KineNavScreen());
+        while (navKey.consumeClick()) if (Settings.navigation || Settings.walkPathfinder) Compat.setScreen(mc, Compat.navScreen());
         // END 0 on the autopilot: land near here, whatever nav was doing; a landing already under way goes on. Ahead of
         // the hold's own check below, so a hold ends in this landing too.
         if (!landing && Settings.navigation && Autopilot.flying() && p.isFallFlying() && !p.isInWater()
@@ -254,8 +251,8 @@ public class Nav {
      *  so this holds at the destination too). Never in a dimension without days (the Nether, the End), where a
      *  hold till day would never end. */
     public static boolean monstersCanSpawn(Level level) {
-        if (level.dimensionType().hasFixedTime()) return false;
-        return HoldModel.darkEnoughToSpawn(level.getSkyDarken(), level.isThundering(),
+        if (Compat.fixedTime(level)) return false;
+        return HoldModel.darkEnoughToSpawn(Compat.skyDarken(level), level.isThundering(),
             level.dimensionType().monsterSpawnLightTest().maxInclusive());
     }
 
@@ -293,8 +290,8 @@ public class Nav {
     /** The landing spot an arrival now would pick, as {x of its centre, its top, z of its centre}; null while the client
      *  has no terrain at the destination yet (an unsent column reads as empty, its surface the world's bottom). */
     static double[] arrivalSpot(Level level) {
-        if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, targetX, targetZ) <= level.getMinY()) return null;
-        long now = level.getGameTime();
+        if (level.getHeight(Heightmap.Types.MOTION_BLOCKING, targetX, targetZ) <= Compat.minY(level)) return null;
+        long now = Compat.gameTime(level);
         if (!previewValid || previewLevel != level || previewForX != targetX || previewForZ != targetZ
                 || now - previewTime >= 20 || now < previewTime) {
             int[] spot = nearestColumn(targetX, targetZ, SCAN_RADIUS, (x, z) -> safeColumn(level, x, z));
@@ -331,7 +328,7 @@ public class Nav {
     static boolean waterColumn(Level level, int x, int z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
-        int bottom = Math.max(level.getMinY(), top - SCAN_DEPTH);
+        int bottom = Math.max(Compat.minY(level), top - SCAN_DEPTH);
         for (int y = top; y >= bottom; y--) {
             pos.set(x, y, z);
             BlockState s = level.getBlockState(pos);
@@ -347,7 +344,7 @@ public class Nav {
     static boolean safeColumn(Level level, int x, int z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int top = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
-        int bottom = Math.max(level.getMinY(), top - SCAN_DEPTH);
+        int bottom = Math.max(Compat.minY(level), top - SCAN_DEPTH);
         for (int y = top; y >= bottom; y--) {
             pos.set(x, y, z);
             BlockState s = level.getBlockState(pos);

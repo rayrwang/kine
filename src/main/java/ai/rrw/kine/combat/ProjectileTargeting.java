@@ -1,20 +1,19 @@
 package ai.rrw.kine.combat;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.combat.Ballistics.Spec;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Mobs;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.hud.ScreenProjection;
 import ai.rrw.kine.util.Enchant;
 import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
-import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
@@ -22,20 +21,18 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityReference;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.ambient.Bat;
-import net.minecraft.world.entity.animal.FlyingAnimal;
 import net.minecraft.world.entity.animal.allay.Allay;
+import net.minecraft.world.entity.animal.bee.Bee;
+import net.minecraft.world.entity.animal.parrot.Parrot;
 import net.minecraft.world.entity.animal.equine.AbstractHorse;
-import net.minecraft.world.entity.animal.happyghast.HappyGhast;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
 import net.minecraft.world.entity.boss.wither.WitherBoss;
@@ -140,10 +137,7 @@ public class ProjectileTargeting {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ProjectileTargeting::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "projectile_reticle"),
-            ProjectileTargeting::render);
+        Compat.hud("projectile_reticle", ProjectileTargeting::render);
     }
 
     // which projectile, its flight parameters, and the item it comes from
@@ -167,7 +161,7 @@ public class ProjectileTargeting {
             if (use.is(Items.TRIDENT)) {
                 // TridentItem.releaseUsing: thrown only after 10 ticks of use, never with Riptide, not if it would break
                 if (p.getTicksUsingItem() < TridentItem.THROW_THRESHOLD_TIME
-                    || EnchantmentHelper.getTridentSpinAttackStrength(use, p) > 0.0F || use.nextDamageWillBreak()) return null;
+                    || EnchantmentHelper.getTridentSpinAttackStrength(use, p) > 0.0F || Compat.nextDamageWillBreak(use)) return null;
                 return new Held(new Spec(0.05, 0.99F, 2.5, 0.0, false, true), use);
             }
         }
@@ -179,15 +173,17 @@ public class ProjectileTargeting {
 
     private static Spec specForHeld(ItemStack stack) {
         var it = stack.getItem();
-        // gravity from each entity's getDefaultGravity, drag ThrowableProjectile's 0.99F, launch from the item's use
+        // gravity from each entity's getDefaultGravity, drag ThrowableProjectile's 0.99F, launch from the item's use;
+        // gravity and drag before the move from 1.21.2, after it before (Rules.PROJECTILES_MOVE_FIRST)
+        boolean gravityFirst = !Rules.PROJECTILES_MOVE_FIRST;
         if (it == Items.SNOWBALL || it == Items.EGG || it == Items.ENDER_PEARL)
-            return new Spec(0.03, 0.99F, 1.5, 0.0, true, false);
+            return new Spec(0.03, 0.99F, 1.5, 0.0, gravityFirst, false);
         if (it == Items.SPLASH_POTION || it == Items.LINGERING_POTION)
-            return new Spec(0.05, 0.99F, 0.5, -20.0, true, false);   // AbstractThrownPotion
+            return new Spec(0.05, 0.99F, 0.5, -20.0, gravityFirst, false);   // AbstractThrownPotion
         if (it == Items.EXPERIENCE_BOTTLE)
-            return new Spec(0.07, 0.99F, 0.7, -20.0, true, false);   // ThrownExperienceBottle
+            return new Spec(0.07, 0.99F, 0.7, -20.0, gravityFirst, false);   // ThrownExperienceBottle
         if (it == Items.CROSSBOW && CrossbowItem.isCharged(stack)) {
-            ChargedProjectiles cp = stack.get(DataComponents.CHARGED_PROJECTILES);
+            ChargedProjectiles cp = Compat.component(stack, DataComponents.CHARGED_PROJECTILES);
             if (cp != null && cp.contains(Items.FIREWORK_ROCKET)) return null; // firework physics differ
             return new Spec(0.05, 0.99F, 3.15, 0.0, false, true, false);   // arrow, fired along the view without the shooter's motion (CrossbowItem.shootProjectile)
         }
@@ -227,16 +223,14 @@ public class ProjectileTargeting {
     // mule, llama or camel, since its owner is never sent (AbstractHorse keeps it on the server), so it may be yours.
     static boolean ownPet(LocalPlayer self, Entity e) {
         if (e instanceof TamableAnimal t) {
-            EntityReference<LivingEntity> owner = t.getOwnerReference();
-            return owner != null && owner.getUUID().equals(self.getUUID());
+            return Compat.ownedBy(t, self);
         }
         return e instanceof AbstractHorse h && h.isTamed();
     }
 
     // the damage an arrow or trident from this item does, for the shield rules
     private static Holder<DamageType> damageType(ClientLevel level, ItemStack item) {
-        return level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE)
-                    .getOrThrow(item.is(Items.TRIDENT) ? DamageTypes.TRIDENT : DamageTypes.ARROW);
+        return Compat.damageType(level, item.is(Items.TRIDENT) ? DamageTypes.TRIDENT : DamageTypes.ARROW);
     }
 
     // A hittable entity and its motion per tick, gathered once a tick for the simulated flights (its course, which
@@ -246,7 +240,7 @@ public class ProjectileTargeting {
     private static List<Mover> movers(ClientLevel level, Entity self, Vec3 eye, Predicate<Entity> hittable) {
         List<Mover> out = new ArrayList<>();
         for (Entity e : everything(level))
-            if (e != self && hittable.test(e) && e.position().distanceToSqr(eye) <= AIM_RANGE * AIM_RANGE)
+            if (e != self && hittable.test(e) && Compat.position(e).distanceToSqr(eye) <= AIM_RANGE * AIM_RANGE)
                 out.add(new Mover(e, motion(e)));
         return out;
     }
@@ -291,7 +285,7 @@ public class ProjectileTargeting {
                 }
             }
             if (ne != null) return new Ballistics.Hit<>(np, null, ne);
-            if (bhr.getType() != HitResult.Type.MISS) return new Ballistics.Hit<>(bhr.getLocation(), bhr.getDirection().getUnitVec3(), null);
+            if (bhr.getType() != HitResult.Type.MISS) return new Ballistics.Hit<>(bhr.getLocation(), new Vec3(bhr.getDirection().getStepX(), bhr.getDirection().getStepY(), bhr.getDirection().getStepZ()), null);
             return null;
         };
     }
@@ -352,7 +346,7 @@ public class ProjectileTargeting {
     private static List<Entity> everything(ClientLevel level) {
         List<Entity> all = new ArrayList<>();
         level.entitiesForRendering().forEach(all::add);
-        all.addAll(level.dragonParts());
+        all.addAll(Compat.dragonParts(level));
         return all;
     }
 
@@ -395,7 +389,7 @@ public class ProjectileTargeting {
     // Whether auto aim keeps its target: still there, still one the shot can hurt, in range and in line of sight.
     // (The caller also lets it go once the view is more than HOLD_DEG off its solved aim.)
     private static boolean holds(Entity e, LocalPlayer p, ClientLevel level, Vec3 eye, Predicate<Entity> hurtable) {
-        if (e == null || e.isRemoved() || !e.isAlive() || e.level() != level || !hurtable.test(e)) return false;
+        if (e == null || e.isRemoved() || !e.isAlive() || Compat.level(e) != level || !hurtable.test(e)) return false;
         return e.getBoundingBox().getCenter().distanceTo(eye) <= AIM_RANGE && visible(level, p, eye, e);
     }
 
@@ -436,7 +430,7 @@ public class ProjectileTargeting {
     // Each dragon part's centre this tick onto its trail; trails of parts gone are dropped.
     private static void updateTrails(ClientLevel level) {
         Set<Integer> live = new HashSet<>();
-        for (EnderDragonPart part : level.dragonParts()) {
+        for (EnderDragonPart part : Compat.dragonParts(level)) {
             live.add(part.getId());
             ArrayDeque<Vec3> t = trails.computeIfAbsent(part.getId(), id -> new ArrayDeque<>());
             t.addLast(part.getBoundingBox().getCenter());
@@ -476,9 +470,9 @@ public class ProjectileTargeting {
     private static boolean falls(LivingEntity e) {
         if (e.getGravity() <= 0 || e.isFallFlying() || e.isInWater() || e.isInLava() || e.isPassenger() || e.onClimbable()
             || e.hasEffect(MobEffects.LEVITATION)) return false;
-        if (e instanceof Phantom || e instanceof Ghast || e instanceof HappyGhast || e instanceof Allay || e instanceof FlyingAnimal
+        if (e instanceof Phantom || e instanceof Ghast || Mobs.is(e, "happy_ghast") || e instanceof Allay || e instanceof Bee || e instanceof Parrot
             || e instanceof Bat || e instanceof Blaze || e instanceof WitherBoss || e instanceof EnderDragon) return false;
-        return !(e instanceof Player pl && pl.isCreative());
+        return !(e instanceof Player pl && Compat.isCreative(pl));
     }
 
     // The floor under a falling target: how far (0 or less) its box can move straight down before it lands, by the
@@ -514,9 +508,9 @@ public class ProjectileTargeting {
     // Ballistic solve with target lead, for a target entity, from where it will be when the shot spawns, at the box
     // centre moved to the best point AimAdvisor last found for it.
     private static Ballistics.Solution solve(LocalPlayer p, Vec3 spawn, Entity target, Spec spec, double lead) {
-        Ballistics.Course c = course(p.level(), target);
+        Ballistics.Course c = course(Compat.level(p), target);
         Vec3 center = target.getBoundingBox().getCenter().add(c.at(lead))
-                            .add(AimAdvisor.aimOffset(target, spawn, p.level().getGameTime()));
+                            .add(AimAdvisor.aimOffset(target, spawn, Compat.gameTime(Compat.level(p))));
         return Ballistics.solve(spawn, center, c, lead, spec, shooterMotion(p, spec), p.onGround());
     }
 
@@ -526,7 +520,7 @@ public class ProjectileTargeting {
     // open (MouseHandler.handleAccumulatedMovement; a screen, the pause menu included, releases the mouse), so
     // auto aim turns, and holds a target, only then too.
     private static boolean canTurn(Minecraft mc) {
-        return mc.screen == null && mc.getOverlay() == null && mc.isWindowActive() && !mc.isPaused();
+        return Compat.noScreen(mc) && mc.isWindowActive() && !mc.isPaused();
     }
 
     // Whether the pilot moved the view since the last tick (any turn but ours, which is recorded after it is made):
@@ -552,7 +546,7 @@ public class ProjectileTargeting {
     // to its centre turned by as much, to within TRACK_DEG on each axis.
     private static boolean tracking(LocalPlayer p, float dYaw, float dPitch) {
         Entity e = lastShown;
-        if (e == null || e.isRemoved() || !e.isAlive() || e.level() != p.level()) return false;
+        if (e == null || e.isRemoved() || !e.isAlive() || Compat.level(e) != Compat.level(p)) return false;
         Vec3 d = e.getBoundingBox().getCenter().subtract(p.getEyePosition());
         if (d.lengthSqr() < 1e-6) return false;
         float yaw = yawOf(d), pitch = pitchOf(d);
@@ -676,13 +670,12 @@ public class ProjectileTargeting {
     // Drawn as a HUD overlay rather than in the world: the ring and target box are computed in world space
     // in tick() and projected here, so they show on top of terrain (there is no line render type without
     // depth testing to draw them in the world).
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if ((!valid && hitBox == null) || !Settings.projectileReticle) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        Camera camera = mc.gameRenderer.getMainCamera();
-        Matrix4f vp = camera.getViewRotationProjectionMatrix(new Matrix4f());
-        Vec3 cam = camera.position();
+        Matrix4f vp = Compat.viewProjection(mc);
+        Vec3 cam = Compat.cameraPos(mc);
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
 
@@ -693,13 +686,13 @@ public class ProjectileTargeting {
         // beside the crosshair: why the shot can't hurt the target, or else its hit chance as aimed now
         if (noDamage != null) g.text(mc.font, noDamage, W / 2 + 6, H / 2 + 4, COLOR_NO_DAMAGE, true);
         else if (hitId >= 0 && mc.level != null) {
-            double c = AimAdvisor.chance(hitId, mc.level.getGameTime());
+            double c = AimAdvisor.chance(hitId, Compat.gameTime(mc.level));
             if (!Double.isNaN(c)) g.text(mc.font, Math.round(c * 100) + "%", W / 2 + 6, H / 2 + 4, COLOR_ENTITY, true);
         }
     }
 
     // The spread ring on the impact surface: green when it covers the shown target, else white.
-    private static void drawRing(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, int ringColor) {
+    private static void drawRing(Gui2D g, Matrix4f vp, Vec3 cam, int W, int H, int ringColor) {
         Vec3 n = normal.normalize();
         Vec3 u = (Math.abs(n.y) < 0.99 ? n.cross(new Vec3(0, 1, 0)) : n.cross(new Vec3(1, 0, 0))).normalize();
         Vec3 w = n.cross(u).normalize();
@@ -722,7 +715,7 @@ public class ProjectileTargeting {
         }
     }
 
-    private static void boxProjected(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, AABB bb, int color) {
+    private static void boxProjected(Gui2D g, Matrix4f vp, Vec3 cam, int W, int H, AABB bb, int color) {
         Vec3[] c = {
             new Vec3(bb.minX, bb.minY, bb.minZ), new Vec3(bb.maxX, bb.minY, bb.minZ),
             new Vec3(bb.maxX, bb.minY, bb.maxZ), new Vec3(bb.minX, bb.minY, bb.maxZ),
@@ -735,7 +728,7 @@ public class ProjectileTargeting {
 
     // Draw a world-space segment as a screen line, clipped at the camera's near plane so a segment that
     // crosses behind the camera doesn't project to infinity.
-    private static void line3d(GuiGraphicsExtractor g, Matrix4f vp, Vec3 cam, int W, int H, Vec3 A, Vec3 B, int color) {
+    private static void line3d(Gui2D g, Matrix4f vp, Vec3 cam, int W, int H, Vec3 A, Vec3 B, int color) {
         Vector4f a = ScreenProjection.clip(vp, cam, A.x, A.y, A.z);
         Vector4f b = ScreenProjection.clip(vp, cam, B.x, B.y, B.z);
         boolean ain = a.w > NEAR_W, bin = b.w > NEAR_W;
@@ -751,7 +744,7 @@ public class ProjectileTargeting {
     }
 
     /** Thin screen-space line between two points, as a rotated fill. */
-    private static void line2d(GuiGraphicsExtractor g, float x1, float y1, float x2, float y2, int color) {
+    private static void line2d(Gui2D g, float x1, float y1, float x2, float y2, int color) {
         HudDraw.alongSegment(g, x1, y1, x2, y2, 0.5f, hl -> g.fill(-hl, 0, hl, LINE_PX, color));
     }
 }

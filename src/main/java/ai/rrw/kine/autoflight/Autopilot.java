@@ -1,5 +1,7 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.HudColors;
@@ -11,19 +13,13 @@ import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.util.Motion;
 import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import org.lwjgl.glfw.GLFW;
 
 public class Autopilot {
 
@@ -63,13 +59,9 @@ public class Autopilot {
     public static boolean flying() { return engaged && !Guardian.rescuing(); }
 
     public static void register() {
-        toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "key.kine.autopilot", GLFW.GLFW_KEY_J, Kine.KEY_CATEGORY));
+        toggleKey = Compat.key("key.kine.autopilot", "j");
         ClientTickEvents.END_CLIENT_TICK.register(Autopilot::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "autopilot"),
-            Autopilot::render);
+        Compat.hud("autopilot", Autopilot::render);
     }
 
     // Per-tick: only the toggle and the engage/disengage gating. All rotation is driven per frame in
@@ -172,7 +164,7 @@ public class Autopilot {
         }
 
         if (!planned) plan(mc, p);
-        float a = Mth.clamp(mc.getDeltaTracker().getGameTimeDeltaPartialTick(true), 0f, 1f);
+        float a = Mth.clamp(Compat.partialTick(mc, true), 0f, 1f);
         turnTo(p, baseYaw + a * Mth.wrapDegrees(cmdYaw - baseYaw), basePitch + a * (cmdPitch - basePitch));
     }
 
@@ -324,7 +316,7 @@ public class Autopilot {
         Disconnect.withMessage(mc, Component.literal("Kine: autopilot disengaged with no pilot input"));
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();

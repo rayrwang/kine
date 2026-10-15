@@ -1,5 +1,6 @@
 package ai.rrw.kine;
 
+import ai.rrw.kine.compat.Compat;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -8,7 +9,6 @@ import com.google.gson.JsonPrimitive;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.EquipmentSlot;
 
 import java.io.IOException;
@@ -97,7 +97,7 @@ public final class Settings {
     /** Wearing something to glide with (an elytra in the chest slot), or gliding now. */
     public static boolean wearingElytra() {
         LocalPlayer p = Minecraft.getInstance().player;
-        return p != null && (p.isFallFlying() || p.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER));
+        return p != null && (p.isFallFlying() || Compat.isGlider(p.getItemBySlot(EquipmentSlot.CHEST)));
     }
 
     /** One setting: its key in kine.json, its section, the choices it cycles through, its default and its

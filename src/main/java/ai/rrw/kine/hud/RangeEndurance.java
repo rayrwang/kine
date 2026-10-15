@@ -1,5 +1,7 @@
 package ai.rrw.kine.hud;
 
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
@@ -14,13 +16,9 @@ import ai.rrw.kine.util.Motion;
 import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.util.Smoothing;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.level.Level;
 
@@ -81,10 +79,7 @@ public class RangeEndurance {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(RangeEndurance::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "range_endurance"),
-            RangeEndurance::render);
+        Compat.hud("range_endurance", RangeEndurance::render);
     }
 
     // Runs whether or not the readout is displayed: the failsafe, the nav range warning and the ETA use the estimate too.
@@ -126,7 +121,7 @@ public class RangeEndurance {
         List<Durability.Wing> order = Durability.order(worn, ElytraLife.spares(p.inventoryMenu, null));
         double ownTop = gliding && topCount > 0 ? windowTop() : Double.NaN;
         double y = reserveY(ownTop, flightTicks, lockedTop, FlightDirector.targetAltitude());
-        int reserve = Durability.reservePoints(LandingTime.seconds(y - mc.level.getMinY()));
+        int reserve = Durability.reservePoints(LandingTime.seconds(y - Compat.minY(mc.level)));
         endurance = Durability.endurance(order, reserve);
         show = true;
 
@@ -176,7 +171,7 @@ public class RangeEndurance {
         return END_NORMAL;
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (!show || !Settings.shows(Settings.displayRangeEndurance)) return;
         Minecraft mc = Minecraft.getInstance();
 

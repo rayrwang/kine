@@ -1,5 +1,7 @@
 package ai.rrw.kine.ui;
 
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Nav;
@@ -12,22 +14,21 @@ import ai.rrw.kine.walk.Route;
 import ai.rrw.kine.walk.Walk;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * The nav screen (N), two tabs: Elytra (the autopilot's altitude, Selected heading or Managed destination, what to do
  * on arrival) and Walk (the walking pathfinder's own destination, one X and Z per dimension, with Go and Stop and the
  * walk's state).
  */
-public class KineNavScreen extends Screen {
+public abstract class KineNavScreen extends Screen {
+    // Abstract: each family's subclass (Compat.navScreen) adds that release's render and input overrides, which call
+    // renderScreen, mouseDown, mouseDrag, mouseUp and keyDown below (versions/README.md).
+
 
     private static final int RING = 0xFF888888, LABEL = 0xFFFFFFFF, DIM = 0xFFAAAAAA;
     private static final int CURR = 0xFF44CCFF;   // cyan: where the player is pointing now
@@ -55,7 +56,7 @@ public class KineNavScreen extends Screen {
     private Button walkHere, walkBtn;   // walkBtn: Go, Pause or Cancel, as the walk stands (RW)
     private int walkTop;
 
-    public KineNavScreen() {
+    protected KineNavScreen() {
         super(Component.literal("Kine nav"));
         this.mode = Nav.mode();
         this.hasHeading = Nav.hasHeading();
@@ -175,12 +176,6 @@ public class KineNavScreen extends Screen {
         AltitudeBox(Font font, int x, int y, int w, int h, Component name) { super(font, x, y, w, h, name); }
 
         @Override
-        public boolean keyPressed(KeyEvent event) {
-            if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) { applyAlt(); return true; }
-            return super.keyPressed(event);
-        }
-
-        @Override
         public void setFocused(boolean focused) {
             if (isFocused() && !focused) applyAlt();
             super.setFocused(focused);
@@ -194,9 +189,9 @@ public class KineNavScreen extends Screen {
     }
 
     /** Open the nav screen on its Walk tab. */
-    public static KineNavScreen walkTab() {
+    public static Screen walkTab() {
         tab = Tab.WALK;
-        return new KineNavScreen();
+        return Compat.navScreen();
     }
 
     private void setTab(Tab t) {
@@ -281,7 +276,7 @@ public class KineNavScreen extends Screen {
         this.onClose();   // walking needs the keys: with a screen open none are pressed
     }
 
-    private void drawWalk(GuiGraphicsExtractor g) {
+    private void drawWalk(Gui2D g) {
         int cx = this.width / 2;
         g.centeredText(this.font, Component.literal("Walk to (this dimension)"), cx, walkTop, LABEL);
         g.text(this.font, "X", walkX.getX() - 10, walkX.getY() + 6, DIM, true);
@@ -360,26 +355,34 @@ public class KineNavScreen extends Screen {
         if (tab == Tab.WALK) refreshWalkButton();
     }
 
-    @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (tab == Tab.ELYTRA && mode == Nav.Mode.SELECTED && inDial(event.x(), event.y())) {
-            draggingDial = true;
-            setHeadingFromMouse(event.x(), event.y());
+    /** A key pressed, before the screen's widgets see it: true if taken. The altitude box commits on Enter. */
+    protected boolean keyDown(int key) {
+        if (altBox != null && altBox.isFocused() && (key == Compat.keyCode("enter") || key == Compat.keyCode("keypad.enter"))) {
+            applyAlt();
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        return false;
     }
 
-    @Override
-    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        if (draggingDial) { setHeadingFromMouse(event.x(), event.y()); return true; }
-        return super.mouseDragged(event, dragX, dragY);
+    /** A mouse button pressed, before the widgets see it: true if taken (the heading dial). */
+    protected boolean mouseDown(double x, double y, int button) {
+        if (tab == Tab.ELYTRA && mode == Nav.Mode.SELECTED && inDial(x, y)) {
+            draggingDial = true;
+            setHeadingFromMouse(x, y);
+            return true;
+        }
+        return false;
     }
 
-    @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
+    /** The mouse dragged with a button held: true if taken. */
+    protected boolean mouseDrag(double x, double y) {
+        if (draggingDial) { setHeadingFromMouse(x, y); return true; }
+        return false;
+    }
+
+    /** A mouse button let go (the widgets see it too). */
+    protected void mouseUp() {
         draggingDial = false;
-        return super.mouseReleased(event);
     }
 
     private boolean inDial(double mx, double my) {
@@ -405,9 +408,9 @@ public class KineNavScreen extends Screen {
         Nav.setHeading(heading);
     }
 
-    @Override
-    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
-        super.extractRenderState(g, mouseX, mouseY, partial);
+    /** The screen's frame: vanilla draws the background and the widgets, then this draws over them. */
+    protected void renderScreen(Gui2D g, int mouseX, int mouseY, float partial, Runnable vanilla) {
+        vanilla.run();
         g.centeredText(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
         if (tab == Tab.WALK) { drawWalk(g); return; }
         g.centeredText(this.font, Component.literal("Target altitude"), this.width / 2, 30, LABEL);
@@ -426,7 +429,7 @@ public class KineNavScreen extends Screen {
         }
     }
 
-    private void drawDial(GuiGraphicsExtractor g) {
+    private void drawDial(Gui2D g) {
         int seg = 60, px = 0, py = 0;
         for (int i = 0; i <= seg; i++) {
             double a = i * 2 * Math.PI / seg;

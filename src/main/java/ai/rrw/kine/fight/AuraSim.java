@@ -1,6 +1,7 @@
 package ai.rrw.kine.fight;
 
 import ai.rrw.kine.combat.SwingPlan;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.move.GameMath;
 import ai.rrw.kine.move.MoveState;
 
@@ -89,7 +90,7 @@ public final class AuraSim {
         float rest = fleeing != null ? fleeYaw : viewYaw;   // where the rotation goes with nothing to aim at
         if (found.isEmpty()) { turnToward(rest); return 0.0; }
         found.sort((a, b) -> Double.compare(d2(ex, ey, ez, a), d2(ex, ey, ez, b)));
-        boolean canSweep = p.onGround && !p.sprinting && pdx * pdx + pdz * pdz < moveSpeed * 2.5 * moveSpeed * 2.5 && weapon.sword();
+        boolean canSweep = p.onGround && !p.sprinting && slowEnoughToSweep(pdx, pdz, moveSpeed) && weapon.sword();
         List<SwingPlan.Mob> plan = new ArrayList<>(found.size());
         for (MobSim m : found) {
             SwingPlan.Mob s = new SwingPlan.Mob(m.health, m.armour);
@@ -164,11 +165,12 @@ public final class AuraSim {
             for (int j : plan.get(idx).swept) {
                 MobSim o = found.get(j);
                 double sw = SwingPlan.sweepDamage(weapon, o.bonus, c);
+                double r = Math.toRadians(sentYaw);
+                // up to 1.21.4 the sweep knocks back first, whatever the hurt does (Rules.SWEEP_KNOCKS_FIRST); from
+                // 1.21.5 only a mob the hurt took
+                if (Rules.SWEEP_KNOCKS_FIRST) o.knockback(0.4, Math.sin(r), -Math.cos(r));
                 double d = hurt(p, o, sw, false, noLitKill);
-                if (d >= 0) {
-                    double r = Math.toRadians(sentYaw);
-                    o.knockback(0.4, Math.sin(r), -Math.cos(r));
-                }
+                if (d >= 0 && !Rules.SWEEP_KNOCKS_FIRST) o.knockback(0.4, Math.sin(r), -Math.cos(r));
                 total += Math.max(0.0, d);
             }
         }
@@ -205,6 +207,15 @@ public final class AuraSim {
             vy = (vy - 0.08) * 0.98;
         }
         return -1;
+    }
+
+    /** Player.isSweepAttack's movement test on the player's last move (pdx, pdz) and its speed (getSpeed()):
+     *  getKnownMovement().horizontalDistanceSqr() < (speed * 2.5)^2; up to 1.21.1 walkDist - walkDistO < speed on the
+     *  server, whose walkDistO its own player tick set after the moves it had: a hit sent before the tick's move finds
+     *  none since, so 0 < speed whatever the last move (Rules.SWEEP_BY_WALK_DIST). */
+    static boolean slowEnoughToSweep(double pdx, double pdz, double speed) {
+        if (Rules.SWEEP_BY_WALK_DIST) return 0.0F < speed;
+        return pdx * pdx + pdz * pdz < speed * 2.5 * speed * 2.5;
     }
 
     /** Player.doSweepAttack's test, on the server's (true) positions. */

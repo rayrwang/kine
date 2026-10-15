@@ -5,6 +5,9 @@ import ai.rrw.kine.combat.AuraState;
 import ai.rrw.kine.combat.Ballistics;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Mobs;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.mixin.PlayerAccessor;
 import ai.rrw.kine.move.BlockGrid;
 import ai.rrw.kine.move.BlockInfo;
@@ -24,15 +27,12 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Blaze;
 import net.minecraft.world.entity.monster.breeze.Breeze;
 import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.entity.monster.Endermite;
-import net.minecraft.world.entity.monster.MagmaCube;
 import net.minecraft.world.entity.monster.Phantom;
 import net.minecraft.world.entity.monster.Ravager;
 import net.minecraft.world.entity.monster.Vex;
 import net.minecraft.world.entity.projectile.EvokerFangs;
 import net.minecraft.world.entity.monster.Silverfish;
-import net.minecraft.world.entity.monster.Slime;
 import net.minecraft.world.entity.monster.Witch;
 import net.minecraft.world.entity.monster.warden.Warden;
 import net.minecraft.world.entity.monster.Zoglin;
@@ -45,7 +45,6 @@ import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinBrute;
 import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
 import net.minecraft.world.entity.monster.skeleton.Bogged;
-import net.minecraft.world.entity.monster.skeleton.Parched;
 import net.minecraft.world.entity.monster.skeleton.Stray;
 import net.minecraft.world.entity.monster.skeleton.WitherSkeleton;
 import net.minecraft.world.entity.monster.spider.CaveSpider;
@@ -58,10 +57,8 @@ import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
 import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.AbstractWindCharge;
 import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
 import net.minecraft.world.entity.projectile.ThrowableProjectile;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.AbstractThrownPotion;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.alchemy.PotionContents;
-import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
 import net.minecraft.world.entity.monster.zombie.Zombie;
@@ -143,16 +140,16 @@ public final class FightSnapshot {
             if (!(e instanceof Mob m)) continue;
             Track t = tracks.computeIfAbsent(e.getId(), k -> new Track());
             t.seen = clientTick;
-            Vec3 at = m.getInterpolation() != null ? m.getInterpolation().position() : m.position();
+            Vec3 at = Compat.interpolationTarget(m);
             if (t.tick0 < 0 || at.x != t.x0 || at.y != t.y0 || at.z != t.z0) {
                 t.tick1 = t.tick0; t.x1 = t.x0; t.y1 = t.y0; t.z1 = t.z0;
                 t.tick0 = clientTick; t.x0 = at.x; t.y0 = at.y; t.z0 = at.z;
             }
-            if (m.swinging && !t.wasSwinging) t.swungAt = clientTick;
+            if (Compat.swinging(m) && !t.wasSwinging) t.swungAt = clientTick;
             // the fight's progress: a modelled mob near losing health (or dying), or none near
             if (t.health >= 0 && m.getHealth() < t.health && modelled(m)) lastProgress = clientTick;
             t.health = m.getHealth();
-            t.wasSwinging = m.swinging;
+            t.wasSwinging = Compat.swinging(m);
             if (m.onGround() && !t.wasOnGround) t.landedAt = clientTick;
             t.wasOnGround = m.onGround();
             if (!m.isUsingItem() && t.wasUsing) t.shotAt = clientTick;
@@ -204,7 +201,7 @@ public final class FightSnapshot {
         if (e instanceof Piglin pg && pg.isHolding(Items.CROSSBOW)) return MobSim.Kind.CROSSBOW;
         if (e instanceof Witch) return MobSim.Kind.WITCH;
         if (e instanceof Spider) return MobSim.Kind.LEAPER;
-        if (e instanceof Slime) return MobSim.Kind.SLIME;   // magma cubes too
+        if (Compat.isSlime(e)) return MobSim.Kind.SLIME;   // magma cubes too
         if (e instanceof Blaze) return MobSim.Kind.BLAZE;
         if (e instanceof Phantom) return MobSim.Kind.PHANTOM;
         if (e instanceof Breeze) return MobSim.Kind.BREEZE;
@@ -325,7 +322,7 @@ public final class FightSnapshot {
         m.kind = kindOf(e);
         m.id = e.getId();
         Track t = tracks.get(e.getId());
-        Vec3 at = e.getInterpolation() != null ? e.getInterpolation().position() : e.position();
+        Vec3 at = Compat.interpolationTarget(e);
         double vx = 0, vy = 0, vz = 0;
         // its velocity from the last two positions received, unless none has come for a while: then it stands (the
         // server sends a mob's moves every tick while it moves; under lag they come a few ticks at a time). Carried on
@@ -369,7 +366,7 @@ public final class FightSnapshot {
         m.active = true;
         m.sinceCheck = 20;
         double[] win = KillAura.window(e);
-        int seen = Math.max(0, e.invulnerableTime - 11);   // a full hit from anything, as the client marks it
+        int seen = Math.max(0, Compat.invulnerableTime(e) - 11);   // a full hit from anything, as the client marks it
         m.freshIn = Math.max((int) win[0], seen);
         m.lastHurt = win[0] >= seen && win[0] > 0 ? win[1] : Double.MAX_VALUE;
         if (m.freshIn == 0) m.lastHurt = 0;
@@ -401,10 +398,10 @@ public final class FightSnapshot {
             }
             case BOW -> {
                 boolean hard = level == Difficulty.HARD;
-                boolean slow = e instanceof Bogged || e instanceof Parched;
+                boolean slow = e instanceof Bogged || Mobs.is(e, "parched");
                 m.bowInterval = slow ? (hard ? 50 : 70) : (hard ? 20 : 40);
                 m.arrowBase = 2.0 + level.getId() * 0.11 + 0.57425;   // power 1 x 2 plus the top of triangle(diff x 0.11, 0.57425)
-                m.arrowExtra = e instanceof Stray ? 2.0 : e instanceof Bogged ? 4.0 : e instanceof Parched ? 3.0
+                m.arrowExtra = e instanceof Stray ? 2.0 : e instanceof Bogged ? 4.0 : Mobs.is(e, "parched") ? 3.0
                     : e instanceof WitherSkeleton ? 4.0 : 0.0;   // slowness, poison, weakness, fire
                 if (e.isUsingItem()) {
                     m.drawTicks = e.getTicksUsingItem() + ahead;
@@ -460,9 +457,8 @@ public final class FightSnapshot {
                 // Slime.setSize: speed 0.2 + 0.1 x size; it hurts on touch unless tiny (a magma cube always); its hop
                 // 0.42 up, a magma cube's 0.1 x size more. The wait before its next hop isn't sent: taken at its
                 // shortest, counted from the landing seen (the flag comes with its moves)
-                Slime sl = (Slime) e;
-                int size = sl.getSize();
-                m.magma = e instanceof MagmaCube;
+                int size = Compat.slimeSize(e);
+                m.magma = Compat.isMagmaCube(e);
                 m.slimeSize = size;
                 m.touchDamage = m.magma || size > 1;
                 if (!m.touchDamage) m.attackDamage = 0;
@@ -499,6 +495,7 @@ public final class FightSnapshot {
                 // its Shoot: the SHOOTING pose (synced) for 15 ticks of charge, then the wind charge. Not in the pose,
                 // it may take it the next tick: a shot 15 on. In the pose with its charge already seen: none more
                 m.walking = false;
+                m.shotStarted = e.getPose() == Pose.SHOOTING;
                 if (e.getPose() == Pose.SHOOTING && t != null) {
                     boolean shot = t.shots > t.shotsAtPose;
                     m.shootIn = shot ? -1 : Math.max(0, 15 - (clientTick - t.poseAt + ahead));
@@ -544,7 +541,7 @@ public final class FightSnapshot {
                 m.swellDir = c.isIgnited() ? 1 : c.getSwellDir();
                 m.swell = Math.max(0, Math.min(29, Math.round(c.getSwelling(1.0F) * 28.0F) + m.swellDir * ahead));
                 m.swelling = m.swellDir > 0;
-                m.blastRadius = c.isPowered() ? 6.0 : 3.0;
+                m.blastRadius = Compat.creeperPowered(c) ? 6.0 : 3.0;
                 if (m.swelling) { m.active = false; m.walking = false; }
             }
         }
@@ -558,7 +555,7 @@ public final class FightSnapshot {
      *  10 ticks it stands after a hit and its roar when a shield blocks it are left out). Zombified piglins are in the
      *  zombie family (ZombieAttackGoal). */
     static boolean walker(Entity e) {
-        return e instanceof Vindicator || e instanceof EnderMan || e instanceof Silverfish || e instanceof Endermite
+        return e instanceof Vindicator || Compat.isEnderman(e) || e instanceof Silverfish || e instanceof Endermite
             || e instanceof PiglinBrute || e instanceof Piglin pg && !pg.isHolding(Items.CROSSBOW)
             || e instanceof Hoglin || e instanceof Zoglin || e instanceof ZombifiedPiglin || e instanceof Ravager;
     }
@@ -602,14 +599,14 @@ public final class FightSnapshot {
         if (e instanceof WitherSkeleton) return 4.0;   // set in WitherSkeleton.finalizeSpawn
         if (e instanceof ZombifiedPiglin || e instanceof Vindicator || e instanceof Piglin) return 5.0;
         if (e instanceof Zombie) return 3.0;           // Zombie.createAttributes
-        if (e instanceof EnderMan || e instanceof PiglinBrute) return 7.0;
+        if (Compat.isEnderman(e) || e instanceof PiglinBrute) return 7.0;
         if (e instanceof Hoglin || e instanceof Zoglin) return e.isBaby() ? 0.5 : 8.0;   // 6 / 2 + nextInt(6): at most 8
         if (e instanceof Silverfish) return 1.0;
         if (e instanceof Ravager) return 12.0;         // Ravager.createAttributes
         if (e instanceof Vex) return 4.0;              // Vex.createAttributes (and the sword it holds, added below)
         if (e instanceof Blaze) return 6.0;            // Blaze.createAttributes
         if (e instanceof Phantom ph) return 6.0 + ph.getPhantomSize();   // Phantom.updatePhantomSizeInfo
-        if (e instanceof Slime sl) return sl.getSize() + (e instanceof MagmaCube ? 2.0 : 0.0);   // setSize; MagmaCube.getAttackDamage
+        if (Compat.isSlime(e)) return Compat.slimeSize(e) + (Compat.isMagmaCube(e) ? 2.0 : 0.0);   // setSize; MagmaCube.getAttackDamage
         return 2.0;                                    // Monster.createMonsterAttributes: skeletons, spiders, creepers
     }
 
@@ -636,12 +633,13 @@ public final class FightSnapshot {
             a.age = Math.max(1, e.tickCount);
             if (e instanceof ThrownTrident) a.fixed = 8.0;
             else if (e instanceof AbstractArrow) a.base = 2.0 + mc.level.getDifficulty().getId() * 0.11 + 0.57425;
-            else if (e instanceof AbstractThrownPotion pot) {   // a splash: what the witch threw, by its contents
+            else if (Compat.thrownPotion(e) != null) {   // a splash: what the witch threw, by its contents
                 a.splash = true;
-                PotionContents pc = pot.getItem().getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
-                if (pc.is(Potions.HARMING)) a.splashDamage = 6.0;
-                else if (pc.is(Potions.STRONG_HARMING)) a.splashDamage = 12.0;
-                else if (pc.is(Potions.POISON) || pc.is(Potions.STRONG_POISON) || pc.is(Potions.LONG_POISON)) a.splashCost = 8.0;
+                PotionContents pc = Compat.componentOr(Compat.thrownPotion(e), DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
+                // by id: the Potions fields changed type at 26.3, so a reference compiled against 26.1 fails there
+                if (potion(pc, "harming")) a.splashDamage = 6.0;
+                else if (potion(pc, "strong_harming")) a.splashDamage = 12.0;
+                else if (potion(pc, "poison") || potion(pc, "strong_poison") || potion(pc, "long_poison")) a.splashCost = 8.0;
                 else if (pc.potion().isPresent()) a.splashCost = 3.0;
             }
             else if (e instanceof ThrowableProjectile) a.fixed = 1.0E-6;   // snowballs, eggs, pearls: the knockback only
@@ -649,6 +647,9 @@ public final class FightSnapshot {
             if (e instanceof AbstractHurtingProjectile hp) {   // fireballs speed up (applyInertia)
                 a.accel = hp.accelerationPower;
                 a.inertia = e.isInWater() ? 0.8 : 0.95;
+                // up to 1.21.1 the speed-up comes after the move (Rules.PROJECTILES_MOVE_FIRST): the last move was made
+                // before it, so it is applied once to give the velocity the next move starts from
+                if (Rules.PROJECTILES_MOVE_FIRST && a.accel > 0) a.inertia();
                 if (e instanceof SmallFireball) a.extra = FightWorld.FIRE_EXTRA;
                 if (e instanceof AbstractWindCharge) { a.fixed = 1.0; a.burst = 3.0; }   // straight (no speed-up)
                 if (e instanceof LargeFireball) {   // a ghast's: 6 on a hit and a blast of power 1 where it stops (about
@@ -667,10 +668,9 @@ public final class FightSnapshot {
             for (int k = 1; k <= most; k++) {
                 ArrowSim c = k == most ? a : a.copy();
                 for (int i = 0; i < k; i++) {
-                    if (c.accel > 0) c.inertia();
-                    else if (c.gravityFirst) { c.vy -= c.gravity; c.vx *= c.drag; c.vy *= c.drag; c.vz *= c.drag; }
+                    c.beforeMove();
                     c.x += c.vx; c.y += c.vy; c.z += c.vz;
-                    if (!c.gravityFirst && c.accel <= 0) { c.vx *= c.drag; c.vy *= c.drag; c.vz *= c.drag; c.vy -= c.gravity; }
+                    c.afterMove();
                     c.age++;
                 }
                 out.add(c);
@@ -688,5 +688,10 @@ public final class FightSnapshot {
             if (!b.shape.empty && by + top <= y + 1e-6) return by + top;
         }
         return y;
+    }
+
+    /** The potion is this vanilla one (by its id). */
+    private static boolean potion(PotionContents pc, String id) {
+        return pc.potion().map(h -> h.is(net.minecraft.resources.Identifier.withDefaultNamespace(id))).orElse(false);
     }
 }

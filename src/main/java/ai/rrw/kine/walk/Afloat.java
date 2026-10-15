@@ -1,6 +1,8 @@
 package ai.rrw.kine.walk;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fight.Moves;
 import ai.rrw.kine.move.BlockGrid;
 import ai.rrw.kine.move.BlockInfo;
@@ -9,7 +11,6 @@ import ai.rrw.kine.move.MoveState;
 import ai.rrw.kine.move.WorldSnapshot;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.tags.FluidTags;
-import net.minecraft.world.entity.player.Input;
 
 /**
  * Keeps the head above water whenever the walk leaves the player in water with no one at the keys (RW 2026-10-14:
@@ -96,7 +97,7 @@ public final class Afloat {
     private static BlockGrid blocks(LocalPlayer p) {
         double dx = p.getX() - gridX, dy = p.getY() - gridY, dz = p.getZ() - gridZ;
         if (grid == null || ++gridAge >= 10 || dx * dx + dy * dy + dz * dz > 1.0) {
-            grid = WorldSnapshot.around(p.level(), p, REACH + 1, 2, UP);
+            grid = WorldSnapshot.around(Compat.level(p), p, REACH + 1, 2, UP);
             gridX = p.getX(); gridY = p.getY(); gridZ = p.getZ();
             gridAge = 0;
         }

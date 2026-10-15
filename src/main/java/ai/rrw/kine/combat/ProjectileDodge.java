@@ -1,13 +1,15 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.util.GameModes;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ThrowableProjectile;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
@@ -44,11 +46,12 @@ public class ProjectileDodge {
     record Pass(double time, Vec3 miss, Vec3 velocity) {}
 
     /** How a projectile flies on: arrows (and tridents) move, then lose 1% and fall 0.05; thrown items
-     *  fall 0.03, lose 1%, then move (AbstractArrow.tick and ThrowableProjectile.tick). Other projectiles
-     *  (fireballs, wind charges, shulker bullets) are taken to fly straight. */
+     *  fall 0.03, lose 1%, then move (AbstractArrow.tick and ThrowableProjectile.tick; up to 1.21.1 they move first,
+     *  as arrows do, Rules.PROJECTILES_MOVE_FIRST). Other projectiles (fireballs, wind charges, shulker bullets) are
+     *  taken to fly straight. */
     public static Ballistics.Spec flightOf(Projectile proj) {
         if (proj instanceof AbstractArrow) return new Ballistics.Spec(proj.getGravity(), 0.99, 0, 0, false, false);
-        if (proj instanceof ThrowableProjectile) return new Ballistics.Spec(proj.getGravity(), 0.99, 0, 0, true, false);
+        if (proj instanceof ThrowableProjectile) return new Ballistics.Spec(proj.getGravity(), 0.99, 0, 0, !Rules.PROJECTILES_MOVE_FIRST, false);
         return new Ballistics.Spec(0.0, 1.0, 0, 0, true, false);
     }
 
@@ -125,7 +128,7 @@ public class ProjectileDodge {
             if (!(e instanceof Projectile proj)) continue;
             if (proj.getOwner() == p) continue;                 // never dodge our own shots
 
-            Vec3 pp = proj.position();
+            Vec3 pp = Compat.position(proj);
             // Per-tick displacement is the most reliable velocity for a non-local entity (getDeltaMovement
             // can read stale or zero on interpolated projectiles); fall back to it only if there's no delta yet.
             Vec3 pv = new Vec3(proj.getX() - proj.xOld, proj.getY() - proj.yOld, proj.getZ() - proj.zOld);

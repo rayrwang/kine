@@ -1,23 +1,12 @@
 package ai.rrw.kine.walk;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.pipeline.DepthStencilState;
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.WorldDraw;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.rendertype.RenderSetup;
-import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
-
-import java.util.Optional;
 
 /**
  * The walking pathfinder in the world. Layer 1's search takes milliseconds, too fast to watch, so a search is replayed
@@ -58,24 +47,14 @@ public final class WalkRender {
 
     // the rails' quads: depth-tested against the terrain with a bias toward the camera (as the game's own lines with
     // depth bias), so the ground they lie on doesn't break them up far away; no depth write, both faces
-    static final RenderPipeline RAILS_PIPELINE = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
-        .withLocation(Identifier.fromNamespaceAndPath(Kine.MOD_ID, "pipeline/walk_rails"))
-        .withCull(false)
-        .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, false, -1.0F, -1.0F))
-        .build());
-    static final RenderType RAILS = RenderType.create("kine_walk_rails", RenderSetup.builder(RAILS_PIPELINE).createRenderSetup());
+    static final WorldDraw.QuadStyle RAILS = WorldDraw.QuadStyle.GROUND;
     private static final int RAIL_TOP = (0xE0 << 24) | 0x2864FF;   // the elytra rails' blue
     static final float FAINT = 0.16F;
 
     // depth-tested lines; the bright frontier passes only where no dim line is already at the same depth
-    static final RenderPipeline LINES = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
-        .withLocation(Identifier.fromNamespaceAndPath(Kine.MOD_ID, "pipeline/walk_lines")).build());
-    static final RenderPipeline LINES_OVER = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
-        .withLocation(Identifier.fromNamespaceAndPath(Kine.MOD_ID, "pipeline/walk_lines_strict"))
-        .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN, true)).build());
-    static final RenderPipeline LINES_THROUGH = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
-        .withLocation(Identifier.fromNamespaceAndPath(Kine.MOD_ID, "pipeline/walk_lines_through"))
-        .withDepthStencilState(Optional.empty()).build());
+    static final WorldDraw.LineStyle LINES = WorldDraw.LineStyle.TESTED;
+    static final WorldDraw.LineStyle LINES_OVER = WorldDraw.LineStyle.STRICT;
+    static final WorldDraw.LineStyle LINES_THROUGH = WorldDraw.LineStyle.SEE_THROUGH;
 
     /** One plan's drawing: its replay (uploaded on first draw) and when it arrived. */
     private static final class Shown {
@@ -150,7 +129,7 @@ public final class WalkRender {
     public static int lastTreeSegments = 0;
 
     public static void register() {
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(WalkRender::render);
+        Compat.world().afterTranslucentTerrain(WalkRender::render);
     }
 
     /** A new plan arrived (client thread): replayed. */
@@ -192,13 +171,12 @@ public final class WalkRender {
         return Math.min(1.0, current.age() / (Settings.walkSearchDetailed ? REPLAY_S : ROUTE_IN));
     }
 
-    private static void render(LevelRenderContext ctx) {
+    private static void render(Matrix4f pose) {
         long t0 = System.nanoTime();
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || mc.options.hideGui) return;
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
-        Matrix4f pose = ctx.poseStack().last().pose();
+        if (p == null || mc.level == null || Compat.hudHidden(mc)) return;
+        Vec3 cam = Compat.cameraPos(mc);
         boolean searchOn = Settings.walkSearchDisplay, pathOn = Settings.walkPathDisplay;
         if (current != null && !Walk.active() && !Walk.showing() && !Walk.previewing()) {
             // cancelled, or failed with no route: let it fade (a paused or arrived walk stays drawn till Cancel)
@@ -222,7 +200,7 @@ public final class WalkRender {
         long c = System.nanoTime();
         if (searchOn && current != null && current.replay) {
             drawSearch(current, pose, cam, false);
-            if (!Settings.walkSearchDetailed) outline(ctx, current, pose, cam);
+            if (!Settings.walkSearchDetailed) outline(current, pose, cam);
         }
         long d0 = System.nanoTime();
         if (pathOn) {
@@ -235,8 +213,8 @@ public final class WalkRender {
             // the old fade out
             float in = current == null ? 0 : (float) Math.min(1, Math.max(0, (current.age() - current.routeAt()) / RAIL_SWAP));
             if (current != null && current.routeAt() == 0 && (old == null || old.fadeFrom < 0)) in = 1.0F;
-            if (old != null && old.fadeFrom > 0) rails(ctx, old, p, pose, cam, Math.min(1 - in, fade(old)));
-            if (current != null) rails(ctx, current, p, pose, cam, current.fadeFrom > 0 ? fade(current) : in);
+            if (old != null && old.fadeFrom > 0) rails(old, p, pose, cam, Math.min(1 - in, fade(old)));
+            if (current != null) rails(current, p, pose, cam, current.fadeFrom > 0 ? fade(current) : in);
         }
         long f = System.nanoTime();
         treeNanos += (b - a) + (d0 - c);
@@ -247,7 +225,7 @@ public final class WalkRender {
         LAYERS.removeIf(l -> { if (l.done()) { l.close(); return true; } return false; });
         if (old != null && old.fadeFrom > 0 && (System.nanoTime() - old.fadeFrom) / 1e9 > FADE_S) { old.close(); old = null; }
         long g0 = System.nanoTime();
-        WalkBeam.render(ctx);
+        WalkBeam.render(pose);
         beamNanos += System.nanoTime() - g0;
         long d = System.nanoTime() - t0;
         frameNanos += d;
@@ -261,7 +239,7 @@ public final class WalkRender {
         double t = s.age();
         Replay r = s.plan.replay;
         float k = (faint ? FAINT * 1.6F : 1.0F) * (s.fadeFrom > 0 ? fade(s) : 1.0F);
-        RenderPipeline pipe = faint ? LINES_THROUGH : LINES;
+        WorldDraw.LineStyle pipe = faint ? LINES_THROUGH : LINES;
         if (t < TAUT_AT && s.feel != null) {
             int step = r.feelStep(t / SEARCH_S);
             float a = t < SEARCH_S ? 1.0F : (float) Math.max(0, 1 - (t - SEARCH_S) / MORPH_S);
@@ -280,7 +258,7 @@ public final class WalkRender {
      * yet, a thin strip just inside it, so the outline spreads from the player and bends round obstacles. Streamed per
      * frame while it shows (the search part and its fade); a few thousand quads at most.
      */
-    private static void outline(LevelRenderContext ctx, Shown s, Matrix4f pose, Vec3 cam) {
+    private static void outline(Shown s, Matrix4f pose, Vec3 cam) {
         Replay r = s.plan.replay;
         if (r.cellOrder == null) return;
         double t = s.age();
@@ -291,7 +269,7 @@ public final class WalkRender {
         int n = r.cellsBy(e);
         if (n == 0) return;
         int color = ((int) ((OUTLINE >>> 24) * a) << 24) | (OUTLINE & 0xFFFFFF);
-        VertexConsumer vc = ctx.bufferSource().getBuffer(RAILS);
+        WorldDraw.Quads vc = Compat.world().quads(RAILS);
         int w = r.cellW, h = r.cellH;
         for (int j = 0; j < n; j++) {
             int idx = r.cellOrder[j], cx = idx % w, cz = idx / w;
@@ -301,11 +279,11 @@ public final class WalkRender {
             if (cz == 0 || r.cellAt[idx - w] >= e) quad(vc, pose, cam, x, y, z, x + 1, z + OUTLINE_W, color);
             if (cz == h - 1 || r.cellAt[idx + w] >= e) quad(vc, pose, cam, x, y, z + 1 - OUTLINE_W, x + 1, z + 1, color);
         }
-        ctx.bufferSource().endBatch(RAILS);
+        vc.end();
     }
 
     /** A flat quad at height y over x0..x1, z0..z1. */
-    private static void quad(VertexConsumer vc, Matrix4f pose, Vec3 cam, double x0, double y, double z0, double x1, double z1, int argb) {
+    private static void quad(WorldDraw.Quads vc, Matrix4f pose, Vec3 cam, double x0, double y, double z0, double x1, double z1, int argb) {
         vertex(vc, pose, cam, x0, y, z0, argb);
         vertex(vc, pose, cam, x0, y, z1, argb);
         vertex(vc, pose, cam, x1, y, z1, argb);
@@ -341,7 +319,7 @@ public final class WalkRender {
         float a = at == 0 ? 1.0F : (float) Math.min(1, Math.max(0, (t - at) / (Settings.walkSearchDetailed ? 0.3 : SETTLE_S)));
         if (s.fadeFrom > 0) a = Math.min(a, fade(s));
         float k = faint ? FAINT * 1.6F : 1.0F;
-        RenderPipeline pipe = faint ? LINES_THROUGH : LINES;
+        WorldDraw.LineStyle pipe = faint ? LINES_THROUGH : LINES;
         boolean settled = at == 0 || t > at + (Settings.walkSearchDetailed ? 1.8 : 1.0);
         if (s.route != null) s.route.draw(pipe, pose, cam, s.route.lines, a * k * (settled ? 0.75F : 1.0F));
         if (s.beyond != null) s.beyond.draw(pipe, pose, cam, s.beyond.lines, a * k);
@@ -359,16 +337,16 @@ public final class WalkRender {
      * RAIL_SWAP while the last plan's fade out, so a replan never makes them jump. Depth-tested with a bias toward the
      * camera, so the ground doesn't break them up at a distance. Streamed per frame: a few hundred quads.
      */
-    private static void rails(LevelRenderContext ctx, Shown s, LocalPlayer p, Matrix4f pose, Vec3 cam, float strength) {
+    private static void rails(Shown s, LocalPlayer p, Matrix4f pose, Vec3 cam, float strength) {
         RailPath rp = s.plan.rails;
         if (rp == null || rp.n < 2 || strength <= 0.01F) return;
-        float pt = Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        float pt = Compat.partialTick(Minecraft.getInstance(), false);
         double px = p.xOld + (p.getX() - p.xOld) * pt, pz = p.zOld + (p.getZ() - p.zOld) * pt;
         double[] at = new double[1];
         s.railHint = rp.nearest(px, pz, s.railHint, at);
         double here = at[0];
         double from = here - RAIL_BEHIND, to = here + RAIL_FAR;
-        VertexConsumer vc = ctx.bufferSource().getBuffer(RAILS);
+        WorldDraw.Quads vc = Compat.world().quads(RAILS);
         for (int i = 1; i < rp.n; i++) {
             if (rp.along[i] < from) continue;
             if (rp.along[i - 1] > to) break;
@@ -386,7 +364,7 @@ public final class WalkRender {
                 vertex(vc, pose, cam, rp.x[i - 1] + rp.ax[i - 1] * a2, ry[i - 1], rp.z[i - 1] + rp.az[i - 1] * a2, c0);
             }
         }
-        ctx.bufferSource().endBatch(RAILS);
+        vc.end();
     }
 
     /** A rail point's colour: the rails' top colour, blue (they lie on the ground, so from below one would see the
@@ -400,8 +378,7 @@ public final class WalkRender {
         return RAIL_TOP & 0xFFFFFF | (alpha << 24);
     }
 
-    private static void vertex(VertexConsumer vc, Matrix4f mat, Vec3 cam, double x, double y, double z, int argb) {
-        int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF, a = (argb >>> 24) & 0xFF;
-        vc.addVertex(mat, (float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z)).setColor(r, g, b, a);
+    private static void vertex(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double x, double y, double z, int argb) {
+        vc.vertex(mat, (float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z), argb);
     }
 }

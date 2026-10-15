@@ -14,8 +14,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Three points in the client tick. Its start, before anything else, whatever screen is open: the autopilot and the
  * water clutch finish the turns their frames have been making toward this tick's rotation, and the kill aura turns to
  * the rotation it holds for the server. Just before handleKeybinds, where a vanilla client
- * attacks and uses items (after this tick's crosshair pick, before the player moves and sends its rotation). And just
- * after the entities tick, once the player has sent this tick's rotation and before the tick-end packet.
+ * attacks and uses items (after this tick's crosshair pick, before the player moves and sends its rotation). The third,
+ * once the player has sent this tick's rotation and before the tick-end packet, moved between releases: it is each
+ * epoch's AfterRotationSentMixin (versions/README.md).
  */
 @Mixin(Minecraft.class)
 public class MinecraftTickMixin {
@@ -35,10 +36,4 @@ public class MinecraftTickMixin {
         VanillaActions.beforeKeybinds((Minecraft) (Object) this);
     }
 
-    @Inject(method = "tick",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/multiplayer/ClientLevel;tickEntities()V",
-                     shift = At.Shift.AFTER))
-    private void kine$afterEntities(CallbackInfo ci) {
-        VanillaActions.afterEntities((Minecraft) (Object) this);
-    }
 }

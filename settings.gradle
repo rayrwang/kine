@@ -11,3 +11,41 @@ pluginManagement {
 
 // Should match your modid
 rootProject.name = 'kine'
+
+apply from: 'versions/table.gradle'
+
+// `./gradlew runClient` (and the other runs) means the root project's: Gradle would otherwise run the task of that
+// name in every subproject, starting a client for each release
+gradle.startParameter.taskNames = gradle.startParameter.taskNames.collect { String t -> t ==~ /run[A-Za-z]*/ ? (":" + t) : t }
+
+// The other Minecraft releases (versions/README.md). Each epoch folder under versions/ is a subproject that compiles
+// that epoch's game code against its own release; the development version's epoch is compiled by the root project
+// itself (it's part of runClient), so it isn't one of them.
+kineRows*.epoch.unique().each { epoch ->
+	if (epoch == kineDev.epoch) return
+	include ":${epoch}"
+	project(":${epoch}").projectDir = file("versions/${epoch}")
+}
+
+// The version check (versions/check.gradle): one project per other release, compiling the shared code against it,
+// in build/version-check/<release>; `./gradlew build` runs them all. An older family's (1.21.x) also give its jar
+// the shared code, compiled against its base release.
+kineRows.each { row ->
+	if (row.minecraft == kineDev.minecraft) return
+	def name = "check-${row.minecraft}"
+	include ":${name}"
+	def dir = file("build/version-check/${row.minecraft}")
+	dir.mkdirs()
+	project(":${name}").projectDir = dir
+	project(":${name}").buildFileName = '../../../versions/check.gradle'
+}
+
+// Each older family's jar (versions/family.gradle)
+kineFamilies.each { fam ->
+	if (fam == kineDev.family) return
+	include ":family-${fam}"
+	def dir = file("build/family/${fam}")
+	dir.mkdirs()
+	project(":family-${fam}").projectDir = dir
+	project(":family-${fam}").buildFileName = '../../../versions/family.gradle'
+}

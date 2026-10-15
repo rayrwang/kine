@@ -1,0 +1,22 @@
+# The mixins of this epoch (versions/README.md), in ai.rrw.kine.mixin.<subpackage>: applied only on its releases.
+# This epoch's own (ai.rrw.kine.mixin.v1_21_9):
+v1_21_9.AfterRotationSentMixin
+v1_21_9.GuiOverlayMixin
+v1_21_9.ScreenEffectMixin
+v1_21_9.FreecamCullMixin
+v1_21_9.FreecamCameraMixin
+v1_21_9.LightmapMixin
+v1_21_9.CameraSkyMixin
+v1_21_9.LevelRendererSkyMixin
+v1_21_9.AtmosphericFogMixin
+v1_21_9.DimensionFogMixin
+v1_21_9.FogRendererMixin
+v1_21_9.LavaFogMixin
+v1_21_9.PowderSnowFogMixin
+v1_21_9.WaterFogMixin
+v1_21_9.MobEffectFogMixin
+v1_21_9.EntityRendererMixin
+v1_21_9.KeyboardInputMixin
+v1_21_9.ClientPacketListenerMixin
+v1_21_9.GameRendererFovInvoker
+v1_21_9.MainPassEndMixin

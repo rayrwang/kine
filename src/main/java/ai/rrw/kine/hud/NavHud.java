@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
 import ai.rrw.kine.autoflight.FlightDirector;
@@ -13,14 +14,10 @@ import ai.rrw.kine.util.KineTime;
 import ai.rrw.kine.util.Readouts;
 import ai.rrw.kine.util.Smoothing;
 import ai.rrw.kine.walk.Walk;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
 /**
@@ -42,13 +39,10 @@ public final class NavHud {
     private static long   etaNanos = 0L;          // wall-clock time of the last ETA update
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "nav"),
-            NavHud::render);
+        Compat.hud("nav", NavHud::render);
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null) return;
@@ -133,7 +127,7 @@ public final class NavHud {
     // Heading arc: a shallow arc of a large circle centred on the crosshair, near the top of the screen. The
     // compass card (ticks every 10 degrees, labels every 30) turns under a fixed apex, the current heading
     // shows boxed above the apex, and a green bug marks a selected heading, clamped to the arc's ends.
-    private static void drawHeadingArc(GuiGraphicsExtractor g, Minecraft mc, int cx, int cy) {
+    private static void drawHeadingArc(Gui2D g, Minecraft mc, int cx, int cy) {
         LocalPlayer p = mc.player;
         if (p == null) return;
         Font font = mc.font;
@@ -197,7 +191,7 @@ public final class NavHud {
     }
 
     /** Vertical mode annunciator (CLB, DESC, ALT* or ALT over the target altitude), left of the nav block. */
-    private static void drawModeAnnunciator(GuiGraphicsExtractor g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
+    private static void drawModeAnnunciator(Gui2D g, Minecraft mc, int cx, int lineY, int etaY, int halfCenter) {
         if (!Settings.shows(Settings.displayFlightDirectors) || !FlightDirector.isActive()) return;
         int vm = FlightDirector.verticalMode();
         String l1; int col;
@@ -218,7 +212,7 @@ public final class NavHud {
     private static String holdLine(Minecraft mc) {
         if (Nav.arrival() != Nav.Arrival.HOLD_TILL_DAY || mc.level == null) return "HOLDING";
         if (mc.level.isThundering()) return "HOLDING, STORM";
-        int ticks = HoldModel.ticksToDawn(mc.level.getOverworldClockTime(), mc.level.getRainLevel(1.0F));
+        int ticks = HoldModel.ticksToDawn(Compat.overworldTime(mc.level), mc.level.getRainLevel(1.0F));
         return "HOLDING, LAND IN " + KineTime.format(ticks / 20.0);
     }
 

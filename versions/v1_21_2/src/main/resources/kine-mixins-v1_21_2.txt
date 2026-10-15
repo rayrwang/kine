@@ -1,0 +1,26 @@
+# The mixins of this epoch (versions/README.md), in ai.rrw.kine.mixin.<subpackage>: applied only on its releases.
+# This epoch's own (ai.rrw.kine.mixin.v1_21_2). Against 1.21.11's list: the fog environments' mixins (atmospheric,
+# lava, powder snow, water, mob effect) are FogRendererMixin, LevelRendererFogMixin and CloudFogMixin here (no fog
+# environments before 1.21.6); EntityRendererMixin is ProjectileGlowMixin (the outline colour is read in
+# LevelRenderer.renderEntities); there is no PiercingAttackMixin (no spear); GuiHudMixin draws kine's HUD elements.
+v1_21_2.AfterRotationSentMixin
+v1_21_2.GuiOverlayMixin
+v1_21_2.GuiHudMixin
+v1_21_2.ScreenEffectMixin
+v1_21_2.FreecamCullMixin
+v1_21_2.FreecamCameraMixin
+v1_21_2.LightmapMixin
+v1_21_2.CameraSkyMixin
+v1_21_2.LevelRendererSkyMixin
+v1_21_2.LevelRendererFogMixin
+v1_21_2.FogRendererMixin
+v1_21_2.CloudFogMixin
+v1_21_2.ProjectileGlowMixin
+v1_21_2.KeyboardInputMixin
+v1_21_2.ClientPacketListenerMixin
+v1_21_2.GameRendererFovInvoker
+# the server's fall distance for the local player on 1.21.4 (compat.v1_21_2.ServerFall; nothing on 1.21.2 and 1.21.3)
+v1_21_2.ServerFallMixin
+v1_21_2.ServerFallAttackMixin
+v1_21_2.ServerFallTeleportMixin
+v1_21_2.ServerFallChorusMixin

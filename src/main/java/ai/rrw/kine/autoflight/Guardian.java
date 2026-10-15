@@ -1,5 +1,7 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.guard.GlideSim;
@@ -15,14 +17,9 @@ import ai.rrw.kine.move.WorldSnapshot;
 import ai.rrw.kine.util.GameModes;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 
@@ -114,9 +111,8 @@ public final class Guardian {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(Guardian::endTick);
-        ClientChunkEvents.CHUNK_UNLOAD.register((lvl, chunk) -> GuardWorld.chunkUnloaded(lvl, chunk.getPos().x(), chunk.getPos().z()));
-        HudElementRegistry.attachElementAfter(VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "guardian"), Guardian::render);
+        ClientChunkEvents.CHUNK_UNLOAD.register((lvl, chunk) -> GuardWorld.chunkUnloaded(lvl, chunk.getPos().getMinBlockX() >> 4, chunk.getPos().getMinBlockZ() >> 4));
+        Compat.hud("guardian", Guardian::render);
     }
 
     static boolean enabled(Minecraft mc) {
@@ -124,7 +120,7 @@ public final class Guardian {
     }
 
     private static boolean glider(LocalPlayer p) {
-        return p.isFallFlying() || p.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER) || Takeoff.active();
+        return p.isFallFlying() || Compat.isGlider(p.getItemBySlot(EquipmentSlot.CHEST)) || Takeoff.active();
     }
 
     // ---- the end of a tick: the block copies, the track, and the next judgment to the worker ----
@@ -176,7 +172,7 @@ public final class Guardian {
         MoveState s = WorldSnapshot.state(p);
         Body body = WorldSnapshot.body(p);
         float yaw = p.getYRot(), pitch = p.getXRot();
-        int minY = mc.level.getMinY();
+        int minY = Compat.minY(mc.level);
         GuardWorld.Grid grid = GuardWorld.snapshot(p, minY);
         double safeFall = p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE);
         Track track = active != null ? frozenTrack : RING.snapshot();
@@ -348,7 +344,7 @@ public final class Guardian {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return "none";
         GuardWorld.tick(mc, p, Long.MAX_VALUE);
-        int minY = mc.level.getMinY();
+        int minY = Compat.minY(mc.level);
         Guard g = new Guard(new GlideSim(GuardWorld.snapshot(p, minY), WorldSnapshot.body(p), minY,
             p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE)), CFG, Track.NONE);
         Guard.Outcome o = g.fly(WorldSnapshot.state(p), p.getYRot(), p.getXRot(), Pilot.HOLD, CFG.horizon);
@@ -358,7 +354,7 @@ public final class Guardian {
 
     // ---- the warning row ----
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (active == null) return;
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth(), H = mc.getWindow().getGuiScaledHeight();

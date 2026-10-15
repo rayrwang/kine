@@ -2,32 +2,29 @@ package ai.rrw.kine.autoflight;
 
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fireworks.FireworkFuel;
 import ai.rrw.kine.fireworks.RocketBurn;
 import ai.rrw.kine.fireworks.RocketHit;
-import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.util.ElytraLife;
+import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.util.MouseTurn;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -132,10 +129,7 @@ public final class Takeoff {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(Takeoff::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "takeoff"),
-            Takeoff::render);
+        Compat.hud("takeoff", Takeoff::render);
     }
 
     // ---- per tick, at the end ----
@@ -184,7 +178,7 @@ public final class Takeoff {
             double target = cruiseFor(p.getY());
             int d = carriedDuration(p);
             Terrain2D terrain = TurnGuard.terrainOf(mc.level);
-            double top = mc.level.getMaxY();
+            double top = Compat.maxY(mc.level);
             TakeoffModel.Plan worst = TakeoffModel.fromGround(p.getX(), p.getY(), p.getZ(), planYaw, target,
                 RocketBurn.minTicks(d), terrain, top, 1);
             needed = worst.reachesCruise() ? worst.rockets() : TakeoffModel.MAX_ROCKETS + 1;
@@ -194,7 +188,7 @@ public final class Takeoff {
             climbTicks = Math.max(worst.ticks(), mean.ticks());   // the slower of the two
             cruiseY = target;
         }
-        if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p, mc.level.getMinY())) { status = Status.WORN_CRUISE; pathCount = 0; }
+        if (needed <= TakeoffModel.MAX_ROCKETS && !elytraLasts(p, Compat.minY(mc.level))) { status = Status.WORN_CRUISE; pathCount = 0; }
         else if (carriedRockets(p) < needed) { status = Status.ROCKETS; pathCount = 0; }
     }
 
@@ -214,9 +208,9 @@ public final class Takeoff {
     private static Status check(Minecraft mc, LocalPlayer p) {
         if (!p.onGround() && !p.isInWater() || p.isPassenger() || p.isFallFlying()) return Status.NONE;
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
-        if (!chest.has(DataComponents.GLIDER) || !holding(p)) return Status.NONE;
+        if (!Compat.isGlider(chest) || !holding(p)) return Status.NONE;
         if (!Settings.autopilot) return Status.AUTOPILOT;
-        if (!LivingEntity.canGlideUsing(chest, EquipmentSlot.CHEST)) return Status.WORN;
+        if (!Compat.glidesWith(chest, EquipmentSlot.CHEST)) return Status.WORN;
         if (heldHasStars(p)) return Status.STARS;
         if (p.isInLava()) return Status.LAVA;
         if (blockedAbove(mc.level, p)) return Status.BLOCKED;
@@ -244,7 +238,7 @@ public final class Takeoff {
             for (int z = Mth.floor(b.minZ); z <= Mth.floor(b.maxZ - 1.0e-7); z++) {
                 int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
                 for (int y = feet + 1; y < top; y++)
-                    if (level.getBlockState(pos.set(x, y, z)).blocksMotion()) return true;
+                    if (Compat.blocksMotion(level.getBlockState(pos.set(x, y, z)))) return true;
             }
         return false;
     }
@@ -265,7 +259,7 @@ public final class Takeoff {
         if (pilotKeys(mc) || p.onGround() || !p.isFallFlying() || Autopilot.isEngaged()) { stop(); return; }
         Vec3 v = p.getDeltaMovement();
         Terrain2D terrain = TurnGuard.terrainOf(mc.level);
-        double top = mc.level.getMaxY();
+        double top = Compat.maxY(mc.level);
         if (!lean && p.getY() - groundY > 2.0
             && TakeoffModel.leanClear(p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.getXRot(), yaw, terrain, top)) lean = true;
         // the rest of the takeoff for the rails, the burning rocket taken at its mean
@@ -437,7 +431,7 @@ public final class Takeoff {
         FireworkRocketEntity r = attachedRocket(mc, p);
         int burnLeft = r == null ? 0 : Math.max(1, (int) Math.round(RocketBurn.meanTicks(rocketDuration(r))) - r.tickCount);
         int untilPush = (r == null && pending > 0) ? 1 : -1;
-        boolean keys = mc.screen == null && mc.getOverlay() == null;
+        boolean keys = Compat.noScreen(mc);
         int left = fired >= TakeoffModel.MAX_ROCKETS ? 0 : carriedRockets(p);
         return new TakeoffPilot(yaw, lean, burnLeft, untilPush, (int) Math.round(RocketBurn.meanTicks(heldDuration(p))),
             cruise, left, keys);
@@ -509,7 +503,7 @@ public final class Takeoff {
     // since the hand is refilled from the other stacks as it runs out (refill). Offered only with rockets in hand.
     private static int carriedRockets(LocalPlayer p) {
         int n = 0;
-        for (ItemStack s : p.getInventory().getNonEquipmentItems()) if (usable(s)) n += s.getCount();
+        for (ItemStack s : Compat.mainItems(p.getInventory())) if (usable(s)) n += s.getCount();
         if (usable(p.getOffhandItem())) n += p.getOffhandItem().getCount();
         return n;
     }
@@ -517,7 +511,7 @@ public final class Takeoff {
     // the shortest flight duration among the rockets carried, for the rocket count
     private static int carriedDuration(LocalPlayer p) {
         int d = Integer.MAX_VALUE;
-        for (ItemStack s : p.getInventory().getNonEquipmentItems()) if (usable(s)) d = Math.min(d, duration(s));
+        for (ItemStack s : Compat.mainItems(p.getInventory())) if (usable(s)) d = Math.min(d, duration(s));
         if (usable(p.getOffhandItem())) d = Math.min(d, duration(p.getOffhandItem()));
         return d == Integer.MAX_VALUE ? heldDuration(p) : d;
     }
@@ -536,9 +530,9 @@ public final class Takeoff {
             return;
         }
         if (heldRockets(p) > 0 || carriedRockets(p) == 0) return;
-        var items = p.getInventory().getNonEquipmentItems();
+        var items = Compat.mainItems(p.getInventory());
         for (int i = 0; i < 9; i++) {
-            if (usable(items.get(i))) { p.getInventory().setSelectedSlot(i); return; }
+            if (usable(items.get(i))) { Compat.setSelectedSlot(p.getInventory(), i); return; }
         }
         if (InventoryClicks.available(mc, p) && !InventoryClicks.isOpenTick()) { InventoryClicks.requestOpen(); refilling = true; }
     }
@@ -551,7 +545,7 @@ public final class Takeoff {
         int src = -1;                                          // inventory menu slots 9 to 35: the main inventory
         for (int i = 9; i <= 35; i++) if (usable(menu.slots.get(i).getItem())) { src = i; break; }
         if (src < 0 || !InventoryClicks.claimBatch()) return;  // none left, or another feature clicked in this opening
-        mc.gameMode.handleContainerInput(menu.containerId, src, p.getInventory().getSelectedSlot(), ContainerInput.SWAP, p);
+        mc.gameMode.handleContainerInput(menu.containerId, src, Compat.selectedSlot(p.getInventory()), ContainerInput.SWAP, p);
         InventoryClicks.closeAsVanilla(mc, p);
         Kine.LOGGER.info("Kine takeoff: rockets from the inventory into the hand ({} now)", heldRockets(p));
     }
@@ -571,12 +565,12 @@ public final class Takeoff {
     }
 
     private static boolean hasStars(ItemStack s) {
-        Fireworks fw = s.get(DataComponents.FIREWORKS);
+        Fireworks fw = Compat.component(s, DataComponents.FIREWORKS);
         return fw != null && !fw.explosions().isEmpty();
     }
 
     private static int duration(ItemStack s) {
-        Fireworks fw = s.get(DataComponents.FIREWORKS);
+        Fireworks fw = Compat.component(s, DataComponents.FIREWORKS);
         return fw == null ? 0 : fw.flightDuration();
     }
 
@@ -590,7 +584,7 @@ public final class Takeoff {
 
     // ---- the warning row ----
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (!Settings.takeoff) return;
         Minecraft mc = Minecraft.getInstance();
         String s;

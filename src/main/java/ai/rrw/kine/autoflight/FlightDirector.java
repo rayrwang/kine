@@ -1,5 +1,6 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.Compass;
 import ai.rrw.kine.util.Motion;
@@ -102,7 +103,7 @@ public class FlightDirector {
     private static int clearBelow(Minecraft mc, LocalPlayer p) {
         int x = p.getBlockX(), z = p.getBlockZ();
         int top = (int) Math.floor(p.getY()) - 1;
-        int limit = Math.max(mc.level.getMinY(), top - ENGAGE_AGL);
+        int limit = Math.max(Compat.minY(mc.level), top - ENGAGE_AGL);
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int y = top; y > limit; y--) {
             pos.set(x, y, z);

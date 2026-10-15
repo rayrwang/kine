@@ -1,26 +1,22 @@
 package ai.rrw.kine.fireworks;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.hud.HudColors;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.mixin.FireworkRocketAccessor;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
-import org.joml.Matrix3x2fStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,10 +52,7 @@ public final class FireworkFuel {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(FireworkFuel::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "firework_fuel"),
-            FireworkFuel::render);
+        Compat.hud("firework_fuel", FireworkFuel::render);
     }
 
     private static void tick(Minecraft mc) {
@@ -70,7 +63,7 @@ public final class FireworkFuel {
         if (!Settings.shows(Settings.displayFireworkFuel)) return;
 
         RocketBurn.Fuel fuel = new RocketBurn.Fuel();
-        for (ItemStack s : p.getInventory().getNonEquipmentItems()) add(fuel, s);
+        for (ItemStack s : Compat.mainItems(p.getInventory())) add(fuel, s);
         add(fuel, p.getItemBySlot(EquipmentSlot.OFFHAND));
         fuelSeconds = fuel.seconds();
         showFuel = fuelSeconds > 0;
@@ -107,7 +100,7 @@ public final class FireworkFuel {
 
     private static void add(RocketBurn.Fuel fuel, ItemStack s) {
         if (!s.is(Items.FIREWORK_ROCKET)) return;
-        Fireworks fw = s.get(DataComponents.FIREWORKS);
+        Fireworks fw = Compat.component(s, DataComponents.FIREWORKS);
         fuel.add(fw == null ? 0 : fw.flightDuration(), s.getCount(), fw != null && !fw.explosions().isEmpty());
     }
 
@@ -117,11 +110,11 @@ public final class FireworkFuel {
     }
 
     private static int duration(ItemStack s) {
-        Fireworks fw = s.get(DataComponents.FIREWORKS);
+        Fireworks fw = Compat.component(s, DataComponents.FIREWORKS);
         return fw == null ? 0 : fw.flightDuration();
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
@@ -133,19 +126,18 @@ public final class FireworkFuel {
             int x = cx - (mc.font.width(s) + 1 + icon) / 2, y = HudLayout.rangeEnduranceRow(H);   // centred on the END / RNG line, the icon after the number
             g.text(mc.font, s, x, y, READOUT, true);
             if (rocketIcon == null) rocketIcon = new ItemStack(Items.FIREWORK_ROCKET);
-            Matrix3x2fStack pose = g.pose();
-            pose.pushMatrix();
-            pose.translate(x + mc.font.width(s) + 1, y - 1);
-            pose.scale(ICON_SCALE, ICON_SCALE);
+            g.push();
+            g.translate(x + mc.font.width(s) + 1, y - 1);
+            g.scale(ICON_SCALE, ICON_SCALE);
             g.fakeItem(rocketIcon, 0, 0);
-            pose.popMatrix();
+            g.pop();
         }
         if (burnDuration >= 0) drawBar(g, cx, H / 2 + BAR_BELOW_CROSSHAIR);
     }
 
     // One column per slice of the longest possible burn: amber where burned, otherwise white with its
     // opacity set by the chance the rocket is still burning at that tick.
-    private static void drawBar(GuiGraphicsExtractor g, int cx, int y) {
+    private static void drawBar(Gui2D g, int cx, int y) {
         int max = RocketBurn.maxTicks(burnDuration);
         int x0 = cx - BAR_W / 2;
         for (int i = 0; i < BAR_W; i++) {

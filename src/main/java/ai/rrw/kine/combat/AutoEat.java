@@ -3,12 +3,12 @@ package ai.rrw.kine.combat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Takeoff;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fight.CombatMovement;
-import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.util.GameModes;
 import ai.rrw.kine.util.Hotbar;
 import ai.rrw.kine.util.InventoryClicks;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -16,7 +16,6 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -25,7 +24,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.HitResult;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -183,14 +181,14 @@ public final class AutoEat {
     static List<Food> carried(Inventory inv) {
         List<Food> out = new ArrayList<>();
         List<Item> seen = new ArrayList<>();
-        int sel = inv.getSelectedSlot();
+        int sel = Compat.selectedSlot(inv);
         int[] order = new int[36];
         order[0] = sel;
         for (int i = 0, k = 1; i < 36; i++) if (i != sel) order[k++] = i;
         for (int i : order) {
-            ItemStack st = inv.getNonEquipmentItems().get(i);
+            ItemStack st = Compat.mainItems(inv).get(i);
             if (st.isEmpty() || NEVER.contains(st.getItem()) || seen.contains(st.getItem())) continue;
-            FoodProperties fp = st.get(DataComponents.FOOD);
+            FoodProperties fp = Compat.component(st, DataComponents.FOOD);
             if (fp == null) continue;
             seen.add(st.getItem());
             out.add(new Food(i, fp.nutrition(), fp.saturation(), BAD.indexOf(st.getItem()), st.is(Items.GOLDEN_APPLE)));
@@ -215,11 +213,11 @@ public final class AutoEat {
                                 p.getHealth() < p.getMaxHealth(), p.hasEffect(MobEffects.REGENERATION), badRun, p.getHealth());
                 badRun = false;
                 if (f == null) return;
-                foodItem = inv.getNonEquipmentItems().get(f.slot()).getItem();
-                restoreSlot = inv.getSelectedSlot();
+                foodItem = Compat.mainItems(inv).get(f.slot()).getItem();
+                restoreSlot = Compat.selectedSlot(inv);
                 if (f.slot() < 9) {
                     foodSlot = f.slot();
-                    if (inv.getSelectedSlot() != foodSlot) inv.setSelectedSlot(foodSlot);   // a number key
+                    if (Compat.selectedSlot(inv) != foodSlot) Compat.setSelectedSlot(inv, foodSlot);   // a number key
                     begin(Phase.SNEAK);
                 } else {
                     if (!InventoryClicks.available(mc, p) || InventoryClicks.isOpenTick()) return;
@@ -231,20 +229,20 @@ public final class AutoEat {
             case FETCH -> {
                 if (!InventoryClicks.isOpenTick()) { if (++ticks > 2) giveUp(mc, "the inventory didn't open"); return; }
                 AbstractContainerMenu menu = p.inventoryMenu;
-                ItemStack st = inv.getNonEquipmentItems().get(fetchFrom);
+                ItemStack st = Compat.mainItems(inv).get(fetchFrom);
                 if (!InventoryClicks.available(mc, p) || st.getItem() != foodItem || !InventoryClicks.claimBatch()) {
                     giveUp(mc, "the food moved");
                     return;
                 }
-                int to = Hotbar.slotToDisplace(inv.getNonEquipmentItems()::get);
+                int to = Hotbar.slotToDisplace(Compat.mainItems(inv)::get);
                 mc.gameMode.handleContainerInput(menu.containerId, fetchFrom, to, ContainerInput.SWAP, p);   // number-key swap
                 InventoryClicks.closeAsVanilla(mc, p);
                 foodSlot = to;
                 begin(Phase.SELECT);
             }
             case SELECT -> {   // the tick after the swap, as WeaponSelect does
-                if (inv.getNonEquipmentItems().get(foodSlot).getItem() != foodItem) { giveUp(mc, "the food moved"); return; }
-                inv.setSelectedSlot(foodSlot);
+                if (Compat.mainItems(inv).get(foodSlot).getItem() != foodItem) { giveUp(mc, "the food moved"); return; }
+                Compat.setSelectedSlot(inv, foodSlot);
                 begin(Phase.SNEAK);
             }
             case SNEAK -> {    // sneak goes out in this tick's input, before the use
@@ -266,7 +264,7 @@ public final class AutoEat {
             }
             case RESTORE -> {
                 boolean bad = BAD.contains(foodItem);
-                if (restoreSlot >= 0 && restoreSlot != foodSlot && inv.getSelectedSlot() == foodSlot) inv.setSelectedSlot(restoreSlot);
+                if (restoreSlot >= 0 && restoreSlot != foodSlot && Compat.selectedSlot(inv) == foodSlot) Compat.setSelectedSlot(inv, restoreSlot);
                 reset(mc);
                 badRun = bad;                     // another bad food straight after, while its effect still runs
                 cooldown = bad ? 0 : COOLDOWN;
@@ -295,7 +293,7 @@ public final class AutoEat {
 
     /** Nothing in the way of starting: no screen, nothing in use, not taking off, no fight, no click of yours. */
     private static boolean free(Minecraft mc, LocalPlayer p) {
-        if (mc.screen != null || p.isUsingItem() || Takeoff.active() || p.getAbilities().flying) return false;
+        if (Compat.screen(mc) != null || p.isUsingItem() || Takeoff.active() || p.getAbilities().flying) return false;
         if (InventoryClicks.isOpenTick() || now - lastClick < QUIET) return false;
         if (CombatMovement.controlling() || BowAura.busy()) return false;
         if (Settings.killAura && mc.level != null && !mc.level.getEntitiesOfClass(LivingEntity.class,
@@ -305,12 +303,12 @@ public final class AutoEat {
 
     /** You took over or something came between: let go, and leave the slot as you set it. */
     private static boolean interrupted(Minecraft mc, LocalPlayer p, Inventory inv) {
-        String why = mc.screen != null ? "a screen opened" : Takeoff.active() ? "a takeoff"
-            : inv.getSelectedSlot() != foodSlot ? "you picked another slot"
-            : inv.getNonEquipmentItems().get(foodSlot).getItem() != foodItem ? "the food moved"
+        String why = Compat.screen(mc) != null ? "a screen opened" : Takeoff.active() ? "a takeoff"
+            : Compat.selectedSlot(inv) != foodSlot ? "you picked another slot"
+            : Compat.mainItems(inv).get(foodSlot).getItem() != foodItem ? "the food moved"
             : yourClick(mc) ? "you clicked" : null;
         if (why == null) return false;
-        if (inv.getSelectedSlot() != foodSlot) restoreSlot = -1;
+        if (Compat.selectedSlot(inv) != foodSlot) restoreSlot = -1;
         boolean byYou = !"a takeoff".equals(why) && !"the food moved".equals(why);
         giveUp(mc, why);
         if (byYou) {
@@ -327,11 +325,7 @@ public final class AutoEat {
     }
 
     private static boolean physical(Minecraft mc, KeyMapping km) {
-        InputConstants.Key key = ((KeyMappingAccessor) km).kine$getKey();
-        if (key.getType() == InputConstants.Type.KEYSYM) return InputConstants.isKeyDown(mc.getWindow(), key.getValue());
-        if (key.getType() == InputConstants.Type.MOUSE)
-            return GLFW.glfwGetMouseButton(mc.getWindow().handle(), key.getValue()) == GLFW.GLFW_PRESS;
-        return false;
+        return Compat.held(mc, km);
     }
 
     // ---------------------------------------------------------------- state
@@ -345,7 +339,7 @@ public final class AutoEat {
     private static void giveUp(Minecraft mc, String why) {
         LocalPlayer p = mc.player;
         if (p != null && restoreSlot >= 0 && foodSlot >= 0 && restoreSlot != foodSlot && phase.ordinal() >= Phase.SNEAK.ordinal()
-            && p.getInventory().getSelectedSlot() == foodSlot) p.getInventory().setSelectedSlot(restoreSlot);
+            && Compat.selectedSlot(p.getInventory()) == foodSlot) Compat.setSelectedSlot(p.getInventory(), restoreSlot);
         Kine.LOGGER.info("Kine auto eat: stopped ({})", why);
         reset(mc);
         cooldown = COOLDOWN;

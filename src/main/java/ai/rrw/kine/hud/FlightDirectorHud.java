@@ -1,6 +1,7 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.FlightDirector;
 import ai.rrw.kine.autoflight.Guardian;
@@ -8,13 +9,9 @@ import ai.rrw.kine.autoflight.Landing;
 import ai.rrw.kine.autoflight.Nav;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.autoflight.TurnGuard;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
 /**
@@ -34,13 +31,10 @@ public final class FlightDirectorHud {
     private static long  yawNanos = 0L;               // wall-clock of the last bar update, for the dt-based filter
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "flightdir"),
-            FlightDirectorHud::render);
+        Compat.hud("flightdir", FlightDirectorHud::render);
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null) return;
@@ -100,7 +94,7 @@ public final class FlightDirectorHud {
 
     // The two bars for a commanded pitch and a heading error (null: no heading bar deflection). getViewXRot is
     // the same smoothed pitch the camera uses.
-    private static void bars(GuiGraphicsExtractor g, LocalPlayer p, float partial, int cx, int cy, int maxOff, int H,
+    private static void bars(Gui2D g, LocalPlayer p, float partial, int cx, int cy, int maxOff, int H,
                              float cmdNow, Float yawErr) {
         float pitchNow = p.getViewXRot(partial);
         float k = H * 0.35f / 30f;                     // 35% of the screen height per 30 degrees

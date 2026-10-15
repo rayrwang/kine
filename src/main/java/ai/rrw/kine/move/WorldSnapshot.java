@@ -1,5 +1,8 @@
 package ai.rrw.kine.move;
 
+import net.minecraft.world.level.EmptyBlockGetter;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.mixin.MoveEntityAccessor;
 import ai.rrw.kine.mixin.MoveLivingAccessor;
 import ai.rrw.kine.mixin.MoveLocalPlayerAccessor;
@@ -16,7 +19,6 @@ import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -63,14 +65,14 @@ public final class WorldSnapshot {
                     // the shape for no one in particular (SHAPE_STABLE) and flags it (BlockInfo.SCAFFOLD); the copy
                     // picks the player's tick by tick
                     BlockInfo bi = info(st, st.is(Blocks.SCAFFOLDING)
-                        ? st.getCollisionShape(level, pos, CollisionContext.empty()) : ctx.getCollisionShape(st, level, pos));
+                        ? st.getCollisionShape(level, pos, CollisionContext.empty()) : Compat.collisionShape(ctx, st, level, pos));
                     // an open trapdoor over a ladder facing the same way is climbable (LivingEntity.onClimbable,
                     // trapdoorUsableAsLadder): the course's trapdoor_ladder
                     if (st.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock
                         && st.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN)) {
                         BlockState below = level.getBlockState(pos.below());
-                        if (below.is(Blocks.LADDER) && below.getValue(net.minecraft.world.level.block.LadderBlock.FACING)
-                            == st.getValue(net.minecraft.world.level.block.TrapDoorBlock.FACING)) bi = climbable(bi);
+                        if (below.is(Blocks.LADDER) && Compat.horizontalFacing(below)
+                            == Compat.horizontalFacing(st)) bi = climbable(bi);
                     }
                     g.set(x, y, z, bi);
                 }
@@ -83,8 +85,8 @@ public final class WorldSnapshot {
     public static boolean trapdoorLadder(BlockState st, BlockState below) {
         return st.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock
             && st.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN)
-            && below.is(Blocks.LADDER) && below.getValue(net.minecraft.world.level.block.LadderBlock.FACING)
-            == st.getValue(net.minecraft.world.level.block.TrapDoorBlock.FACING);
+            && below.is(Blocks.LADDER) && Compat.horizontalFacing(below)
+            == Compat.horizontalFacing(st);
     }
 
     private static final Map<BlockInfo, BlockInfo> CLIMBABLE_OF = new IdentityHashMap<>();
@@ -134,8 +136,10 @@ public final class WorldSnapshot {
             int fluid = fs.isEmpty() ? BlockInfo.NO_FLUID : fs.is(net.minecraft.tags.FluidTags.WATER) ? BlockInfo.WATER_FLUID
                 : fs.is(net.minecraft.tags.FluidTags.LAVA) ? BlockInfo.LAVA_FLUID : BlockInfo.NO_FLUID;
             if (fluid != BlockInfo.NO_FLUID && !fs.isSource()) flags |= BlockInfo.CURRENT;
+            if (Compat.suppressesBounce(st)) flags |= BlockInfo.SUPPRESSES_BOUNCE;
+            if (st.isFaceSturdy(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, Direction.DOWN)) flags |= BlockInfo.STURDY_DOWN;
             return new BlockInfo(shape, b.getFriction(), b.getSpeedFactor(), b.getJumpFactor(), flags, fluid,
-                fluid == BlockInfo.NO_FLUID ? 0.0F : fs.getOwnHeight(), fallFactor(st));
+                fluid == BlockInfo.NO_FLUID ? 0.0F : fs.getOwnHeight(), fallFactor(st), Compat.bounceRestitution(st));
         });
     }
 
@@ -196,10 +200,12 @@ public final class WorldSnapshot {
         b.width = p.getDimensions(Pose.STANDING).width();
         b.height = p.getDimensions(Pose.STANDING).height();
         b.crouchHeight = p.getDimensions(Pose.CROUCHING).height();
-        b.canSprint = !p.hasEffect(MobEffects.BLINDNESS) && (p.getFoodData().hasEnoughFood() || p.getAbilities().mayfly);
-        b.sprintWindow = Minecraft.getInstance().options.sprintWindow().get();
+        b.blind = p.hasEffect(MobEffects.BLINDNESS);
+        b.enoughFood = Compat.enoughFoodToSprint(p) || p.getAbilities().mayfly;
+        b.canSprint = !b.blind && b.enoughFood;
+        b.sprintWindow = Compat.sprintWindow(Minecraft.getInstance().options);
         boolean glider = false;
-        for (EquipmentSlot slot : EquipmentSlot.VALUES) glider |= LivingEntity.canGlideUsing(p.getItemBySlot(slot), slot);
+        for (EquipmentSlot slot : EquipmentSlot.values()) glider |= Compat.glidesWith(p.getItemBySlot(slot), slot);
         b.canGlide = glider;
         b.knockbackResistance = p.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE);
         b.swimHeight = p.getDimensions(Pose.SWIMMING).height();
@@ -218,9 +224,8 @@ public final class WorldSnapshot {
      *  Nautilus), endless counting as a day. */
     static int breathingTicks(LocalPlayer p) {
         int best = -1;   // none (the client's duration; the server's runs a tick longer: breathing while 0 too)
-        for (var e : new net.minecraft.core.Holder[]{MobEffects.WATER_BREATHING, MobEffects.CONDUIT_POWER, MobEffects.BREATH_OF_THE_NAUTILUS}) {
-            @SuppressWarnings("unchecked")
-            var inst = p.getEffect((net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect>) e);
+        for (var e : Compat.breathingEffects()) {   // Water Breathing, Conduit Power (and the Breath of the Nautilus)
+            var inst = p.getEffect(e);
             if (inst != null) best = Math.max(best, inst.isInfiniteDuration() ? 24000 : inst.getDuration());
         }
         return best;
@@ -249,13 +254,13 @@ public final class WorldSnapshot {
         s.glidePose = p.getPose() == Pose.FALL_FLYING;
         s.sprintTriggerTime = ((MoveLocalPlayerAccessor) p).kine$sprintTriggerTime();
         s.noJumpDelay = ((MoveLivingAccessor) p).kine$noJumpDelay();
-        s.fallDistance = p.fallDistance;
+        s.fallDistance = Compat.fallDistance(p);
         s.onGroundNoBlocks = ((MoveEntityAccessor) p).kine$onGroundNoBlocks();
         if (p.mainSupportingBlockPos.isPresent()) {
             BlockPos b = p.mainSupportingBlockPos.get();
             s.hasSupport = true; s.supX = b.getX(); s.supY = b.getY(); s.supZ = b.getZ();
         }
-        s.lastKeys = keys(p.input.keyPresses);
+        s.lastKeys = keys(Compat.lastKeys(p));
         s.lastMoveForward = p.input.getMoveVector().y;
         return s;
     }

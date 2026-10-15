@@ -1,5 +1,6 @@
 package ai.rrw.kine.walk;
 
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -64,14 +65,14 @@ public final class WalkTable {
     public static void register() {
         ClientChunkEvents.CHUNK_LOAD.register((lvl, chunk) -> {
             if (lvl != level) reset(lvl);
-            long k = View.key(chunk.getPos().x(), chunk.getPos().z());
+            long k = View.key(chunk.getPos().getMinBlockX() >> 4, chunk.getPos().getMinBlockZ() >> 4);
             LOADED.add(k);
             DIRTY.add(k);
             loads++;
         });
         ClientChunkEvents.CHUNK_UNLOAD.register((lvl, chunk) -> {
             if (lvl != level) return;
-            long k = View.key(chunk.getPos().x(), chunk.getPos().z());
+            long k = View.key(chunk.getPos().getMinBlockX() >> 4, chunk.getPos().getMinBlockZ() >> 4);
             LOADED.remove(k);
             DIRTY.remove(k);
             ChunkFloors gone = CHUNKS.remove(k);
@@ -133,7 +134,7 @@ public final class WalkTable {
         PalettedContainer<BlockState>[] copies = new PalettedContainer[sections.length];
         for (int i = 0; i < sections.length; i++)
             if (sections[i] != null && !sections[i].hasOnlyAir()) copies[i] = sections[i].getStates().copy();
-        int minY = lvl.getMinY();
+        int minY = Compat.minY(lvl);
         long took = System.nanoTime() - t0;
         copyNanos += took;
         maxCopyNanos = Math.max(maxCopyNanos, took);

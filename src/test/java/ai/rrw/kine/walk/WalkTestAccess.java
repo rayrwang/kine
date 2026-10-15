@@ -1,6 +1,6 @@
 package ai.rrw.kine.walk;
 
-import net.minecraft.world.entity.player.Input;
+import ai.rrw.kine.compat.Input;
 
 /** Package access for tests elsewhere. */
 public final class WalkTestAccess {

@@ -1,16 +1,12 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.util.Motion;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.resources.Identifier;
-import org.joml.Matrix3x2fStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,14 +14,10 @@ import java.util.List;
 public class VelocityHud {
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "velocity"),
-            VelocityHud::render
-        );
+        Compat.hud("velocity", VelocityHud::render);
     }
 
-    private static void render(GuiGraphicsExtractor graphics, DeltaTracker delta) {
+    private static void render(Gui2D graphics, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null) return;
@@ -51,15 +43,14 @@ public class VelocityHud {
         int barsTop = HudLayout.healthBarsTop(screenH);
         float lineH = mc.font.lineHeight * scale; // one line's height, in screen pixels
 
-        Matrix3x2fStack matrices = graphics.pose();
-        matrices.pushMatrix();
-        matrices.scale(scale, scale);
+        graphics.push();
+        graphics.scale(scale, scale);
         for (int i = 0; i < lines.size(); i++) {
             int w = mc.font.width(lines.get(i));
             int x = (int) (screenW / (2f * scale) - w / 2f); // center this line
             int y = (int) ((barsTop - 2.5*lineH - (lines.size() - i) * lineH) / scale);
             graphics.text(mc.font, lines.get(i), x, y, 0xFFFFFFFF, true);
         }
-        matrices.popMatrix();
+        graphics.pop();
     }
 }

@@ -1,5 +1,7 @@
 package ai.rrw.kine.fight;
 
+import ai.rrw.kine.compat.Rules;
+
 import java.util.SplittableRandom;
 
 /**
@@ -125,8 +127,10 @@ public final class MobSim {
     /** An evoker: ticks until the fangs of the spell it is casting, -1 for none. */
     public int castIn = -1;
 
-    /** A breeze: ticks until its wind charge (its charge of 15 ticks in the SHOOTING pose), -1 for none in sight. */
+    /** A breeze: ticks until its wind charge (its charge of 15 ticks in the SHOOTING pose), -1 for none in sight; and
+     *  whether that charge has started (the pose), for the rule up to 1.21.1 that it starts only beyond 2 blocks. */
     public int shootIn = -1;
+    public boolean shotStarted = false;
 
     // ---- the blaze: BlazeAttackGoal's attackStep (1 charging, 2 to 4 a fireball each, then a rest; attackTime holds
     // the ticks to the next step) and whether it is charged (its synced flag)
@@ -190,7 +194,7 @@ public final class MobSim {
         m.xbow = xbow; m.attackDelay = attackDelay; m.chargeTicks = chargeTicks;
         m.jumpDelay = jumpDelay; m.jumpPower = jumpPower; m.touchDamage = touchDamage; m.magma = magma; m.hopNow = hopNow; m.hopSpeed = hopSpeed; m.slimeSize = slimeSize; m.fullTick = fullTick;
         m.blazeStep = blazeStep; m.charged = charged; m.rangedInterval = rangedInterval;
-        m.swoop = swoop; m.flySpeed = flySpeed; m.shootIn = shootIn; m.castIn = castIn;
+        m.swoop = swoop; m.flySpeed = flySpeed; m.shootIn = shootIn; m.shotStarted = shotStarted; m.castIn = castIn;
         m.swell = swell; m.swellDir = swellDir; m.maxSwell = maxSwell; m.swelling = swelling; m.blastRadius = blastRadius;
         m.exploded = exploded;
         m.op = op; m.strafeF = strafeF; m.strafeR = strafeR;
@@ -491,12 +495,18 @@ public final class MobSim {
         return hit;
     }
 
-    /** A breeze for one server tick (its brain's Shoot): the wind charge goes when the charge runs out. Its slides and
-     *  long jumps are left out: it stays where it is. Returns true for a shot now. */
-    public boolean thinkBreeze() {
+    /** A breeze for one server tick (its brain's Shoot), the player's feet at (px, py, pz): the wind charge goes when
+     *  the charge runs out. Up to 1.21.1 the charge starts only with the player more than 2 blocks away, feet to feet
+     *  (Rules.BREEZE_NO_SHOT_WITHIN_2: Shoot.isTargetWithinRange, tested at the start only). Its slides and long jumps
+     *  are left out: it stays where it is. Returns true for a shot now. */
+    public boolean thinkBreeze(double px, double py, double pz) {
         if (!alive) return false;
         op = OP_NONE;
         if (shootIn < 0) return false;
+        if (!shotStarted) {
+            if (Rules.BREEZE_NO_SHOT_WITHIN_2 && sq(px - x) + sq(py - y) + sq(pz - z) <= 4.0) return false;
+            shotStarted = true;
+        }
         if (shootIn-- == 0) { shootIn = -1; return true; }
         return false;
     }

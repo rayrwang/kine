@@ -7,7 +7,7 @@ package ai.rrw.kine.move;
  * for the search ({@link #copy}).
  */
 public final class MoveState {
-    // Keys, as bits (net.minecraft.world.entity.player.Input's fields)
+    // Keys, as bits (ai.rrw.kine.compat.Input's fields, which are the game's)
     public static final int FORWARD = 1, BACKWARD = 2, LEFT = 4, RIGHT = 8, JUMP = 16, SHIFT = 32, SPRINT = 64;
     public static final int MOVE_KEYS = FORWARD | BACKWARD | LEFT | RIGHT;
 
@@ -24,6 +24,8 @@ public final class MoveState {
     /** The fluid tracker after the last tick (EntityFluidInteraction for water): in water (wasTouchingWater), how far
      *  the water reaches above the feet, and the eyes in water. */
     public boolean inWater, eyesInWater;
+    /** In lava (Entity.isInLava): read only by the 26.3+ glide start (Rules.NO_GLIDE_START_IN_LAVA). */
+    public boolean inLava;
     public double waterHeight;
     /** Gliding (Entity shared flag 7, LivingEntity.isFallFlying), the FALL_FLYING pose (a 0.6-high box), and the ticks
      *  on the ground since the glide touched down (the server ends it; the client hears a tick or more later). */
@@ -35,6 +37,9 @@ public final class MoveState {
     public double air = 300.0;
     public int waterBreathingTicks = -1;
     public double drownDamage;
+    /** Up to 1.21.4 the client runs the air rule on its own too (Rules.CLIENT_TICKS_AIR): the server's air as the client
+     *  hears it, kept apart from the air the client shows; NaN until the first tick works it out from the start. */
+    public double serverAir = Double.NaN;
     /** The eyes in water over the last ticks (bit 0 the newest), for the server's air rule, which sees them late;
      *  UNSET until the first tick fills it from the start. */
     public int eyesHistory = UNSET;
@@ -44,7 +49,8 @@ public final class MoveState {
     /** Entity.mainSupportingBlockPos, and onGroundNoBlocks. */
     public boolean hasSupport, onGroundNoBlocks;
     public int supX, supY, supZ;
-    /** The keys of the last tick and its move vector's forward part (hasForwardImpulse reads it a tick late). */
+    /** The keys of the last tick and its move vector's forward part (hasForwardImpulse reads it a tick late; up to
+     *  1.21.4 the forward impulse cut by the sneak speed, Rules.KEY_IMPULSES). */
     public int lastKeys;
     public float lastMoveForward;
 
@@ -70,9 +76,10 @@ public final class MoveState {
         vx = o.vx; vy = o.vy; vz = o.vz;
         onGround = o.onGround; horizontalCollision = o.horizontalCollision; minorHorizontalCollision = o.minorHorizontalCollision;
         sprinting = o.sprinting; crouching = o.crouching; crouchPose = o.crouchPose;
-        swimPose = o.swimPose; swimming = o.swimming; inWater = o.inWater; eyesInWater = o.eyesInWater; waterHeight = o.waterHeight;
+        swimPose = o.swimPose; swimming = o.swimming; inWater = o.inWater; eyesInWater = o.eyesInWater; inLava = o.inLava; waterHeight = o.waterHeight;
         fallFlying = o.fallFlying; glidePose = o.glidePose; glideGroundTicks = o.glideGroundTicks;
         air = o.air; waterBreathingTicks = o.waterBreathingTicks; drownDamage = o.drownDamage; eyesHistory = o.eyesHistory;
+        serverAir = o.serverAir;
         sprintTriggerTime = o.sprintTriggerTime; noJumpDelay = o.noJumpDelay;
         fallDistance = o.fallDistance;
         hasSupport = o.hasSupport; onGroundNoBlocks = o.onGroundNoBlocks;

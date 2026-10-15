@@ -1,6 +1,7 @@
 package ai.rrw.kine.mixin;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.Projectile;
 import org.spongepowered.asm.mixin.Mixin;
@@ -15,7 +16,7 @@ public class EntityMixin {
     // which every player sees and which stays after the setting is turned off.
     @Inject(method = "isCurrentlyGlowing", at = @At("HEAD"), cancellable = true)
     private void kine$glowProjectiles(CallbackInfoReturnable<Boolean> cir) {
-        if (Settings.projectileGlow && (Object) this instanceof Projectile && ((Entity) (Object) this).level().isClientSide()) {
+        if (Settings.projectileGlow && (Object) this instanceof Projectile && ai.rrw.kine.compat.Compat.level((Entity) (Object) this).isClientSide()) {
             cir.setReturnValue(true);
         }
     }

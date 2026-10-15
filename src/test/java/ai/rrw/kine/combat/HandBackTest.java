@@ -1,9 +1,9 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fight.Moves;
 import ai.rrw.kine.move.MoveState;
 import ai.rrw.kine.move.WorldSnapshot;
-import net.minecraft.world.entity.player.Input;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;

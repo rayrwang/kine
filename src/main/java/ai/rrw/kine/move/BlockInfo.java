@@ -48,6 +48,11 @@ public final class BlockInfo {
      * Scaffolding is CLIMBABLE too (BlockTags.CLIMBABLE).
      */
     public static final int SCAFFOLD = 8192, SCAFFOLD_BOTTOM = 16384;
+    /** In the suppresses_bounce tag (honey, 26.2+): a fall onto it doesn't bounce (Rules.BOUNCE_RESTITUTION). */
+    public static final int SUPPRESSES_BOUNCE = 32768;
+    /** Its bottom face is sturdy (BlockState.isFaceSturdy down): water under it counts to its top for the eyes on 26.3+
+     *  (FluidState.getHeightForCamera, Rules.EYES_CAMERA_HEIGHT). */
+    public static final int STURDY_DOWN = 65536;
 
     /**
      * ScaffoldingBlock.getCollisionShape for an entity whose feet were at entityBottom when its collision context was
@@ -73,6 +78,9 @@ public final class BlockInfo {
      *  fall distance instead, which takes off more: the multiplier errs high). Read by the elytra guardian's damage
      *  rules; the walk ignores it. */
     public final float fallFactor;
+    /** The block's bounce restitution on 26.2+ (Block.getBounceRestitution: slime 1, beds 0.75; Rules.BOUNCE_RESTITUTION);
+     *  0 before 26.2, whose bounces come from the SLIME and BED flags. */
+    public final float bounce;
 
     public static final BlockInfo AIR = new BlockInfo(Shape.EMPTY, 0.6F, 1.0F, 1.0F, 0);
     /** Outside the snapshot: solid, so nothing walks off the known world, and flagged so a plan that reaches it is
@@ -89,6 +97,11 @@ public final class BlockInfo {
 
     public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags, int fluid, float fluidHeight,
                      float fallFactor) {
+        this(shape, friction, speedFactor, jumpFactor, flags, fluid, fluidHeight, fallFactor, 0.0F);
+    }
+
+    public BlockInfo(Shape shape, float friction, float speedFactor, float jumpFactor, int flags, int fluid, float fluidHeight,
+                     float fallFactor, float bounce) {
         this.shape = shape;
         this.friction = friction;
         this.speedFactor = speedFactor;
@@ -97,6 +110,7 @@ public final class BlockInfo {
         this.fluid = fluid;
         this.fluidHeight = fluidHeight;
         this.fallFactor = fallFactor;
+        this.bounce = bounce;
     }
 
     /** Whether it has any of these flags. */

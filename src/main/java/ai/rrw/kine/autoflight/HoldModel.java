@@ -1,5 +1,7 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Rules;
+
 /**
  * The holding pattern flown over a managed destination, and the light rule that ends a hold till day. Free of game
  * types so it can be tested.
@@ -26,8 +28,15 @@ public final class HoldModel {
 
     // The first tick of the day with no surface spawning, in clear weather and in full rain: when the sky darkening
     // first falls to 7, from the game's sky light timeline replayed tick by tick (~/_/kine_holding_2026-10-11/sim/out/
-    // dawn.txt). Only for the readout's countdown; the hold itself ends on the live light (darkEnoughToSpawn).
-    static final int DAWN_CLEAR = 22822, DAWN_RAIN = 23046;
+    // dawn.txt). Up to 1.21.10 the darkening comes from the sun's angle (Rules.SKY_DARKEN_FROM_SUN_ANGLE:
+    // Level.updateSkyBrightness, with DimensionType.timeOfDay and the float Mth.cos, replayed tick by tick the same
+    // way): it falls to 7 at 22813 clear, 23032 in rain. Up to 1.21.11 the client's darkening is a tick behind the time
+    // of day kine reads (Rules.SKY_DARKEN_A_TICK_LATE: ClientLevel.tick works it out before tickTime), so there it is 7
+    // from a tick later: 22814 and 23033 up to 1.21.10, 22823 and 23047 on 1.21.11 (measured in lockstep client tests,
+    // as Compat.overworldTime and Level.getSkyDarken read at a tick's end). Only for the readout's countdown; the hold
+    // itself ends on the live light (darkEnoughToSpawn).
+    static final int DAWN_CLEAR = (Rules.SKY_DARKEN_FROM_SUN_ANGLE ? 22813 : 22822) + (Rules.SKY_DARKEN_A_TICK_LATE ? 1 : 0);
+    static final int DAWN_RAIN = (Rules.SKY_DARKEN_FROM_SUN_ANGLE ? 23032 : 23046) + (Rules.SKY_DARKEN_A_TICK_LATE ? 1 : 0);
 
     /** The look yaw (deg) for this tick, from the position (x, z), the fix, the velocity's yaw and whether the law is
      *  climbing. */

@@ -3,6 +3,7 @@ package ai.rrw.kine.combat;
 import ai.rrw.kine.combat.HitChance.Box;
 import ai.rrw.kine.combat.HitChance.Shot;
 import ai.rrw.kine.combat.HitChance.Target;
+import ai.rrw.kine.compat.Compat;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
@@ -87,7 +88,7 @@ public final class AimAdvisor {
             return new double[]{d.x, d.y, d.z};
         };
         int id = target.getId();
-        long now = level.getGameTime();
+        long now = Compat.gameTime(level);
         refreshShapes(level, now);
 
         if (doChance) {
@@ -159,7 +160,7 @@ public final class AimAdvisor {
         Target tgt = course.falls()
             ? Target.falling(box, targetMotion.x, targetMotion.z, course.dyTable(leadTicks, MAX_FLIGHT_TICKS))
             : new Target(box, targetMotion.x, targetMotion.y, targetMotion.z);
-        refreshShapes(level, level.getGameTime());
+        refreshShapes(level, Compat.gameTime(level));
         int maxTicks = ticksPast(shot, tgt);
         List<List<Box>> perTick = blocksAlong(level, shot, maxTicks, 0.0);
         if (perTick == null) return Double.NaN;

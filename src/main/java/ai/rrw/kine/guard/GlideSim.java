@@ -1,6 +1,7 @@
 package ai.rrw.kine.guard;
 
 import ai.rrw.kine.autoflight.TakeoffModel;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.move.BlockGrid;
 import ai.rrw.kine.move.BlockInfo;
 import ai.rrw.kine.move.Body;
@@ -17,7 +18,7 @@ import ai.rrw.kine.move.MoveState;
  *       the horizontal speed lost times 10, less 3 (blocks a tick);</li>
  *   <li>a landing: Entity.checkFallDamage hands the fall distance to the block's fallOn, LivingEntity.causeFallDamage
  *       deals floor(fall + 1e-6 - safe fall distance) times the block's factor (hay and honey 0.2, a bed taken as 0.5,
- *       slime and powder snow 0); the fall distance is counted as the copy counts it: the drop of each tick out of
+ *       slime and powder snow 0; up to 1.21.4 rounded up, {@link #fallDamage}); the fall distance is counted as the copy counts it: the drop of each tick out of
  *       water, cut to 1 while gliding and sinking slower than 0.5 a tick (checkFallDistanceAccumulation), cleared in
  *       water;</li>
  *   <li>blocks that hurt on touch or underfoot (lava, fire, magma, cactus, berry bushes, campfires, wither roses,
@@ -55,6 +56,14 @@ public final class GlideSim {
 
     public BlockGrid grid() { return phys.grid(); }
 
+    /** LivingEntity.calculateFallDamage for a fall onto a block of this factor (FALL_DAMAGE_MULTIPLIER 1):
+     *  floor(fall + 1e-6 - safe fall) times the factor; up to 1.21.4 ceil(fall - safe fall) times the factor, in float
+     *  (Rules.FALL_DAMAGE_ROUNDS_UP). */
+    public static double fallDamage(double fall, double safeFall, float factor) {
+        if (Rules.FALL_DAMAGE_ROUNDS_UP) return Math.ceil(((float) fall - (float) safeFall) * factor * 1.0);
+        return Math.floor((fall + 1.0E-6 - safeFall) * factor);
+    }
+
     /** One tick with this look and no keys, then a rocket's push if `boost`; returns this tick's damage (0 for none). */
     public double step(MoveState s, float yaw, float pitch, boolean boost) {
         boolean flying = s.fallFlying;
@@ -69,7 +78,7 @@ public final class GlideSim {
             if (wall > 0.0) { dmg += wall; kinds |= WALL; }
         }
         if (s.landedFall > 0.0) {
-            double fall = Math.floor((s.landedFall + FALL_MARGIN + 1.0E-6 - safeFall) * s.landedFallFactor);
+            double fall = fallDamage(s.landedFall + FALL_MARGIN, safeFall, s.landedFallFactor);
             if (fall > 0.0) { dmg += fall; kinds |= FALL; }
         }
         // the copy marks a damaging wall hit as a hazard too (GroundPhysics.travelFallFlying): counted once, as the wall

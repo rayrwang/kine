@@ -1,5 +1,6 @@
 package ai.rrw.kine.move;
 
+import ai.rrw.kine.compat.Rules;
 /**
  * One client tick of the local player's movement on foot, copied from the 26.1.2 code so it gives the same doubles:
  * walking, sprinting (with the double-tap window and the stops), jumping and sprint-jumping, sneaking (the slowdown a
@@ -35,6 +36,9 @@ package ai.rrw.kine.move;
  *       support, fall distance, the collided axes zeroed, the landing, the speed factor), then gravity and drag.</li>
  *   <li>Player.tick: the pose for the next tick.</li>
  * </ol>
+ * Where a release's rule differs from 26.1.2's the copy follows the running release's (compat/Rules: the input and
+ * sprint rules, the tiny-speed zeroing, the jump, the move, slime's step, the fall distance and the edge stop, the
+ * water tracker, the air, the glide in climbable blocks, the bounce).
  * Left out (a plan that meets them is marked through MoveState.touched or wouldGlide): currents, lava's own movement,
  * sticky blocks, cobwebs, powder snow, bubble columns, entities with collision boxes (boats,
  * shulkers), the world border, auto-jump (off by default), a fall of a block or more in one tick (its fall-distance
@@ -89,7 +93,7 @@ public final class GroundPhysics {
         }
         // ---- Entity.baseTick (from LivingEntity.tick, before aiStep): the eyes as they were, the water now, swimming
         boolean wasEyeInWater = s.eyesInWater;
-        updateFluid(s);
+        updateFluid(s, true);
         air(s, wasEyeInWater);
         if (s.swimming) s.swimming = s.sprinting && s.inWater;
         else s.swimming = s.sprinting && wasEyeInWater && s.inWater
@@ -101,39 +105,53 @@ public final class GroundPhysics {
         if (s.sprintTriggerTime > 0) s.sprintTriggerTime--;
         boolean wasJumping = (s.lastKeys & MoveState.JUMP) != 0;
         boolean wasShiftKeyDown = (s.lastKeys & MoveState.SHIFT) != 0;
-        boolean hadForwardImpulse = s.lastMoveForward > 1.0E-5F;
+        // last tick's forward input: hasForwardImpulse; up to 1.21.4 hasEnoughImpulseToStartSprinting, at least 0.8 (above
+        // 1e-5 under water) of the impulse cut by the sneak speed (Rules.KEY_IMPULSES)
+        boolean hadForwardImpulse = Rules.KEY_IMPULSES && !underWater ? s.lastMoveForward >= 0.8 : s.lastMoveForward > 1.0E-5F;
         s.crouching = !s.swimming && canFit(s, POSE_CROUCH) && (wasShiftKeyDown || !canFit(s, POSE_STAND));
         // KeyboardInput.tick: the move vector from the keys (and from here on the shift key read is this tick's)
         descending = (keys & MoveState.SHIFT) != 0;
         float left = impulse((keys & MoveState.LEFT) != 0, (keys & MoveState.RIGHT) != 0);
         float fwd = impulse((keys & MoveState.FORWARD) != 0, (keys & MoveState.BACKWARD) != 0);
-        float dist = (float) Math.sqrt(left * left + fwd * fwd);   // Vec2.normalized
-        float mx = 0.0F, my = 0.0F;
-        if (!(dist < 1.0E-4F)) { mx = left / dist; my = fwd / dist; }
-        boolean hasForwardImpulse = my > 1.0E-5F;
-        if (wasShiftKeyDown || (keys & MoveState.BACKWARD) != 0) s.sprintTriggerTime = 0;
         // isMovingSlowly: crouching or crawling (the swim pose, or a glide's pose left after it ended, out of water)
         boolean movingSlowly = s.crouching || (s.swimPose || s.glidePose && !s.fallFlying) && !s.inWater;
-        // canStartSprinting: food, not at the top of water (shallow), not slowed unless under water
-        if (!s.sprinting && hasForwardImpulse && body.canSprint && !shallow && (!s.fallFlying || underWater)
-            && (!movingSlowly || underWater)) {
-            if (!hadForwardImpulse) {
-                if (s.sprintTriggerTime > 0) s.sprinting = true;
-                else s.sprintTriggerTime = body.sprintWindow;
-            }
-            if ((keys & MoveState.SPRINT) != 0) s.sprinting = true;
+        float mx = 0.0F, my = 0.0F;
+        if (Rules.KEY_IMPULSES) {
+            // up to 1.21.4 the move input is the impulses themselves, not normalised, cut to the sneak speed while
+            // moving slowly (KeyboardInput.tick; in 1.21.4 LocalPlayer.aiStep, after shouldStopSprinting)
+            if (Rules.SNEAK_STOPS_SPRINT && (s.fallFlying || body.blind || movingSlowly)) s.sprinting = false;   // shouldStopSprinting
+            mx = left;
+            my = fwd;
+            if (movingSlowly) { mx = mx * body.sneakSpeed; my = my * body.sneakSpeed; }
+        } else {
+            float dist = (float) Math.sqrt(left * left + fwd * fwd);   // Vec2.normalized
+            if (!(dist < 1.0E-4F)) { mx = left / dist; my = fwd / dist; }
         }
-        if (s.sprinting) {
-            if (s.swimming) {   // shouldStopSwimSprinting
-                if (!body.canSprint || !s.inWater || !hasForwardImpulse && !s.onGround && (keys & MoveState.SHIFT) == 0)
-                    s.sprinting = false;
-            } else if (!body.canSprint || shallow || !hasForwardImpulse || s.horizontalCollision && !s.minorHorizontalCollision) {
-                s.sprinting = false;   // shouldStopRunSprinting
+        boolean hasForwardImpulse = my > 1.0E-5F;
+        if (Rules.KEY_IMPULSES) sprintBefore1215(s, keys, my, hadForwardImpulse, wasShiftKeyDown, movingSlowly, underWater, shallow);
+        else {
+            if (wasShiftKeyDown || (keys & MoveState.BACKWARD) != 0) s.sprintTriggerTime = 0;
+            // canStartSprinting: food, not at the top of water (shallow), not slowed unless under water
+            if (!s.sprinting && hasForwardImpulse && body.canSprint && !shallow && (!s.fallFlying || underWater)
+                && (!movingSlowly || underWater)) {
+                if (!hadForwardImpulse) {
+                    if (s.sprintTriggerTime > 0) s.sprinting = true;
+                    else s.sprintTriggerTime = body.sprintWindow;
+                }
+                if ((keys & MoveState.SPRINT) != 0) s.sprinting = true;
+            }
+            if (s.sprinting) {
+                if (s.swimming) {   // shouldStopSwimSprinting
+                    if (!body.canSprint || !s.inWater || !hasForwardImpulse && !s.onGround && (keys & MoveState.SHIFT) == 0)
+                        s.sprinting = false;
+                } else if (!body.canSprint || shallow || !hasForwardImpulse || s.horizontalCollision && !s.minorHorizontalCollision) {
+                    s.sprinting = false;   // shouldStopRunSprinting
+                }
             }
         }
         if ((keys & MoveState.JUMP) != 0 && !wasJumping && body.canGlide && !s.onGround && !onClimbable(s)) {
             if (!body.glide) s.wouldGlide = true;                          // marked: the copy may leave gliding out
-            else if (!s.fallFlying && !s.inWater) {                         // tryToStartFallFlying
+            else if (!s.fallFlying && !s.inWater && !(Rules.NO_GLIDE_START_IN_LAVA && s.inLava)) {   // tryToStartFallFlying
                 s.fallFlying = true;
                 s.glideGroundTicks = 0;
             }
@@ -142,11 +160,17 @@ public final class GroundPhysics {
 
         // ---- LivingEntity.aiStep
         if (s.noJumpDelay > 0) s.noJumpDelay--;
-        if (s.vx * s.vx + s.vz * s.vz < 9.0E-6) { s.vx = 0.0; s.vz = 0.0; }
+        if (Rules.PLAYER_SPEED_ZEROED_PER_AXIS) {   // up to 1.21.4: each axis on its own, as for every entity
+            if (Math.abs(s.vx) < 0.003) s.vx = 0.0;
+            if (Math.abs(s.vz) < 0.003) s.vz = 0.0;
+        } else if (s.vx * s.vx + s.vz * s.vz < 9.0E-6) { s.vx = 0.0; s.vz = 0.0; }
         if (Math.abs(s.vy) < 0.003) s.vy = 0.0;
         // LocalPlayer.applyInput / modifyInput
         xxa = 0.0F; zza = 0.0F;
-        if (mx * mx + my * my != 0.0F) {
+        if (Rules.KEY_IMPULSES) {   // up to 1.21.4: serverAiStep copies the impulses, LivingEntity.aiStep cuts them to 0.98
+            xxa = mx * 0.98F;
+            zza = my * 0.98F;
+        } else if (mx * mx + my * my != 0.0F) {
             float ix = mx * 0.98F, iy = my * 0.98F;
             if (movingSlowly) { ix = ix * body.sneakSpeed; iy = iy * body.sneakSpeed; }
             float length = (float) Math.sqrt(ix * ix + iy * iy);   // modifyInputSpeedForSquareMovement
@@ -192,16 +216,8 @@ public final class GroundPhysics {
         if (s.inWater) travelInWater(s, keys);
         else if (s.fallFlying) travelFallFlying(s, keys, jumping);
         else travelInAir(s, keys, jumping);
-        // ---- LivingEntity.aiStep: applyEffectsFromBlocks, the block under the feet's stepOn (SlimeBlock: a step on it
-        // slower than 0.1 down, unless sneaking, keeps 0.4 + |vy| * 0.2 of the horizontal speed)
-        if (s.onGround && (keys & MoveState.SHIFT) == 0 && blockAt(onPos(s, 0.2F)).is(BlockInfo.SLIME)) {
-            double ay = Math.abs(s.vy);
-            if (ay < 0.1) {
-                double scale = 0.4 + ay * 0.2;
-                s.vx = s.vx * scale;
-                s.vz = s.vz * scale;
-            }
-        }
+        // ---- LivingEntity.aiStep: applyEffectsFromBlocks, the block under the feet's stepOn (up to 1.21.1 in move)
+        if (!Rules.STEP_ON_IN_MOVE) stepOn(s, keys);
         touchedBlocks(s);
 
         // ---- Player.tick: updatePlayerPose (the box for the next tick)
@@ -224,27 +240,61 @@ public final class GroundPhysics {
     static final int POSE_STAND = 0, POSE_CROUCH = 1, POSE_SWIM = 2, POSE_GLIDE = 3;
 
     /**
+     * LocalPlayer.aiStep's sprint rules up to 1.21.4 (Rules.KEY_IMPULSES), on the forward impulse cut by the sneak
+     * speed: the double tap's window is reset only by last tick's shift key; canStartSprinting needs a forward impulse
+     * of 0.8 (above 1e-5 under water), the food, no blindness (Body.canSprint) and no glide, and in 1.21.4 not moving
+     * slowly unless under water; the double tap counts only on the ground or under water, and a press after no
+     * impulse of 0.8 counts as a tap (so a sneak let go while holding W is one); the sprint key starts one unless at
+     * the top of water. A sprint stops on no forward impulse or too little food (not on blindness), a head-on wall, or
+     * the top of water; swimming, on no impulse or food in the air without the shift key, or out of water.
+     */
+    private void sprintBefore1215(MoveState s, int keys, float forward, boolean hadEnoughImpulse, boolean wasShiftKeyDown,
+                                  boolean movingSlowly, boolean underWater, boolean shallow) {
+        if (wasShiftKeyDown) s.sprintTriggerTime = 0;
+        boolean sprintKey = (keys & MoveState.SPRINT) != 0;
+        boolean canStart = !s.sprinting && (underWater ? forward > 1.0E-5F : forward >= 0.8) && body.canSprint && !s.fallFlying
+            && (!Rules.SNEAK_STOPS_SPRINT || !movingSlowly || underWater);
+        if ((s.onGround || underWater) && !wasShiftKeyDown && !hadEnoughImpulse && canStart) {
+            if (s.sprintTriggerTime <= 0 && !sprintKey) s.sprintTriggerTime = body.sprintWindow;
+            else s.sprinting = true;
+        }
+        if ((!s.inWater || underWater) && canStart && sprintKey) s.sprinting = true;
+        if (s.sprinting) {
+            boolean noImpulseOrFood = !(forward > 1.0E-5F) || !body.enoughFood;
+            if (s.swimming) {
+                if (!s.onGround && (keys & MoveState.SHIFT) == 0 && noImpulseOrFood || !s.inWater) s.sprinting = false;
+            } else if (noImpulseOrFood || s.horizontalCollision && !s.minorHorizontalCollision || shallow) {
+                s.sprinting = false;
+            }
+        }
+    }
+
+    /**
      * LivingEntity.baseTick's air, the server's (it runs there, on the position the client sent, a tick behind the
      * client's own; the client hears the value in its entity data): with the eyes in water and no water breathing a
      * point less a tick (Respiration keeps it with chance 1 - 1 / (bonus + 1), counted here as its expected drain), at
      * -20 drowning damage 2 and the air back to 0; with water breathing, or the eyes out, 4 more a tick up to the most.
      * A turtle helmet gives 10 s of water breathing whenever the eyes are out (Player.tick's turtleHelmetTick). The
      * server sees the eyes Body.airEyeLag ticks after the client does (measured: 2), and a breathing effect a tick
-     * longer than the client's count of it (so it lasts while the count is 0 too; none is -1).
+     * longer than the client's count of it (so it lasts while the count is 0 too; none is -1). Up to 1.21.4 the
+     * client runs the rule too, on its own eyes, after the server's value (when it changed) has replaced its own
+     * (Rules.CLIENT_TICKS_AIR): MoveState.air is then the client's and MoveState.serverAir the server's as heard.
      */
     private void air(MoveState s, boolean wasEyeInWater) {
         if (s.eyesHistory == MoveState.UNSET) s.eyesHistory = wasEyeInWater ? 0x3FFFFFFF : 0;
         s.eyesHistory = ((s.eyesHistory << 1) | (s.eyesInWater ? 1 : 0)) & 0x3FFFFFFF;
         boolean eyes = ((s.eyesHistory >> body.airEyeLag) & 1) != 0;   // the eyes as the server sees them
         boolean breathing = s.waterBreathingTicks >= 0;
-        if (eyes && !breathing) {
-            s.air -= body.oxygenBonus > 0.0 ? 1.0 / (body.oxygenBonus + 1.0) : 1.0;
-            if (s.air <= -20.0) {
-                s.air = 0.0;
-                s.drownDamage += 2.0;
-            }
-        } else if (s.air < body.maxAir) {
-            s.air = Math.min(s.air + 4.0, body.maxAir);
+        if (Rules.CLIENT_TICKS_AIR) {
+            // the start's server value: the client's own step after the server's last one undone (a run starts steady)
+            if (Double.isNaN(s.serverAir)) s.serverAir = eyes && !breathing ? s.air + drain()
+                : s.air < body.maxAir && !(eyes && Rules.NO_AIR_REFILL_IN_WATER) ? s.air - 4.0 : s.air;
+            double heard = s.serverAir;
+            s.serverAir = airStep(s, s.serverAir, eyes, breathing, true);
+            if (s.serverAir != heard) s.air = s.serverAir;   // the entity data, sent when it changes, before the client's step
+            s.air = airStep(s, s.air, s.eyesInWater, breathing, false);
+        } else {
+            s.air = airStep(s, s.air, eyes, breathing, true);
         }
         if (s.waterBreathingTicks >= 0) s.waterBreathingTicks--;
         // turtleHelmetTick: Water Breathing for 200 ticks from the last tick the eyes were out (as the server sees them;
@@ -252,9 +302,30 @@ public final class GroundPhysics {
         if (!eyes && body.turtleHelmet) s.waterBreathingTicks = 199;
     }
 
-    /** LivingEntity.travelFallFlying (the server's damage for flying into a wall marked as a hazard). */
+    /** One side's step of LivingEntity.baseTick's air rule on `air` with these eyes; the drowning damage counted on the
+     *  server's only. */
+    private double airStep(MoveState s, double air, boolean eyes, boolean breathing, boolean server) {
+        if (eyes && !breathing) {
+            air -= drain();
+            if (air <= -20.0) {
+                air = 0.0;
+                if (server) s.drownDamage += 2.0;
+            }
+        } else if (air < body.maxAir && !(eyes && Rules.NO_AIR_REFILL_IN_WATER)) {   // up to 1.21.3: not with the eyes in
+            air = Math.min(air + 4.0, body.maxAir);
+        }
+        return air;
+    }
+
+    /** The air a tick with the eyes in water and no breathing takes: a point, or Respiration's expected share of one. */
+    private double drain() {
+        return body.oxygenBonus > 0.0 ? 1.0 / (body.oxygenBonus + 1.0) : 1.0;
+    }
+
+    /** LivingEntity.travelFallFlying (the server's damage for flying into a wall marked as a hazard); up to 1.21.4 the
+     *  glide goes on in a climbable block (Rules.GLIDE_THROUGH_CLIMBABLE). */
     private void travelFallFlying(MoveState s, int keys, boolean jumping) {
-        if (onClimbable(s)) {
+        if (!Rules.GLIDE_THROUGH_CLIMBABLE && onClimbable(s)) {
             travelInAir(s, keys, jumping);
             s.fallFlying = false;   // stopFallFlying
             return;
@@ -366,9 +437,15 @@ public final class GroundPhysics {
     /**
      * Entity.updateFluidInteraction for water (EntityFluidInteraction.update over the box shrunk by 0.001): how far
      * water reaches above the feet, whether the eyes are in it, in water at all; the fall distance reset in water.
-     * Lava is marked as a hazard and flowing water as a current not copied (still water has none).
+     * Lava is marked as a hazard and flowing water as a current not copied (still water has none). baseTick: from
+     * Entity.baseTick, not from the look after a move (LivingEntity.checkFallDamage); up to 1.21.11 only the first
+     * looks at the eyes (Rules.FLUID_HEIGHT_FROM_SHRUNK_BOX: updateFluidHeightAndDoFluidPushing, updateFluidOnEyes).
      */
-    void updateFluid(MoveState s) {
+    void updateFluid(MoveState s, boolean baseTick) {
+        if (Rules.FLUID_HEIGHT_FROM_SHRUNK_BOX) {
+            updateFluidBefore261(s, baseTick);
+            return;
+        }
         makeBox(s, box);
         double minX = box[0] + 0.001, minY = box[1] + 0.001, minZ = box[2] + 0.001;
         double maxX = box[3] - 0.001, maxY = box[4] - 0.001, maxZ = box[5] - 0.001;
@@ -378,7 +455,7 @@ public final class GroundPhysics {
         int eyeX = GameMath.floor(s.x), eyeZ = GameMath.floor(s.z);
         double eyeY = s.y + eyeHeight(s);
         double height = 0.0;
-        boolean eyes = false;
+        boolean eyes = false, lava = false;
         for (int x = x0; x <= x1; x++)
             for (int y = y0; y <= y1; y++)
                 for (int z = z0; z <= z1; z++) {
@@ -387,15 +464,62 @@ public final class GroundPhysics {
                     double bottom = y;
                     double top = bottom + fluidHeightAt(x, y, z, b);
                     if (top < minY) continue;
-                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; continue; }
-                    if (x == eyeX && z == eyeZ && eyeY >= bottom && eyeY <= top) eyes = true;
+                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; lava = true; continue; }
+                    if (x == eyeX && z == eyeZ && eyeY >= bottom && eyeY <= bottom + eyesHeightAt(x, y, z, b)) eyes = true;
                     height = Math.max(top - entityY, height);
                     if (b.is(BlockInfo.CURRENT)) s.touched |= BlockInfo.SPECIAL | BlockInfo.UNCOPIED;
                 }
         s.waterHeight = height;
         s.eyesInWater = eyes;
+        s.inLava = lava;
         s.inWater = height > 0.0;
         if (s.inWater) s.fallDistance = 0.0;
+    }
+
+    /**
+     * Up to 1.21.11 (Rules.FLUID_HEIGHT_FROM_SHRUNK_BOX): Entity.updateInWaterStateAndDoWaterCurrentPushing over the
+     * box shrunk by 0.001, the height from the shrunk bottom (`max(y + getHeight - shrunkMinY)`, the block's top a float
+     * sum), in water when some water block's top reaches the shrunk bottom; from baseTick also updateFluidOnEyes: the
+     * eyes in water when the block holding them is water and its top (a float sum) is above them, strictly; and the
+     * lava (its own pass, for the 26.3 glide rule only).
+     */
+    private void updateFluidBefore261(MoveState s, boolean baseTick) {
+        makeBox(s, box);
+        double minX = box[0] + 0.001, minY = box[1] + 0.001, minZ = box[2] + 0.001;
+        double maxX = box[3] - 0.001, maxY = box[4] - 0.001, maxZ = box[5] - 0.001;
+        int x0 = GameMath.floor(minX), y0 = GameMath.floor(minY), z0 = GameMath.floor(minZ);
+        int x1 = (int) Math.ceil(maxX) - 1, y1 = (int) Math.ceil(maxY) - 1, z1 = (int) Math.ceil(maxZ) - 1;
+        double height = 0.0;
+        boolean water = false, lava = false;
+        for (int x = x0; x <= x1; x++)
+            for (int y = y0; y <= y1; y++)
+                for (int z = z0; z <= z1; z++) {
+                    BlockInfo b = grid.get(x, y, z);
+                    if (b.fluid == BlockInfo.NO_FLUID) continue;
+                    double top = y + fluidHeightAt(x, y, z, b);   // int + float: a float sum
+                    if (top < minY) continue;
+                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; lava = true; continue; }
+                    water = true;
+                    height = Math.max(top - minY, height);
+                    if (b.is(BlockInfo.CURRENT)) s.touched |= BlockInfo.SPECIAL | BlockInfo.UNCOPIED;
+                }
+        s.waterHeight = height;
+        s.inWater = water;
+        if (water) s.fallDistance = 0.0;
+        if (baseTick) {
+            double eyeY = s.y + eyeHeight(s);
+            int ex = GameMath.floor(s.x), ey = GameMath.floor(eyeY), ez = GameMath.floor(s.z);
+            BlockInfo b = grid.get(ex, ey, ez);
+            s.eyesInWater = b.fluid == BlockInfo.WATER_FLUID && ey + fluidHeightAt(ex, ey, ez, b) > eyeY;
+            s.inLava = lava;
+        }
+    }
+
+    /** How high the fluid counts for the eyes: its height (FlowingFluid.getHeight), or on 26.3+
+     *  FluidState.getHeightForCamera: 1 for a source block under a block whose bottom face is sturdy. */
+    private double eyesHeightAt(int x, int y, int z, BlockInfo b) {
+        if (Rules.EYES_CAMERA_HEIGHT && !b.is(BlockInfo.CURRENT) && grid.get(x, y + 1, z).is(BlockInfo.STURDY_DOWN)) return 1.0F;
+        return fluidHeightAt(x, y, z, b);
     }
 
     /** FlowingFluid.getHeight: 1 where the same fluid is above, else its own height. */
@@ -433,7 +557,7 @@ public final class GroundPhysics {
     private void jumpFromGround(MoveState s) {
         float jumpPower = body.jumpStrength * 1.0F * jumpFactor(s) + body.jumpBoost;
         if (!(jumpPower <= 1.0E-5F)) {
-            s.vy = Math.max(jumpPower, s.vy);
+            s.vy = Rules.JUMP_SETS_POWER ? jumpPower : Math.max(jumpPower, s.vy);   // up to 1.21.1: the power itself
             if (s.sprinting) {
                 float angle = yRot * (float) (Math.PI / 180.0);
                 s.vx += -GameMath.sin(angle) * 0.2;
@@ -481,7 +605,8 @@ public final class GroundPhysics {
         collide(s, dx, dy, dz, out);
         double mxv = out[0], myv = out[1], mzv = out[2];
         double movementLength = mxv * mxv + myv * myv + mzv * mzv;
-        if (movementLength > 1.0E-7 || dx * dx + dy * dy + dz * dz - movementLength < 1.0E-7) {
+        // up to 1.21.1 only a move longer than that (Rules.MOVE_ONLY_IF_LONG)
+        if (movementLength > 1.0E-7 || !Rules.MOVE_ONLY_IF_LONG && dx * dx + dy * dy + dz * dz - movementLength < 1.0E-7) {
             s.x = s.x + mxv; s.y = s.y + myv; s.z = s.z + mzv;
         }
         boolean xCollision = !GameMath.equal(dx, mxv);
@@ -492,21 +617,42 @@ public final class GroundPhysics {
         s.onGround = below;
         checkSupportingBlock(s, below, mxv, mzv);
         s.minorHorizontalCollision = s.horizontalCollision && isHorizontalCollisionMinor(mxv, mzv);
-        // checkFallDamage: LivingEntity's looks at the water again first when not in it, then Entity's counts the fall
-        if (!s.inWater) updateFluid(s);
-        if (!s.inWater && myv < 0.0) s.fallDistance -= (float) myv;
-        if (s.onGround) {
-            if (s.fallDistance > 0.0) {   // Block.fallOn on the block under the feet (getOnPosLegacy), then the reset
-                s.landedFall = s.fallDistance;
-                s.landedFallFactor = blockAt(onPos(s, 0.2F)).fallFactor;
+        // checkFallDamage: LivingEntity's looks at the water again first when not in it, then Entity's counts the fall.
+        // In 1.21.4 the client skips it for its own player (Rules.CLIENT_SKIPS_FALL_CHECK) and the server does it from the
+        // move packets: the client doesn't look at the water (it is in water a tick later, from the next tick's
+        // baseTick), and the copy counts the fall as the server does, its look's reset in water too, for the landing's
+        // damage; only the edge stop reads the client's 0 (isAboveGround)
+        if (!s.inWater) {
+            if (Rules.CLIENT_SKIPS_FALL_CHECK) {
+                boolean in = s.inWater, eyes = s.eyesInWater, lava = s.inLava;
+                double height = s.waterHeight;
+                updateFluid(s, false);   // the server's look: only its fall distance kept
+                s.inWater = in; s.eyesInWater = eyes; s.inLava = lava; s.waterHeight = height;
+            } else {
+                updateFluid(s, false);
             }
-            s.fallDistance = 0.0;
         }
-        if (s.horizontalCollision) {
+        if (Rules.FALL_LANDING_TICK_UNCOUNTED) {   // up to 1.21.4: the drop added only off the ground, in water too, a float
+            if (s.onGround) {
+                if (s.fallDistance > 0.0) land(s, keys);
+                s.fallDistance = 0.0;
+            } else if (myv < 0.0) {
+                s.fallDistance = (float) s.fallDistance - (float) myv;
+            }
+        } else {
+            if (!s.inWater && myv < 0.0) s.fallDistance -= (float) myv;
+            if (s.onGround) {
+                if (s.fallDistance > 0.0) land(s, keys);
+                s.fallDistance = 0.0;
+            }
+        }
+        if (s.horizontalCollision && !Rules.BOUNCE_RESTITUTION) {   // 26.2+: restitute below does this
             if (xCollision) s.vx = 0.0;
             if (zCollision) s.vz = 0.0;
         }
-        if (dy != myv) {   // Block.updateEntityMovementAfterFallOn on the block under the feet (getOnPosLegacy)
+        if (Rules.BOUNCE_RESTITUTION) {
+            restitute(s, keys, dy, myv, xCollision, zCollision, verticalCollision, below);
+        } else if (dy != myv) {   // Block.updateEntityMovementAfterFallOn on the block under the feet (getOnPosLegacy)
             BlockInfo on = blockAt(onPos(s, 0.2F));
             boolean shift = (keys & MoveState.SHIFT) != 0;   // LocalPlayer.isSuppressingBounce: the shift key this tick
             // a landing on slime (unless sneaking) costs no fall damage, on a bed half (fallOn): marked for the planner
@@ -521,9 +667,74 @@ public final class GroundPhysics {
                 s.vy = s.vy * 0.0;
             }
         }
+        if (Rules.STEP_ON_IN_MOVE) stepOn(s, keys);   // up to 1.21.1: Block.stepOn here, on the bounced speed
         float f = blockSpeedFactor(s);
         s.vx = s.vx * f;
         s.vz = s.vz * f;
+    }
+
+    /** Block.fallOn on the block under the feet (getOnPosLegacy), before the fall distance's reset: the fall and the
+     *  block's factor for the damage. Up to 1.21.1 a landing on slime with the shift key down takes it all
+     *  (Rules.SNEAK_LANDING_ON_SLIME_HURTS: SlimeBlock.fallOn hands it to Block.fallOn). */
+    private void land(MoveState s, int keys) {
+        BlockInfo on = blockAt(onPos(s, 0.2F));
+        s.landedFall = s.fallDistance;
+        s.landedFallFactor = Rules.SNEAK_LANDING_ON_SLIME_HURTS && on.is(BlockInfo.SLIME) && (keys & MoveState.SHIFT) != 0
+            ? 1.0F : on.fallFactor;
+    }
+
+    /** Block.stepOn of the block under the feet (getOnPosLegacy) while on the ground: SlimeBlock's, a step on it slower
+     *  than 0.1 up or down, unless sneaking (isSteppingCarefully), keeps 0.4 + |vy| * 0.2 of the horizontal speed. */
+    private void stepOn(MoveState s, int keys) {
+        if (s.onGround && (keys & MoveState.SHIFT) == 0 && blockAt(onPos(s, 0.2F)).is(BlockInfo.SLIME)) {
+            double ay = Math.abs(s.vy);
+            if (ay < 0.1) {
+                double scale = 0.4 + ay * 0.2;
+                s.vx = s.vx * scale;
+                s.vz = s.vz * scale;
+            }
+        }
+    }
+
+    /**
+     * 26.2+ (Rules.BOUNCE_RESTITUTION): Entity.move's restituteMovementAfterCollisions, called for a vertical hit with
+     * vertical movement or any horizontal hit, on the block under the feet (getOnPosLegacy). The player's own
+     * bounciness (the BOUNCINESS attribute) is 0, so a hit axis's speed becomes -v times 0, and a vertical hit takes the
+     * block's restitution only when falling at least one tick's gravity, without the shift key, on a block outside
+     * suppresses_bounce: then v.y = (portion x g - v.y) x lerp(portion, 1, air drag 0.98F) x r, portion the part of the
+     * tick's fall made before the hit. The horizontal speeds are zeroed here (26.1.2's "collided axes zeroed" above is
+     * skipped on 26.2+).
+     */
+    private void restitute(MoveState s, int keys, double dy, double myv, boolean xCollision, boolean zCollision,
+                           boolean verticalCollision, boolean below) {
+        boolean movedVertically = Math.abs(dy) > 0.0;
+        if (!(movedVertically && verticalCollision || s.horizontalCollision)) return;
+        BlockInfo on = blockAt(onPos(s, 0.2F));
+        boolean shift = (keys & MoveState.SHIFT) != 0;   // LocalPlayer.isSuppressingBounce: the shift key this tick
+        if (s.onGround && on.is(BlockInfo.SLIME) && !shift) s.touched |= BlockInfo.SLIME;
+        if (s.onGround && on.is(BlockInfo.BED)) s.touched |= BlockInfo.BED;
+        if (verticalCollision && on.is(BlockInfo.SPECIAL) && !on.is(BlockInfo.SLIME) && !on.is(BlockInfo.BED))
+            s.touched |= uncopied(on.flags) & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
+        double restitution = shift ? 0.0 : 0.0;   // isSuppressingBounce ? 0 : getEntityBounciness (BOUNCINESS, 0)
+        double cvx = s.vx, cvy = s.vy, cvz = s.vz;
+        double nvx = cvx, nvy = cvy, nvz = cvz;
+        if (xCollision) nvx = -cvx * restitution;
+        if (zCollision) nvz = -cvz * restitution;
+        if (verticalCollision) {
+            if (below) restitution = !(-cvy < body.gravity) && !shift && !on.is(BlockInfo.SUPPRESSES_BOUNCE)
+                ? Math.max(restitution, (double) on.bounce) : 0.0;
+            double gravityCompensation, effectiveDrag;
+            if (restitution > 0.0) {
+                double portion = myv / cvy;
+                gravityCompensation = portion * body.gravity;
+                effectiveDrag = 1.0 + portion * ((double) 0.98F - 1.0);   // Mth.lerp(portion, 1.0, getAirDrag())
+            } else {
+                gravityCompensation = 0.0;
+                effectiveDrag = 1.0;
+            }
+            nvy = (gravityCompensation - cvy) * effectiveDrag * restitution;
+        }
+        s.vx = nvx; s.vy = nvy; s.vz = nvz;
     }
 
     /** Entity.collide: the move cut short by the blocks, stepping up onto what the step height allows. */
@@ -663,17 +874,25 @@ public final class GroundPhysics {
         return false;
     }
 
-    /** Player.isAboveGround(maxDownStep), for the sneak edge stop. */
+    /** Player.isAboveGround(maxDownStep), for the sneak edge stop: up to 1.21.4 on a float fall distance
+     *  (Rules.FALL_LANDING_TICK_UNCOUNTED), in 1.21.4 the client's, which stays 0 (Rules.CLIENT_SKIPS_FALL_CHECK). */
     private boolean isAboveGround(MoveState s) {
         float maxDownStep = body.stepHeight;
+        if (Rules.FALL_LANDING_TICK_UNCOUNTED) {
+            float fall = Rules.CLIENT_SKIPS_FALL_CHECK ? 0.0F : (float) s.fallDistance;
+            return s.onGround || fall < maxDownStep && !canFallAtLeast(s, 0.0, 0.0, maxDownStep - fall);
+        }
         return s.onGround || s.fallDistance < maxDownStep && !canFallAtLeast(s, 0.0, 0.0, maxDownStep - s.fallDistance);
     }
 
-    /** Player.canFallAtLeast: nothing under the box moved by (dx, dz) within minHeight. */
+    /** Player.canFallAtLeast: nothing under the box moved by (dx, dz) within minHeight (up to 1.21.4 the box's own
+     *  width and 1.0E-5F deeper, Rules.EDGE_TEST_UNSHRUNK). */
     private boolean canFallAtLeast(MoveState s, double dx, double dz, double minHeight) {
         makeBox(s, box);
-        double[] b = {box[0] + 1.0E-7 + dx, box[1] - minHeight - 1.0E-7, box[2] + 1.0E-7 + dz,
-                      box[3] - 1.0E-7 + dx, box[1], box[5] - 1.0E-7 + dz};
+        double[] b = Rules.EDGE_TEST_UNSHRUNK
+            ? new double[]{box[0] + dx, box[1] - minHeight - 1.0E-5F, box[2] + dz, box[3] + dx, box[1], box[5] + dz}
+            : new double[]{box[0] + 1.0E-7 + dx, box[1] - minHeight - 1.0E-7, box[2] + 1.0E-7 + dz,
+                           box[3] - 1.0E-7 + dx, box[1], box[5] - 1.0E-7 + dz};
         grid.collect(b, cols2, s.y, descending);   // the shift key is down here: scaffolding under the feet gives way
         return cols2.n == 0;
     }

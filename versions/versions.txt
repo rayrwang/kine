@@ -1,0 +1,29 @@
+# The Minecraft releases kine supports: the one place to add a version (see versions/README.md).
+#
+# minecraft: the release. epoch: the folder under versions/ holding the code for the game APIs that differ (several
+# releases share one when kine's game code is the same on them). loader and fabric_api: the oldest Fabric Loader and
+# Fabric API tested with it; the jar requires at least these. java: the Java release the game runs on. family: the
+# releases one jar covers (an unobfuscated 26.x jar and an obfuscated 1.21.x jar can't be one jar).
+#
+# The development version (runClient, where new features are written first) is gradle.properties' dev_version, any
+# release of the newest family. A row starting with "pending" is a release still being ported, left out of the build
+# unless it is run with -Pkine.pending=true.
+#
+# minecraft  epoch    loader   fabric_api         java  family
+26.1         v26_1    0.19.5   0.145.1+26.1       25    26
+26.1.1       v26_1    0.19.5   0.145.4+26.1.1     25    26
+26.1.2       v26_1    0.19.2   0.150.0+26.1.2     25    26
+26.2         v26_2    0.19.5   0.161.0+26.2       25    26
+26.3         v26_3    0.19.5   0.163.0+26.3       25    26
+1.21         v1_21    0.19.5   0.102.0+1.21       21    1.21
+1.21.1       v1_21    0.19.5   0.116.17+1.21.1    21    1.21
+1.21.2       v1_21_2  0.19.5   0.106.1+1.21.2     21    1.21
+1.21.3       v1_21_2  0.19.5   0.114.1+1.21.3     21    1.21
+1.21.4       v1_21_2  0.19.5   0.119.4+1.21.4     21    1.21
+1.21.5       v1_21_5  0.19.5   0.128.2+1.21.5     21    1.21
+1.21.6       v1_21_6  0.19.5   0.128.2+1.21.6     21    1.21
+1.21.7       v1_21_6  0.19.5   0.129.0+1.21.7     21    1.21
+1.21.8       v1_21_6  0.19.5   0.136.1+1.21.8     21    1.21
+1.21.9       v1_21_9  0.19.5   0.134.1+1.21.9     21    1.21
+1.21.10      v1_21_9  0.19.5   0.138.4+1.21.10    21    1.21
+1.21.11      v1_21_11 0.19.5   0.141.6+1.21.11    21    1.21

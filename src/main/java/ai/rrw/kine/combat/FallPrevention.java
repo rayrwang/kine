@@ -1,6 +1,8 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.util.GameModes;
 import ai.rrw.kine.walk.Walk;
 import net.minecraft.client.Minecraft;
@@ -8,7 +10,6 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -49,10 +50,10 @@ public final class FallPrevention {
         double len = Math.sqrt(left * left + fwd * fwd);
         Vec3 v = p.getDeltaMovement();
         if (len < 1.0e-7) return new Vec3(v.x, 0, v.z);
-        float friction = p.level().getBlockState(p.getBlockPosBelowThatAffectsMyMovement()).getBlock().getFriction();
+        float friction = Compat.level(p).getBlockState(p.getBlockPosBelowThatAffectsMyMovement()).getBlock().getFriction();
         double speed = p.getSpeed() * (0.21600002F / (friction * friction * friction));
         double x = left / len * speed, z = fwd / len * speed;
-        float sin = Mth.sin(p.getYRot() * (float) (Math.PI / 180.0)), cos = Mth.cos(p.getYRot() * (float) (Math.PI / 180.0));
+        float sin = ai.rrw.kine.move.GameMath.sin(p.getYRot() * (float) (Math.PI / 180.0)), cos = ai.rrw.kine.move.GameMath.cos(p.getYRot() * (float) (Math.PI / 180.0));
         return new Vec3(v.x + x * cos - z * sin, 0, v.z + z * cos + x * sin);
     }
 
@@ -68,14 +69,14 @@ public final class FallPrevention {
     private static boolean climbableAtFeet(LocalPlayer p, double x, double z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int bx = Mth.floor(x), by = Mth.floor(p.getY()), bz = Mth.floor(z);
-        return p.level().getBlockState(pos.set(bx, by, bz)).is(BlockTags.CLIMBABLE)
-            || p.level().getBlockState(pos.set(bx, by - 1, bz)).is(BlockTags.CLIMBABLE);
+        return Compat.level(p).getBlockState(pos.set(bx, by, bz)).is(BlockTags.CLIMBABLE)
+            || Compat.level(p).getBlockState(pos.set(bx, by - 1, bz)).is(BlockTags.CLIMBABLE);
     }
 
     // Player.canFallAtLeast: nothing to stand on within minHeight below the box moved by (dx, dz)
     static boolean canFallAtLeast(LocalPlayer p, double dx, double dz, double minHeight) {
         AABB b = p.getBoundingBox();
-        return p.level().noCollision(p, new AABB(
+        return Compat.level(p).noCollision(p, new AABB(
             b.minX + 1.0E-7 + dx, b.minY - minHeight - 1.0E-7, b.minZ + 1.0E-7 + dz,
             b.maxX - 1.0E-7 + dx, b.minY, b.maxZ - 1.0E-7 + dz));
     }

@@ -1,0 +1,58 @@
+// Reads versions/versions.txt (the version table) and gradle.properties' dev_version. Applied by settings.gradle (for
+// the subprojects to include) and by the build scripts. Groovy, no plugins.
+def tableFile = new File(rootDir, 'versions/versions.txt')
+def rows = []
+// A row starting with "pending" is a release still being ported: left out unless -Pkine.pending=true.
+def pendingOn = (gradle.startParameter.projectProperties['kine.pending'] ?: 'false') == 'true'
+tableFile.eachLine { line ->
+	def l = line.trim()
+	if (l.isEmpty() || l.startsWith('#')) return
+	if (l.startsWith('pending ')) {
+		if (!pendingOn) return
+		l = l.substring('pending '.length()).trim()
+	}
+	def f = l.split(/\s+/)
+	if (f.length != 6) throw new GradleException("versions/versions.txt: expected 6 columns, got: " + line)
+	rows << [minecraft: f[0], epoch: f[1], loader: f[2], fabricApi: f[3], java: f[4] as int, family: f[5]]
+}
+def props = new Properties()
+new File(rootDir, 'gradle.properties').withInputStream { props.load(it) }
+def devVersion = props.getProperty('dev_version')
+def dev = rows.find { it.minecraft == devVersion }
+if (dev == null) throw new GradleException("gradle.properties dev_version=" + devVersion + " is not in versions/versions.txt")
+
+// Version order: numeric, part by part (26.1 < 26.1.1 < 26.2; 1.21.11 > 1.21.9).
+def cmp = { String a, String b ->
+	def pa = a.tokenize('.').collect { it as int }, pb = b.tokenize('.').collect { it as int }
+	for (int i = 0; i < Math.max(pa.size(), pb.size()); i++) {
+		int x = i < pa.size() ? pa[i] : 0, y = i < pb.size() ? pb[i] : 0
+		if (x != y) return x <=> y
+	}
+	return 0
+}
+
+// One family: its rows oldest first, its epochs (each with the newest release it covers, which its code compiles
+// against), its base (its newest release: an older family's jar carries the shared code as compiled against it), and
+// what its jar declares.
+def familyOf = { String fam ->
+	def fr = rows.findAll { it.family == fam }.sort { a, b -> cmp(a.minecraft, b.minecraft) }
+	def epochs = [:]   // epoch -> row compiled against (the newest release of the epoch)
+	fr.each { epochs[it.epoch] = it }
+	def first = fr.first().minecraft, last = fr.last().minecraft
+	// the jar admits up to, not including, the release after the last one (26.3 -> 26.4, 1.21.11 -> 1.21.12) and its
+	// snapshots and pre-releases ("26.4-" sorts below them all)
+	def lastParts = last.tokenize('.').collect { it as int }
+	def next = (lastParts[0..-2] + [lastParts[-1] + 1]).join('.')
+	def minOf = { List vs -> vs.min { a, b -> cmp(a.split(/\+/)[0], b.split(/\+/)[0]) }.split(/\+/)[0] }
+	[name: fam, rows: fr, epochs: epochs, first: first, last: last, base: fr.last(),
+	 label: first == last ? first : first + '-' + last,
+	 mcRange: '>=' + first + ' <' + next + '-',
+	 loaderMin: minOf(fr*.loader), fabricApiMin: minOf(fr*.fabricApi), java: fr*.java.min()]
+}
+
+ext.kineRows = rows
+ext.kineDev = dev
+ext.kineCompare = cmp
+ext.kineFamily = familyOf
+
+ext.kineFamilies = rows*.family.unique()

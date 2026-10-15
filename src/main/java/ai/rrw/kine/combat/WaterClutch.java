@@ -1,6 +1,9 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.mixin.MinecraftInvoker;
 import ai.rrw.kine.util.Hotbar;
 import ai.rrw.kine.util.InventoryClicks;
@@ -15,10 +18,8 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
@@ -133,7 +134,7 @@ public final class WaterClutch {
         if (active) {
             // a dry landing, gliding, or timed out (standing in the water also counts as on the ground: the
             // scoop happens before the next keybind step)
-            if (p.onGround() && !p.isInWater() || p.isFallFlying() || ++ticks > GIVE_UP_TICKS) finish(mc, p);
+            if (p.onGround() && !inWater(p) || p.isFallFlying() || ++ticks > GIVE_UP_TICKS) finish(mc, p);
         } else {
             boolean was = armed;
             armed = dangerousFall(mc, p) && haveBucket(p) && !evaporates(mc, p);
@@ -163,8 +164,8 @@ public final class WaterClutch {
         // a fall into water or onto something else that takes no fall damage needs no clutch, however long (RW: a
         // player bobbing at the surface pops out of the water for a moment, and the fall then seemed to reach the bottom)
         if (imp != null && imp.safe()) return false;
-        if (p.fallDistance >= hurt) return true;
-        return imp == null || p.fallDistance + (p.getY() - imp.point().y()) >= hurt;
+        if (Compat.fallDistance(p) >= hurt) return true;
+        return imp == null || Compat.fallDistance(p) + (p.getY() - imp.point().y()) >= hurt;
     }
 
     // Turn toward where the fall lands, or straight down until a landing is in sight, at auto aim's eased rate.
@@ -195,16 +196,16 @@ public final class WaterClutch {
     // if it can hold water, else into the one in front of the face hit. Null if the ray hits nothing.
     private static BlockPos fillTarget(LocalPlayer p) {
         Vec3 eye = p.getEyePosition();
-        BlockHitResult h = p.level().clip(new ClipContext(eye, eye.add(p.getLookAngle().scale(p.blockInteractionRange())),
+        BlockHitResult h = Compat.level(p).clip(new ClipContext(eye, eye.add(p.getLookAngle().scale(p.blockInteractionRange())),
             ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
         if (h.getType() != HitResult.Type.BLOCK) return null;
         BlockPos pos = h.getBlockPos();
-        return p.level().getBlockState(pos).getBlock() instanceof LiquidBlockContainer ? pos : pos.relative(h.getDirection());
+        return Compat.level(p).getBlockState(pos).getBlock() instanceof LiquidBlockContainer ? pos : pos.relative(h.getDirection());
     }
 
     // Whether a ray from the eye meets the target: the given block, or else a top face at the target's height.
     private static boolean meets(LocalPlayer p, Vec3 eye, Vec3 ray, Vec3 target, BlockPos block, ClipContext.Fluid fluid) {
-        BlockHitResult h = p.level().clip(new ClipContext(eye, eye.add(ray), ClipContext.Block.OUTLINE, fluid, p));
+        BlockHitResult h = Compat.level(p).clip(new ClipContext(eye, eye.add(ray), ClipContext.Block.OUTLINE, fluid, p));
         if (h.getType() != HitResult.Type.BLOCK) return false;
         return block != null ? h.getBlockPos().equals(block)
                              : h.getDirection() == Direction.UP && Math.abs(h.getLocation().y - target.y) < 0.01;
@@ -225,7 +226,7 @@ public final class WaterClutch {
         LocalPlayer p = mc.player;
         if (!frameTurn || p == null || mc.isPaused()) return;
         if (returning && pilotMoved(p)) { returning = false; frameTurn = false; return; }
-        float a = Mth.clamp(mc.getDeltaTracker().getGameTimeDeltaPartialTick(true), 0f, 1f);
+        float a = Mth.clamp(Compat.partialTick(mc, true), 0f, 1f);
         MouseTurn.toward(p, baseYaw + a * Mth.wrapDegrees(nextYaw - baseYaw), basePitch + a * (nextPitch - basePitch));
         lastSetYaw = p.getYRot(); lastSetPitch = p.getXRot();
     }
@@ -277,7 +278,7 @@ public final class WaterClutch {
         MouseTurn.toward(p, look[0], look[1]);   // the last small correction: the view has been turning this way all fall
         BlockPos placed = fillTarget(p);   // read before the water is there
         MinecraftInvoker game = (MinecraftInvoker) mc;
-        game.invokePick(1.0F);
+        Compat.pick(mc, 1.0F);
         game.invokeStartUseItem();   // the bucket raycasts along this rotation (the packet carries it) -> source at the feet block
         if (p.getItemInHand(clutchHand).is(Items.BUCKET)) {
             // the scoop goes for the block the bucket filled, not the block under the aim point: looking straight
@@ -299,18 +300,36 @@ public final class WaterClutch {
             float[] look = lookFor(mc, p, sourceSpot, BlockPos.containing(sourceSpot), ClipContext.Fluid.SOURCE_ONLY);   // an empty bucket's ray
             MouseTurn.toward(p, look[0], look[1]);
         } else MouseTurn.toward(p, p.getYRot(), 90f);
-        if (p.isInWater()) {
+        if (inWater(p)) {
             MinecraftInvoker game = (MinecraftInvoker) mc;
-            game.invokePick(1.0F);
+            Compat.pick(mc, 1.0F);
             game.invokeStartUseItem();   // the hand holds an empty bucket now, so this scoops the source back up
             finish(mc, p);
         }
     }
 
+    /** In water as the game decides it after a move (Entity.updateFluidHeightAndDoFluidPushing): the box, shrunk by
+     *  0.001, reaches below a water block's top. The client sets isInWater there after its own player's move, except on
+     *  1.21.4, which skips that check for its own player (Rules.CLIENT_SKIPS_FALL_CHECK: LivingEntity.checkFallDamage)
+     *  and sees the water only at the next tick's start; by then the landing reads as a dry one, and a tick later the
+     *  eyes can be inside the source, where the bucket's ray misses it. */
+    private static boolean inWater(LocalPlayer p) {
+        if (p.isInWater() || !Rules.CLIENT_SKIPS_FALL_CHECK) return p.isInWater();
+        AABB box = p.getBoundingBox().deflate(0.001);
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int x = Mth.floor(box.minX); x < Mth.ceil(box.maxX); x++)
+            for (int y = Mth.floor(box.minY); y < Mth.ceil(box.maxY); y++)
+                for (int z = Mth.floor(box.minZ); z < Mth.ceil(box.maxZ); z++) {
+                    FluidState fluid = Compat.level(p).getFluidState(pos.set(x, y, z));
+                    if (fluid.is(FluidTags.WATER) && y + fluid.getHeight(Compat.level(p), pos) >= box.minY) return true;   // int + float, as the game adds them
+                }
+        return false;
+    }
+
     private static void finish(Minecraft mc, LocalPlayer p) {
         if (p != null) {
             startReturn(p);   // ease back from the end of this tick, after the use's rotation has gone out
-            if (restoreSlot >= 0) p.getInventory().setSelectedSlot(restoreSlot);   // the game sends the change, as for a number key
+            if (restoreSlot >= 0) Compat.setSelectedSlot(p.getInventory(), restoreSlot);   // the game sends the change, as for a number key
         }
         active = false;
         armed = false;
@@ -321,20 +340,19 @@ public final class WaterClutch {
     }
 
     private static boolean evaporates(Minecraft mc, LocalPlayer p) {
-        Boolean e = (Boolean) mc.level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES, p.blockPosition());
-        return e != null && e;
+        return Compat.waterEvaporates(mc.level, p.blockPosition());
     }
 
     private static boolean haveBucket(LocalPlayer p) {
         if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return true;
-        for (int i = 0; i < 36; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return true;
+        for (int i = 0; i < 36; i++) if (Compat.mainItems(p.getInventory()).get(i).is(Items.WATER_BUCKET)) return true;
         return false;
     }
 
     // The only water bucket is in the main inventory, not the hotbar or the offhand.
     private static boolean needsFetch(LocalPlayer p) {
         if (p.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.WATER_BUCKET)) return false;
-        for (int i = 0; i < 9; i++) if (p.getInventory().getNonEquipmentItems().get(i).is(Items.WATER_BUCKET)) return false;
+        for (int i = 0; i < 9; i++) if (Compat.mainItems(p.getInventory()).get(i).is(Items.WATER_BUCKET)) return false;
         return true;
     }
 
@@ -466,9 +484,9 @@ public final class WaterClutch {
         restoreSlot = -1;
         var inv = p.getInventory();
         for (int slot = 0; slot < 9; slot++) {
-            if (inv.getNonEquipmentItems().get(slot).is(Items.WATER_BUCKET)) {
+            if (Compat.mainItems(inv).get(slot).is(Items.WATER_BUCKET)) {
                 clutchHand = InteractionHand.MAIN_HAND;
-                if (inv.getSelectedSlot() != slot) { restoreSlot = inv.getSelectedSlot(); inv.setSelectedSlot(slot); }
+                if (Compat.selectedSlot(inv) != slot) { restoreSlot = Compat.selectedSlot(inv); Compat.setSelectedSlot(inv, slot); }
                 return true;
             }
         }
@@ -476,7 +494,7 @@ public final class WaterClutch {
         clutchHand = InteractionHand.OFF_HAND;
         if (p.getMainHandItem().isEmpty()) return true;
         for (int slot = 0; slot < 9; slot++) {
-            if (inv.getNonEquipmentItems().get(slot).isEmpty()) { restoreSlot = inv.getSelectedSlot(); inv.setSelectedSlot(slot); return true; }
+            if (Compat.mainItems(inv).get(slot).isEmpty()) { restoreSlot = Compat.selectedSlot(inv); Compat.setSelectedSlot(inv, slot); return true; }
         }
         return false;   // the main hand would be used first and there is no empty slot to switch to
     }

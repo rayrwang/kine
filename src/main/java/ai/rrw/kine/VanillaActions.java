@@ -7,11 +7,12 @@ import ai.rrw.kine.combat.FallPrevention;
 import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileDodge;
 import ai.rrw.kine.combat.WaterClutch;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.util.InventoryClicks;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.world.entity.player.Input;
 
 /**
  * Where the features act on the game, so the server only ever receives what a precisely controlled vanilla
@@ -49,7 +50,9 @@ public final class VanillaActions {
         ai.rrw.kine.combat.AutoEat.beforeKeybinds(mc);   // after the aura's turn and pick: hold use to eat
     }
 
-    /** After the entities tick: this tick's rotation has gone out. */
+    /** Once this tick's rotation has gone to the server, before the tick-end packet: each epoch's AfterRotationSentMixin
+     *  (after the entities tick up to 26.2, where the player sends from its own tick; after LocalPlayer.sendChanges from
+     *  26.3, where Minecraft.tick sends it after the entities). */
     public static void afterEntities(Minecraft mc) {
         KillAura.afterEntities(mc);
     }
@@ -58,7 +61,7 @@ public final class VanillaActions {
      *  client sends no game keys behind one (opening it lets go of every key, and a key press reaches the game only
      *  with no screen up). */
     public static Input adjustInput(LocalPlayer p, Input keys) {
-        if (Minecraft.getInstance().screen != null) { WaterClutch.sneakNotSent(); return keys; }
+        if (Compat.screen(Minecraft.getInstance()) != null) { WaterClutch.sneakNotSent(); return keys; }
         keys = KillAura.adjustInput(p, keys);   // first: your keys, for the rotation the aura sends; the rest press theirs for it
         keys = CombatMovement.adjustInput(p, keys);   // while you press no movement key, near zombies
         keys = ai.rrw.kine.walk.Walk.adjustInput(p, keys);   // the pathfinder's walk, and its hand-back to you

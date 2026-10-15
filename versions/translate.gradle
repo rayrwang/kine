@@ -1,0 +1,60 @@
+// The translation of the shared code for an older family (versions/renames.txt): kineTranslate(fromDirs, toDir,
+// release) copies the Java sources with the renames that apply to that release. Line numbers are kept.
+def cmpV = { String a, String b ->
+	def pa = a.tokenize('.').collect { it as int }, pb = b.tokenize('.').collect { it as int }
+	for (int i = 0; i < Math.max(pa.size(), pb.size()); i++) {
+		int x = i < pa.size() ? pa[i] : 0, y = i < pb.size() ? pb[i] : 0
+		if (x != y) return x <=> y
+	}
+	return 0
+}
+def applies = { String range, String release ->
+	if (range == '*') return true
+	if (range.startsWith('<')) return cmpV(release, range.substring(1)) < 0
+	if (range.startsWith('>=')) return cmpV(release, range.substring(2)) >= 0
+	def lo = range, hi = range
+	if (range.contains('-')) { lo = range.substring(0, range.indexOf('-')); hi = range.substring(range.indexOf('-') + 1) }
+	return cmpV(release, lo) >= 0 && cmpV(release, hi) <= 0
+}
+ext.kineRenames = { String release ->
+	def pairs = []
+	rootProject.file('versions/renames.txt').eachLine { line ->
+		def l = line.contains('#') ? line.substring(0, line.indexOf('#')).trim() : line.trim()
+		if (l.isEmpty()) return
+		def f = l.split(/\s+/)
+		if (f.length == 3 && applies(f[2], release)) pairs << [f[0], f[1]]
+	}
+	pairs.sort { -it[0].length() }
+	pairs
+}
+// A line's first name is one of: a class (net.minecraft.x.Y: imports and simple names), a method or field by itself
+// (.name: every ".name" followed by "(" or not a word character), or a class's static member (Y.NAME).
+ext.kineTranslate = { List fromDirs, File toDir, String release ->
+	def pairs = kineRenames(release)
+	def word = { String s -> java.util.regex.Pattern.quote(s) }
+	def patterns = []
+	pairs.findAll { it[0].startsWith('.') }.each { p ->
+		patterns << [java.util.regex.Pattern.compile(word(p[0]) + '(?!\\w)'), p[1]]
+	}
+	pairs.findAll { !it[0].startsWith('.') && Character.isUpperCase(it[0].charAt(0)) }.each { p ->
+		patterns << [java.util.regex.Pattern.compile('(?<![\\w.])' + word(p[0]) + '(?!\\w)'), p[1]]
+	}
+	def classes = pairs.findAll { !it[0].startsWith('.') && !Character.isUpperCase(it[0].charAt(0)) }
+	classes.each { p -> patterns << [java.util.regex.Pattern.compile('(?<![\\w.])' + word(p[0]) + '(?!\\w)'), p[1]] }
+	classes.collect { [it[0].tokenize('.').last(), it[1].tokenize('.').last()] }.findAll { it[0] != it[1] }.each { p ->
+		patterns << [java.util.regex.Pattern.compile('(?<![\\w.])' + word(p[0]) + '(?!\\w)'), p[1]]
+	}
+	toDir.deleteDir()
+	fromDirs.each { File from ->
+		if (!from.exists()) return
+		from.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+			def out = new File(toDir, from.toPath().relativize(f.toPath()).toString())
+			out.parentFile.mkdirs()
+			if (!f.name.endsWith('.java')) { out.bytes = f.bytes; return }
+			def s = f.getText('UTF-8')
+			def t = s
+			patterns.each { pt -> t = pt[0].matcher(t).replaceAll(java.util.regex.Matcher.quoteReplacement(pt[1])) }
+			out.setText(t, 'UTF-8')
+		}
+	}
+}

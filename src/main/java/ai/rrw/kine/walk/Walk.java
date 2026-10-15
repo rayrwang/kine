@@ -1,28 +1,23 @@
 package ai.rrw.kine.walk;
 
-import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Input;
 import ai.rrw.kine.fight.Moves;
 import ai.rrw.kine.hud.HudLayout;
-import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.move.MoveState;
 import ai.rrw.kine.move.WorldSnapshot;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.level.Level;
 
 import java.util.HashMap;
@@ -202,8 +197,7 @@ public final class Walk {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(Walk::endTick);
-        HudElementRegistry.attachElementAfter(VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "walk"), Walk::render);
+        Compat.hud("walk", Walk::render);
     }
 
     // ---------------------------------------------------------------- the destination and the controls
@@ -279,9 +273,9 @@ public final class Walk {
         // the block the feet land in (a pool to stand in), or the one under the floor height (the top of deep water,
         // or a waterlogged floor)
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(Mth.floor(tx), Mth.floor(ty + 1e-4), Mth.floor(tz));
-        if (p.level().getFluidState(pos).is(FluidTags.WATER)) return true;
+        if (Compat.level(p).getFluidState(pos).is(FluidTags.WATER)) return true;
         pos.setY(Mth.floor(ty - 1e-4));
-        return p.level().getFluidState(pos).is(FluidTags.WATER);
+        return Compat.level(p).getFluidState(pos).is(FluidTags.WATER);
     }
 
     /** This dimension's walk destination {x, z}, or null. */
@@ -424,7 +418,7 @@ public final class Walk {
         Afloat.arm();
         lastWhy = why;
         Minecraft mc = Minecraft.getInstance();
-        mc.gui.setOverlayMessage(Component.literal("Walk: " + why), false);
+        Compat.actionBar(mc, Component.literal("Walk: " + why));
     }
 
     private static void replan(Minecraft mc, long budget) {
@@ -677,7 +671,7 @@ public final class Walk {
         layer2 = false;
         LocalPlayer p = mc.player;
         if (p != null && active()) {
-            if (mc.screen == null && yourMovement(mc)) {
+            if (Compat.screen(mc) == null && yourMovement(mc)) {
                 stop("you took over");
                 handBack = true;
             } else if (!Settings.walkPathfinder) {
@@ -708,9 +702,7 @@ public final class Walk {
 
     private static boolean physical(Minecraft mc, KeyMapping km, boolean toggle) {
         if (!toggle) return km.isDown();
-        InputConstants.Key key = ((KeyMappingAccessor) km).kine$getKey();
-        if (key.getType() == InputConstants.Type.KEYSYM) return InputConstants.isKeyDown(mc.getWindow(), key.getValue());
-        return km.isDown();
+        return Compat.isKeyboard(km) ? Compat.held(mc, km) : km.isDown();
     }
 
     /** Where the rotation sent should rest when the kill aura isn't fighting (KillAura.beforeKeybinds): while walking,
@@ -958,7 +950,7 @@ public final class Walk {
                 return;
             }
         }
-        if (left < bestLeft - 0.25 || mc.screen != null) {   // a screen pauses it
+        if (left < bestLeft - 0.25 || Compat.screen(mc) != null) {   // a screen pauses it
             if (bestLeft != Double.MAX_VALUE && left < bestLeft) progressed += bestLeft - left;
             if (progressed >= REAL_PROGRESS) stuckReplans = 0;
             bestLeft = left;
@@ -1273,9 +1265,9 @@ public final class Walk {
 
     /** WALK in cyan on the right, under AP, in the row combat movement's MOVE uses (the two never show together),
      *  while it walks you; "WALK ..." while it plans. */
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
-        if (!active() || mc.player == null || mc.options.hideGui) return;
+        if (!active() || mc.player == null || Compat.hudHidden(mc)) return;
         int w = mc.getWindow().getGuiScaledWidth(), h = mc.getWindow().getGuiScaledHeight();
         String s = state == State.PLANNING ? "WALK ..." : "WALK";
         g.text(mc.font, s, HudLayout.apLeftEdge(w / 2, ai.rrw.kine.hud.NavHud.lastHalfCenter()),

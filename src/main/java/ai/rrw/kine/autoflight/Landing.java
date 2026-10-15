@@ -1,5 +1,7 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Gui2D;
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.hud.HudColors;
@@ -7,17 +9,12 @@ import ai.rrw.kine.hud.HudDraw;
 import ai.rrw.kine.hud.HudLayout;
 import ai.rrw.kine.hud.ScreenProjection;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
-import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
@@ -58,10 +55,7 @@ public final class Landing {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(Landing::tick);
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "landing"),
-            Landing::render);
+        Compat.hud("landing", Landing::render);
     }
 
     private static void tick(Minecraft mc) {
@@ -150,16 +144,15 @@ public final class Landing {
 
     // ---- the reticle and the prompt ----
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (!valid) return;
         Minecraft mc = Minecraft.getInstance();
         int W = mc.getWindow().getGuiScaledWidth(), H = mc.getWindow().getGuiScaledHeight();
         String s = "LEFT CLICK TO LAND";
         g.text(mc.font, s, W / 2 - mc.font.width(s) / 2, HudLayout.warningRow(H, mc.font.lineHeight), HudColors.GREEN, true);
 
-        Camera camera = mc.gameRenderer.getMainCamera();
-        Matrix4f vp = camera.getViewRotationProjectionMatrix(new Matrix4f());
-        Vec3 cam = camera.position();
+        Matrix4f vp = Compat.viewProjection(mc);
+        Vec3 cam = Compat.cameraPos(mc);
         // the top face of the landing block, and a fixed-size square on its centre so it shows from far away
         double y = spotTop + 0.02;
         double[][] c = { { spotX, spotZ }, { spotX + 1, spotZ }, { spotX + 1, spotZ + 1 }, { spotX, spotZ + 1 } };

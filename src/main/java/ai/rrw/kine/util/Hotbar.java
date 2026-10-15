@@ -6,6 +6,8 @@ import java.util.function.IntFunction;
 
 /** Hotbar slot choice for features that move an item into the hotbar. */
 public final class Hotbar {
+    /** The hotbar's slots (Inventory.SELECTION_SIZE, private on 1.21 and 1.21.1). */
+    public static final int SIZE = 9;
     private Hotbar() {}
 
     /** The hotbar slot to put an item into: the first empty slot, else the slot with the largest stack,

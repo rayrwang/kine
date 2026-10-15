@@ -1,0 +1,48 @@
+# Pure renames between the newest family's names and an older family's (versions/README.md): the shared code is
+# written with the newest names, and an older family's build compiles a copy translated by this table. One line per
+# rename: the new name, the old one, and the releases where the old one applies (<26.1: all of 1.21.x; 1.21-1.21.10:
+# those; >=1.21.11 and so on). A name is one of:
+#   - a class, fully qualified (net.minecraft.x.Y): its imports and its simple name in the code;
+#   - a method or field by itself, with a dot (.name): every ".name" (use only for a name nothing else in kine has);
+#   - a class's static member (Y.NAME).
+# Whole words are replaced, and line numbers stay the same. A change that isn't a pure rename goes behind
+# ai.rrw.kine.compat.
+#
+# new name                                                        old name                                                        releases
+net.minecraft.resources.Identifier                                net.minecraft.resources.ResourceLocation                        1.21-1.21.10
+net.minecraft.world.inventory.ContainerInput                      net.minecraft.world.inventory.ClickType                         <26.1
+net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper     net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper   <26.1
+# entity classes moved into subpackages at 1.21.11 (and two new ones)
+net.minecraft.world.entity.animal.bee.Bee                                                 net.minecraft.world.entity.animal.Bee                                           1.21-1.21.10
+net.minecraft.world.entity.animal.equine.AbstractHorse                                    net.minecraft.world.entity.animal.horse.AbstractHorse                           1.21-1.21.10
+net.minecraft.world.entity.animal.parrot.Parrot                                           net.minecraft.world.entity.animal.Parrot                                        1.21-1.21.10
+net.minecraft.world.entity.boss.enderdragon.EnderDragonPart                               net.minecraft.world.entity.boss.EnderDragonPart                                 1.21-1.21.10
+net.minecraft.world.entity.monster.illager.Evoker                                         net.minecraft.world.entity.monster.Evoker                                       1.21-1.21.10
+net.minecraft.world.entity.monster.illager.Illusioner                                     net.minecraft.world.entity.monster.Illusioner                                   1.21-1.21.10
+net.minecraft.world.entity.monster.illager.Pillager                                       net.minecraft.world.entity.monster.Pillager                                     1.21-1.21.10
+net.minecraft.world.entity.monster.illager.Vindicator                                     net.minecraft.world.entity.monster.Vindicator                                   1.21-1.21.10
+net.minecraft.world.entity.monster.skeleton.AbstractSkeleton                              net.minecraft.world.entity.monster.AbstractSkeleton                             1.21-1.21.10
+net.minecraft.world.entity.monster.skeleton.Bogged                                        net.minecraft.world.entity.monster.Bogged                                       1.21-1.21.10
+net.minecraft.world.entity.monster.skeleton.Stray                                         net.minecraft.world.entity.monster.Stray                                        1.21-1.21.10
+net.minecraft.world.entity.monster.skeleton.WitherSkeleton                                net.minecraft.world.entity.monster.WitherSkeleton                               1.21-1.21.10
+net.minecraft.world.entity.monster.spider.CaveSpider                                      net.minecraft.world.entity.monster.CaveSpider                                   1.21-1.21.10
+net.minecraft.world.entity.monster.spider.Spider                                          net.minecraft.world.entity.monster.Spider                                       1.21-1.21.10
+net.minecraft.world.entity.monster.zombie.Drowned                                         net.minecraft.world.entity.monster.Drowned                                      1.21-1.21.10
+net.minecraft.world.entity.monster.zombie.Husk                                            net.minecraft.world.entity.monster.Husk                                         1.21-1.21.10
+net.minecraft.world.entity.monster.zombie.Zombie                                          net.minecraft.world.entity.monster.Zombie                                       1.21-1.21.10
+net.minecraft.world.entity.monster.zombie.ZombifiedPiglin                                 net.minecraft.world.entity.monster.ZombifiedPiglin                              1.21-1.21.10
+net.minecraft.world.entity.projectile.arrow.AbstractArrow                                 net.minecraft.world.entity.projectile.AbstractArrow                             1.21-1.21.10
+net.minecraft.world.entity.projectile.arrow.ThrownTrident                                 net.minecraft.world.entity.projectile.ThrownTrident                             1.21-1.21.10
+net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile         net.minecraft.world.entity.projectile.AbstractHurtingProjectile                 1.21-1.21.10
+net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball                     net.minecraft.world.entity.projectile.LargeFireball                             1.21-1.21.10
+net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball                     net.minecraft.world.entity.projectile.SmallFireball                             1.21-1.21.10
+net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.AbstractWindCharge     net.minecraft.world.entity.projectile.windcharge.AbstractWindCharge             1.21-1.21.10
+net.minecraft.world.entity.animal.happyghast.HappyGhast                                   net.minecraft.world.entity.animal.HappyGhast                                    1.21.6-1.21.10
+net.minecraft.world.entity.projectile.throwableitemprojectile.AbstractThrownPotion        net.minecraft.world.entity.projectile.AbstractThrownPotion                      1.21.5-1.21.10
+net.minecraft.client.renderer.state.level.CameraRenderState                               net.minecraft.client.renderer.state.CameraRenderState                           1.21.9-1.21.11
+# members
+.handleContainerInput                                             .handleInventoryMouseClick                                      <26.1
+.maxInclusive                                                     .getMaxValue                                                    <26.1
+MobEffects.RESISTANCE                                             MobEffects.DAMAGE_RESISTANCE                                    1.21-1.21.4
+MobEffects.SLOWNESS                                               MobEffects.MOVEMENT_SLOWDOWN                                    1.21-1.21.4
+MobEffects.STRENGTH                                               MobEffects.DAMAGE_BOOST                                         1.21-1.21.4

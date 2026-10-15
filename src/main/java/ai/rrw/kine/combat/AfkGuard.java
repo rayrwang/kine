@@ -1,5 +1,6 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.autoflight.Autopilot;
@@ -52,7 +53,7 @@ public class AfkGuard {
         // idle tracking: any sign of a person at the controls resets the clock
         // An open screen counts only while the window has focus: when it loses focus the game opens the pause
         // screen (Minecraft.pauseIfInactive), which would otherwise always count as someone being there.
-        boolean input = (mc.screen != null && mc.isWindowActive()) || keyHeld(mc.options)
+        boolean input = (Compat.screen(mc) != null && mc.isWindowActive()) || keyHeld(mc.options)
             || ai.rrw.kine.view.Freecam.inputThisTick();              // flying the freecam is you being there
         if (!Autopilot.isEngaged()                                   // the autopilot moving the view isn't you
             && (Math.abs(p.getXRot() - lastXRot) > LOOK_EPS
@@ -78,8 +79,8 @@ public class AfkGuard {
     private static boolean keyHeld(Options o) {
         boolean toggles = toggleInput(0, o.keyShift, o.toggleCrouch().get())
             | toggleInput(1, o.keySprint, o.toggleSprint().get())
-            | toggleInput(2, o.keyAttack, o.toggleAttack().get())
-            | toggleInput(3, o.keyUse, o.toggleUse().get());
+            | toggleInput(2, o.keyAttack, Compat.toggleAttack(o))
+            | toggleInput(3, o.keyUse, Compat.toggleUse(o));
         return toggles || o.keyUp.isDown() || o.keyDown.isDown() || o.keyLeft.isDown() || o.keyRight.isDown()
             || o.keyJump.isDown() || o.keyPickItem.isDown() || o.keyDrop.isDown() || o.keySwapOffhand.isDown();
     }

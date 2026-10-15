@@ -1,5 +1,7 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
 import ai.rrw.kine.combat.AfkGuard;
@@ -12,15 +14,12 @@ import ai.rrw.kine.util.ElytraLife;
 import ai.rrw.kine.util.InventoryClicks;
 import ai.rrw.kine.util.KineTime;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -66,10 +65,7 @@ public class ElytraGuard {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ElytraGuard::tick);
-        HudElementRegistry.attachElementAfter(
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "flightdir"), // draw on top of the flight director bars
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "elytra_guard"),
-            ElytraGuard::render);
+        Compat.hudAfter("flightdir", "elytra_guard", ElytraGuard::render);   // on top of the flight director bars
     }
 
     private static void tick(Minecraft mc) {
@@ -172,7 +168,7 @@ public class ElytraGuard {
             + "landing reserve while you flew by hand, and there was no input for " + NO_INPUT_TICKS / 20 + " seconds."));
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
         int W = mc.getWindow().getGuiScaledWidth();

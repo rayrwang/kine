@@ -1,5 +1,7 @@
 package ai.rrw.kine.fireworks;
 
+import ai.rrw.kine.compat.Rules;
+
 /**
  * Whether a firework rocket used while already flying fast hits its own player on the server, exploding a few ticks
  * into its burn (RW's takeoff rocket spam, 2026-10-11, found with server-side logging in his world). From the 26.1.2
@@ -40,7 +42,8 @@ public final class RocketHit {
         double vx = lx * speed, vy = ly * speed, vz = lz * speed;
         for (int n = 1; n <= TICKS; n++) {
             vx = 0.5 * vx + 0.85 * lx; vy = 0.5 * vy + 0.85 * ly; vz = 0.5 * vz + 0.85 * lz;
-            double m = Math.max(0.0, Math.min(0.3, (n - 2) / 20.0));   // computeMargin at the rocket's tick count
+            // computeMargin at the rocket's tick count; up to 1.21.5 a fixed 0.3F (Rules.FIXED_HIT_MARGIN)
+            double m = Rules.FIXED_HIT_MARGIN ? 0.3F : Math.max(0.0, Math.min(0.3, (n - 2) / 20.0));
             if (enters(-HALF - m, -m, -HALF - m, HALF + m, HEIGHT + m, HALF + m, fx, fy, fz, vx, vy, vz)) return n - 1;
         }
         return -1;

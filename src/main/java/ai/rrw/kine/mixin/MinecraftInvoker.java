@@ -18,8 +18,6 @@ public interface MinecraftInvoker {
     @Accessor("rightClickDelay")
     void kine$setRightClickDelay(int ticks);
 
-    @Invoker("pick")
-    void invokePick(float partialTicks);
 
     @Invoker("startAttack")
     boolean invokeStartAttack();

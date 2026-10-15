@@ -1,13 +1,11 @@
 package ai.rrw.kine.autoflight;
 
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.WorldDraw;
 import ai.rrw.kine.Settings;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
@@ -46,7 +44,7 @@ public final class FlightPathRails {
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(FlightPathRails::tick);          // registered after PathPrediction, so it runs after it
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(FlightPathRails::renderLevel);
+        Compat.world().afterTranslucentTerrain(FlightPathRails::renderLevel);
     }
 
     private static void tick(Minecraft mc) {
@@ -89,14 +87,14 @@ public final class FlightPathRails {
         count = n;
     }
 
-    private static void renderLevel(LevelRenderContext ctx) {
+    private static void renderLevel(Matrix4f mat) {
         if (count < 2) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null) return;
 
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
-        double t = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        Vec3 cam = Compat.cameraPos(mc);
+        double t = Compat.partialTick(mc, false);
         double ax = p.xOld + (p.getX() - p.xOld) * t;     // interpolated player pos -> smooth flow
         double ay = p.yOld + (p.getY() - p.yOld) * t;
         double az = p.zOld + (p.getZ() - p.zOld) * t;
@@ -124,7 +122,6 @@ public final class FlightPathRails {
             oz[i] = az + rz[i] + uz * na * drop;
         }
 
-        Matrix4f mat = ctx.poseStack().last().pose();
 
         // Pass 1, the visible rails: one zero-thickness quad per span, coloured by the face the camera
         // sees (blue top, orange underside). The face is found from the strip's normal (span tangent
@@ -132,7 +129,7 @@ public final class FlightPathRails {
         // the tilted climb and dive limbs. debugQuads tests depth against terrain but doesn't write it.
         // This pass comes before the depth pass below; the other order would test against the rails' own
         // nearly equal depth and z-fight to white.
-        VertexConsumer vc = ctx.bufferSource().getBuffer(RenderTypes.debugQuads());
+        WorldDraw.Quads vc = Compat.world().quads(WorldDraw.QuadStyle.TESTED);
         for (int i = 1; i < count; i++) {
             int a = i - 1;
             double tx = ox[i] - ox[a], ty = oy[i] - oy[a], tz = oz[i] - oz[a];   // span tangent
@@ -145,22 +142,22 @@ public final class FlightPathRails {
             rail(vc, mat, cam, ox, oy, oz, acx, acz, color, i, +1.0);   // left rail
             rail(vc, mat, cam, ox, oy, oz, acx, acz, color, i, -1.0);   // right rail
         }
-        ctx.bufferSource().endBatch(RenderTypes.debugQuads());
+        vc.end();
 
         // Pass 2, depth only. Without it clouds, drawn later against the depth buffer, paint over the rails
         // even when behind them, because debugQuads writes no depth. waterMask writes depth with no colour
         // under the same LEQUAL test.
-        VertexConsumer mvc = ctx.bufferSource().getBuffer(RenderTypes.waterMask());
+        WorldDraw.Quads mvc = Compat.world().quads(WorldDraw.QuadStyle.DEPTH_ONLY);
         for (int i = 1; i < count; i++) {
             railMask(mvc, mat, cam, ox, oy, oz, acx, acz, i, +1.0);
             railMask(mvc, mat, cam, ox, oy, oz, acx, acz, i, -1.0);
         }
-        ctx.bufferSource().endBatch(RenderTypes.waterMask());
+        mvc.end();
     }
 
     /** Same quad as {@link #rail} but position-only, for the depth pass. waterMask culls back faces and a
      *  nearly flat rail can face either way, so both windings are emitted and one survives the cull. */
-    private static void railMask(VertexConsumer vc, Matrix4f mat, Vec3 cam, double[] ox, double[] oy, double[] oz,
+    private static void railMask(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double[] ox, double[] oy, double[] oz,
                                  double[] acx, double[] acz, int i, double sign) {
         int a = i - 1, b = i;
         double e1 = sign * RAIL_HALF - RAIL_W * 0.5;
@@ -179,13 +176,13 @@ public final class FlightPathRails {
         posVertex(vc, mat, cam, a1x, ay, a1z);
     }
 
-    private static void posVertex(VertexConsumer vc, Matrix4f mat, Vec3 cam,
+    private static void posVertex(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam,
                                   double wxx, double wyy, double wzz) {
-        vc.addVertex(mat, (float) (wxx - cam.x), (float) (wyy - cam.y), (float) (wzz - cam.z));
+        vc.vertex(mat, (float) (wxx - cam.x), (float) (wyy - cam.y), (float) (wzz - cam.z), 0);
     }
 
     /** Emit one quad: the span of one rail (a thin strip at sign*RAIL_HALF across the path) from i-1 to i. */
-    private static void rail(VertexConsumer vc, Matrix4f mat, Vec3 cam, double[] ox, double[] oy, double[] oz,
+    private static void rail(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam, double[] ox, double[] oy, double[] oz,
                              double[] acx, double[] acz, int color, int i, double sign) {
         int a = i - 1, b = i;
         double e1 = sign * RAIL_HALF - RAIL_W * 0.5;
@@ -196,10 +193,8 @@ public final class FlightPathRails {
         vertex(vc, mat, cam, ox[a] + acx[a] * e2, oy[a], oz[a] + acz[a] * e2, color);
     }
 
-    private static void vertex(VertexConsumer vc, Matrix4f mat, Vec3 cam,
+    private static void vertex(WorldDraw.Quads vc, Matrix4f mat, Vec3 cam,
                                double wxx, double wyy, double wzz, int argb) {
-        int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF, a = (argb >>> 24) & 0xFF;
-        vc.addVertex(mat, (float) (wxx - cam.x), (float) (wyy - cam.y), (float) (wzz - cam.z))
-          .setColor(r, g, b, a);
+        vc.vertex(mat, (float) (wxx - cam.x), (float) (wyy - cam.y), (float) (wzz - cam.z), argb);
     }
 }

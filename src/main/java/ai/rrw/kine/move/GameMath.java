@@ -1,5 +1,7 @@
 package ai.rrw.kine.move;
 
+import ai.rrw.kine.compat.Rules;
+
 /**
  * The game's own math helpers, copied so the movement simulation runs with no Minecraft class in its loop and gives
  * the same floats: Mth.sin and Mth.cos read a 65536-entry table, not Math.sin, and the movement code depends on it.
@@ -13,13 +15,16 @@ public final class GameMath {
         for (int i = 0; i < SIN.length; i++) SIN[i] = (float) Math.sin(i / 10430.378350470453);
     }
 
-    /** Mth.sin(double). */
+    /** Mth.sin: of a double from 1.21.11, of a float before (Rules.MTH_FLOAT_INDEX; the game's callers pass a float
+     *  angle there, which the double here holds exactly). */
     public static float sin(double i) {
+        if (Rules.MTH_FLOAT_INDEX) return SIN[(int) ((float) i * 10430.378F) & 65535];
         return SIN[(int) ((long) (i * 10430.378350470453) & 65535L)];
     }
 
-    /** Mth.cos(double). */
+    /** Mth.cos, as sin. */
     public static float cos(double i) {
+        if (Rules.MTH_FLOAT_INDEX) return SIN[(int) ((float) i * 10430.378F + 16384.0F) & 65535];
         return SIN[(int) ((long) (i * 10430.378350470453 + 16384.0) & 65535L)];
     }
 

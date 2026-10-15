@@ -1,0 +1,33 @@
+// The build of one epoch folder (versions/<epoch>/build.gradle applies it): that epoch's game code, compiled against
+// the newest release the epoch covers. In the development family it compiles against the root project's classes; in
+// an older family against that release's translated shared code (its check project) and is remapped. Its classes go
+// into its family's jar; it has no jar or runs of its own.
+apply from: rootProject.file('versions/table.gradle')
+
+def epoch = project.name
+def row = kineRows.findAll { it.epoch == epoch }.max { a, b -> kineCompare(a.minecraft, b.minecraft) }
+def devFamily = row.family == kineDev.family
+apply plugin: devFamily ? 'net.fabricmc.fabric-loom' : 'net.fabricmc.fabric-loom-remap'
+
+repositories { mavenCentral() }
+
+dependencies {
+	minecraft "com.mojang:minecraft:${row.minecraft}"
+	if (devFamily) {
+		implementation "net.fabricmc:fabric-loader:${row.loader}"
+		implementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
+		compileOnly files(rootProject.layout.buildDirectory.dir('classes/java/main'))
+	} else {
+		mappings loom.officialMojangMappings()
+		modImplementation "net.fabricmc:fabric-loader:${kineFamily(row.family).base.loader}"
+		modImplementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
+		compileOnly files(project(":check-${row.minecraft}").layout.buildDirectory.dir('classes/java/main'))
+	}
+}
+
+tasks.named('compileJava') { dependsOn(devFamily ? ':compileJava' : ":check-${row.minecraft}:compileJava") }
+tasks.withType(JavaCompile).configureEach { it.options.release = row.java }
+if (!devFamily) loom { mixin { useLegacyMixinAp = false } }   // mixin targets remapped in the classes, no refmap
+
+// only the root project's runs show in an IDE
+loom { runConfigs.configureEach { ideConfigGenerated = false } }

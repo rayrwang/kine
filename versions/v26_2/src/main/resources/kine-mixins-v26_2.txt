@@ -1,0 +1,22 @@
+# The mixins of this epoch (versions/README.md), in ai.rrw.kine.mixin.<subpackage>: applied only on its releases.
+# This epoch's own (ai.rrw.kine.mixin.v26_2):
+v26_2.AfterRotationSentMixin
+v26_2.GuiOverlayMixin
+v26_2.ScreenEffectMixin
+v26_2.FreecamCullMixin
+# the 26.x family's (ai.rrw.kine.mixin.f26, versions/26/):
+f26.LightmapMixin
+f26.CameraSkyMixin
+f26.LevelRendererSkyMixin
+f26.AtmosphericFogMixin
+f26.FogRendererMixin
+f26.LavaFogMixin
+f26.PowderSnowFogMixin
+f26.WaterFogMixin
+f26.MobEffectFogMixin
+f26.EntityRendererMixin
+f26.KeyboardInputMixin
+f26.ClientPacketListenerMixin
+f26.MinecraftPickInvoker
+f26.PiercingAttackMixin
+f26.FreecamCameraMixin

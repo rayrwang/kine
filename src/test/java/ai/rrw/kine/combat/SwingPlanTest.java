@@ -3,7 +3,7 @@ package ai.rrw.kine.combat;
 import ai.rrw.kine.combat.SwingPlan.Mob;
 import ai.rrw.kine.combat.SwingPlan.Swing;
 import ai.rrw.kine.combat.SwingPlan.Weapon;
-import net.minecraft.world.entity.player.Input;
+import ai.rrw.kine.compat.Input;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

@@ -1,5 +1,6 @@
 package ai.rrw.kine.combat;
 
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.util.Enchant;
 import ai.rrw.kine.util.Hotbar;
 import ai.rrw.kine.util.InventoryClicks;
@@ -68,11 +69,11 @@ public final class WeaponSelect {
         AbstractContainerMenu menu = p.inventoryMenu;
         int to = -1;
         if (!want.isEmpty() && ItemStack.matches(menu.getSlot(from).getItem(), want)) {   // the weapon is still there
-            to = Hotbar.slotToDisplace(p.getInventory().getNonEquipmentItems()::get);   // chosen now, after anything moved since
+            to = Hotbar.slotToDisplace(Compat.mainItems(p.getInventory())::get);   // chosen now, after anything moved since
             mc.gameMode.handleContainerInput(menu.containerId, from, to, ContainerInput.SWAP, p);   // number-key swap
         }
         InventoryClicks.closeAsVanilla(mc, p);   // the opened inventory closes, clicked in or not
-        if (to >= 0) p.getInventory().setSelectedSlot(to);
+        if (to >= 0) Compat.setSelectedSlot(p.getInventory(), to);
     }
 
     /**
@@ -82,10 +83,10 @@ public final class WeaponSelect {
      */
     static boolean choose(Minecraft mc, LocalPlayer p, List<LivingEntity> targets, List<SwingPlan.Mob> mobs, boolean canSweep) {
         Inventory inv = p.getInventory();
-        NonNullList<ItemStack> items = inv.getNonEquipmentItems();   // 0 to 8 hotbar, 9 to 35 main inventory
-        int sel = inv.getSelectedSlot();
+        NonNullList<ItemStack> items = Compat.mainItems(inv);   // 0 to 8 hotbar, 9 to 35 main inventory
+        int sel = Compat.selectedSlot(inv);
 
-        double heldScore = score(p, inv.getSelectedItem(), targets, mobs, canSweep);
+        double heldScore = score(p, Compat.selectedItem(inv), targets, mobs, canSweep);
         int bestIdx = -1;
         double bestScore = heldScore;
         int n = Math.min(items.size(), 36);
@@ -96,7 +97,7 @@ public final class WeaponSelect {
         if (bestIdx < 0) return false;                                  // nothing better than what is held
         if (heldScore > 0.0 && bestScore < heldScore * SWITCH_MARGIN) return false;   // improvement too small to bother
 
-        if (bestIdx < Inventory.SELECTION_SIZE) {                       // best is already in the hotbar
+        if (bestIdx < Hotbar.SIZE) {                       // best is already in the hotbar
             if (bestIdx == sel) return false;
             selectSlot(mc, p, bestIdx);
             return true;
@@ -114,7 +115,7 @@ public final class WeaponSelect {
     }
 
     private static void selectSlot(Minecraft mc, LocalPlayer p, int slot) {
-        p.getInventory().setSelectedSlot(slot);
+        Compat.setSelectedSlot(p.getInventory(), slot);
     }
 
     /** The damage a tick the aura's plan can sustain with this stack against these mobs; 0 for anything but a sword

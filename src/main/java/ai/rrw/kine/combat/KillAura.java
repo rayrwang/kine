@@ -1,6 +1,9 @@
 package ai.rrw.kine.combat;
 
 import ai.rrw.kine.Settings;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Input;
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.fight.CombatMovement;
 import ai.rrw.kine.mixin.KeyMappingAccessor;
 import ai.rrw.kine.mixin.MinecraftInvoker;
@@ -10,7 +13,6 @@ import ai.rrw.kine.util.MouseTurn;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
@@ -22,12 +24,9 @@ import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
-import net.minecraft.world.entity.monster.creaking.Creaking;
 import net.minecraft.world.entity.monster.piglin.Piglin;
-import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.entity.monster.warden.Warden;
-import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
@@ -186,7 +185,7 @@ public final class KillAura {
         int[] c = MouseTurn.countsTo(p, next[0], next[1]);
         if (c[0] != 0 || c[1] != 0) {
             apply(MouseTurn.by(p, c[0], c[1]));
-            ((MinecraftInvoker) mc).invokePick(1.0F);
+            Compat.pick(mc, 1.0F);
         }
         holdClicks(mc);
     }
@@ -213,7 +212,7 @@ public final class KillAura {
         heldX = (int) Math.round((appliedYaw - whole) / deg);
         heldY = (int) Math.round(appliedPitch / deg);
         appliedYaw = appliedPitch = 0f;
-        ((MinecraftInvoker) mc).invokePick(1.0F);
+        Compat.pick(mc, 1.0F);
     }
 
     /** Every yaw the client keeps for the player moved by whole turns: the same direction, drawn the same. */
@@ -234,7 +233,7 @@ public final class KillAura {
      *  climbing, flying or falling, the turn would steer you, so it lasts only the tick of a swing. */
     private static boolean onFoot(LocalPlayer p) {
         return !p.isFallFlying() && !p.isInWater() && !p.isPassenger() && !p.onClimbable() && !p.getAbilities().flying
-            && p.fallDistance < 2.0;
+            && Compat.fallDistance(p) < 2.0;
     }
 
     // ---------------------------------------------------------------- your input
@@ -355,7 +354,7 @@ public final class KillAura {
         if (mc.missTime > 0) noSwing = true;
         // A spear stabs along the rotation the server already has (the last move packet's), not this tick's, so a
         // swing could stab whatever that points at: none with one.
-        if (held.has(DataComponents.PIERCING_WEAPON)) noSwing = true;
+        if (Compat.piercingWeapon(held)) noSwing = true;
         // The bow aura's draw, which it lets go of in this tick's keybind step now the melee aura is active: a vanilla
         // client doesn't attack while an item is in use (handleKeybinds), so the swing waits a tick.
         if (p.isUsingItem()) noSwing = true;
@@ -388,7 +387,7 @@ public final class KillAura {
         int k = ((PlayerAccessor) p).kine$getAttackStrengthTicker();
         boolean critable = !p.onClimbable() && !p.isInWater() && !p.hasEffect(MobEffects.BLINDNESS) && !p.isPassenger()
             && !p.isSprinting() && !p.isFallFlying();
-        boolean canCrit = critable && p.fallDistance > 0 && !p.onGround();
+        boolean canCrit = critable && Compat.fallDistance(p) > 0 && !p.onGround();
         int critIn = critable && !canCrit && !p.onGround() ? critIn(p.getDeltaMovement().y) : -1;
         for (int attempt = 0; attempt < 3; attempt++) {
             SwingPlan.Swing s = SwingPlan.decide(w, k, canSweep && w.sword(), canCrit, critIn, mobs, TURN_BUDGET);
@@ -428,7 +427,7 @@ public final class KillAura {
             int own = h != null && tick - h.tick() < SwingPlan.WINDOW ? SwingPlan.WINDOW - (tick - h.tick()) : 0;
             // the client sets invulnerableTime 20 when the server reports a full hit from anything, a tick after the
             // server did; a full hit again once the server's is at 10
-            int seen = Math.max(0, t.invulnerableTime - (SwingPlan.WINDOW + 1));
+            int seen = Math.max(0, Compat.invulnerableTime(t) - (SwingPlan.WINDOW + 1));
             m.freshIn = Math.max(own, seen);
             m.lastHurt = own > 0 && own >= seen ? h.damage() : Double.MAX_VALUE;   // another's hit: size unknown
             m.contact = contact(p, t);
@@ -450,9 +449,12 @@ public final class KillAura {
     }
 
     /** Whether the player moves less than 2.5 times its speed a tick, as Player.isSweepAttack asks of the movement the
-     *  server knows (the last move's). */
+     *  server knows (the last move's); up to 1.21.1 less than its speed in walkDist since the server's own player tick,
+     *  which finds no move since for the aura's hit, sent before this tick's move: any speed above 0
+     *  (Rules.SWEEP_BY_WALK_DIST). */
     private static boolean slow(LocalPlayer p) {
         double dx = p.getX() - p.xo, dz = p.getZ() - p.zo;
+        if (Rules.SWEEP_BY_WALK_DIST) return 0.0F < p.getSpeed();
         double max = p.getSpeed() * 2.5;
         return dx * dx + dz * dz < max * max;
     }
@@ -464,7 +466,7 @@ public final class KillAura {
         int[] c = MouseTurn.countsTo(p, yaw, pitch);
         MouseTurn.Turn turn = MouseTurn.by(p, c[0], c[1]);
         MinecraftInvoker game = (MinecraftInvoker) mc;
-        game.invokePick(1.0F);
+        Compat.pick(mc, 1.0F);
         double reach = p.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
         if (MouseTurn.travel(sentYaw, sentPitch, p.getYRot(), p.getXRot()) <= MAX_TURN
             && mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() instanceof LivingEntity hit
@@ -481,7 +483,7 @@ public final class KillAura {
             }
         }
         MouseTurn.undo(p, turn);   // nothing to hit there
-        game.invokePick(1.0F);
+        Compat.pick(mc, 1.0F);
         return false;
     }
 
@@ -489,7 +491,7 @@ public final class KillAura {
      *  (the client marks a full hit from any source with invulnerableTime 20). */
     private static boolean fresh(LivingEntity e) {
         Hit h = hits.get(e.getId());
-        return (h == null || tick - h.tick() >= SwingPlan.WINDOW) && e.invulnerableTime <= SwingPlan.WINDOW + 1;
+        return (h == null || tick - h.tick() >= SwingPlan.WINDOW) && Compat.invulnerableTime(e) <= SwingPlan.WINDOW + 1;
     }
 
     /** Note a hit and what its sweep caught: when their windows began and the biggest hit in each. */
@@ -574,7 +576,7 @@ public final class KillAura {
         Optional<Vec3> entry = t.getBoundingBox().clip(eye, end);
         if (entry.isEmpty()) return false;   // beyond reach along this ray
         double at = entry.get().distanceToSqr(eye);
-        BlockHitResult block = p.level().clip(new ClipContext(eye, entry.get(), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+        BlockHitResult block = Compat.level(p).clip(new ClipContext(eye, entry.get(), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
         if (block.getType() != HitResult.Type.MISS && block.getLocation().distanceToSqr(eye) < at - 1.0e-6) return false;
         for (Entity o : others) {
             if (o == t) continue;
@@ -622,7 +624,7 @@ public final class KillAura {
     /** Mobs only: hostiles always, neutral mobs only for a while after they hit you. */
     private static boolean isTarget(Entity e, LivingEntity player) {
         if (!(e instanceof Mob mob) || !mob.isAlive() || mob.isSpectator()) return false;
-        if (mob instanceof Creaking c && c.isHeartBound()) return false;   // only flinches (Creaking.hurtServer)
+        if (Compat.heartBoundCreaking(mob)) return false;   // only flinches (Creaking.hurtServer)
         Integer until = angryUntil.get(mob.getId());
         if (until != null && until > tick) return true;
         if (neutral(mob)) return piglinHostile(mob, player);
@@ -643,7 +645,7 @@ public final class KillAura {
     /** An adult piglin attacks a player who wears no gold armour (the game's own test), so it is a target then,
      *  before it hits. Baby piglins never attack. */
     private static boolean piglinHostile(Mob mob, LivingEntity player) {
-        return mob instanceof Piglin piglin && !piglin.isBaby() && !PiglinAi.isWearingSafeArmor(player);
+        return mob instanceof Piglin piglin && !piglin.isBaby() && !Compat.piglinSafeArmor(player);
     }
 
     /** A neutral mob that freshly damaged the player is treated as a target for a while. */
@@ -702,7 +704,7 @@ public final class KillAura {
                 continue;   // in reach but out of the crosshair's way (a block between): not the melee aura's yet
             }
             Vec3 c = t.getBoundingBox().getCenter();
-            if (p.level().clip(new ClipContext(eye, c, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p)).getType()
+            if (Compat.level(p).clip(new ClipContext(eye, c, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p)).getType()
                 != HitResult.Type.MISS) continue;
             double ticks;
             if (gap <= BowAura.REACH_MARGIN) ticks = 1.0;

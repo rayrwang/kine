@@ -1,17 +1,14 @@
 package ai.rrw.kine.hud;
 
-import ai.rrw.kine.Kine;
+import ai.rrw.kine.compat.Compat;
+import ai.rrw.kine.compat.Gui2D;
 import ai.rrw.kine.Settings;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
@@ -24,11 +21,7 @@ public class RadioAltimeter {
     public static int agl() { return agl; }
 
     public static void register() {
-        HudElementRegistry.attachElementAfter(
-            VanillaHudElements.MISC_OVERLAYS,
-            Identifier.fromNamespaceAndPath(Kine.MOD_ID, "radalt"),
-            RadioAltimeter::render
-        );
+        Compat.hud("radalt", RadioAltimeter::render);
         ClientTickEvents.END_CLIENT_TICK.register(RadioAltimeter::tick);
     }
 
@@ -38,7 +31,7 @@ public class RadioAltimeter {
 
         int x = p.getBlockX(), z = p.getBlockZ();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        agl = agl(p.getY(), mc.level.getMinY(), y -> {
+        agl = agl(p.getY(), Compat.minY(mc.level), y -> {
             pos.set(x, y, z);
             BlockState state = mc.level.getBlockState(pos);
             if (state.isAir()) return Double.NaN;
@@ -60,7 +53,7 @@ public class RadioAltimeter {
         return -1;
     }
 
-    private static void render(GuiGraphicsExtractor g, DeltaTracker delta) {
+    private static void render(Gui2D g, DeltaTracker delta) {
         if (agl < 0 || !Settings.shows(Settings.displayHeightAboveGround)) return;
         Minecraft mc = Minecraft.getInstance();
 

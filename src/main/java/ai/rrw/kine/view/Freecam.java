@@ -1,11 +1,9 @@
 package ai.rrw.kine.view;
 
+import ai.rrw.kine.compat.Compat;
 import ai.rrw.kine.Kine;
 import ai.rrw.kine.Settings;
-import ai.rrw.kine.mixin.KeyMappingAccessor;
-import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
@@ -14,7 +12,6 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Freecam (F4): the camera leaves your player and flies on its own, through blocks, while your player stays where it
@@ -44,7 +41,7 @@ public final class Freecam {
     private static ClientLevel level = null;
 
     public static void register() {
-        toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.kine.freecam", GLFW.GLFW_KEY_F4, Kine.KEY_CATEGORY));
+        toggleKey = Compat.key("key.kine.freecam", "f4");
         ClientTickEvents.END_CLIENT_TICK.register(Freecam::endTick);
     }
 
@@ -71,7 +68,7 @@ public final class Freecam {
             if (active) { off(); continue; }
             if (mc.player == null || mc.level == null) continue;
             if (!Settings.freecam) {
-                mc.gui.setOverlayMessage(Component.literal("Freecam is off: switch it on in kine's settings (K), Visibility"), false);
+                Compat.actionBar(mc, Component.literal("Freecam is off: switch it on in kine's settings (K), Visibility"));
                 continue;
             }
             on(mc);
@@ -79,7 +76,7 @@ public final class Freecam {
     }
 
     private static void on(Minecraft mc) {
-        Vec3 c = mc.gameRenderer.getMainCamera().position();
+        Vec3 c = Compat.cameraPos(mc);
         x = xo = c.x; y = yo = c.y; z = zo = c.z;
         yaw = mc.player.getYRot();
         pitch = mc.player.getXRot();
@@ -101,7 +98,7 @@ public final class Freecam {
         if (p == null || mc.level == null || mc.level != level || !Settings.freecam || p.isDeadOrDying()) { off(); return; }
         Options o = mc.options;
         boolean f = false, b = false, l = false, r = false, up = false, dn = false, fast = false;
-        if (mc.screen == null) {
+        if (Compat.screen(mc) == null) {
             f = held(mc, o.keyUp); b = held(mc, o.keyDown); l = held(mc, o.keyLeft); r = held(mc, o.keyRight);
             up = held(mc, o.keyJump); dn = held(mc, o.keyShift); fast = held(mc, o.keySprint);
             // your keys move the camera, not your player: let go of them in the game, and swallow clicks the game
@@ -128,10 +125,6 @@ public final class Freecam {
 
     /** A key held on the keyboard, read from the keyboard itself (the game's mapping is let go of meanwhile). */
     private static boolean held(Minecraft mc, KeyMapping km) {
-        InputConstants.Key key = ((KeyMappingAccessor) km).kine$getKey();
-        if (key.getType() == InputConstants.Type.KEYSYM) return InputConstants.isKeyDown(mc.getWindow(), key.getValue());
-        if (key.getType() == InputConstants.Type.MOUSE)
-            return GLFW.glfwGetMouseButton(mc.getWindow().handle(), key.getValue()) == GLFW.GLFW_PRESS;
-        return false;
+        return Compat.held(mc, km);
     }
 }

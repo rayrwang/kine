@@ -10,7 +10,6 @@ import ai.rrw.kine.autoflight.PathPrediction;
 import ai.rrw.kine.autoflight.Takeoff;
 import ai.rrw.kine.combat.AfkGuard;
 import ai.rrw.kine.combat.AutoTotem;
-import ai.rrw.kine.combat.KillAura;
 import ai.rrw.kine.combat.ProjectileTargeting;
 import ai.rrw.kine.combat.WaterClutch;
 import ai.rrw.kine.util.InventoryClicks;
@@ -33,8 +32,6 @@ import ai.rrw.kine.walk.Walk;
 import ai.rrw.kine.walk.WalkRender;
 import ai.rrw.kine.walk.WalkTable;
 import net.fabricmc.api.ClientModInitializer;
-import net.minecraft.client.KeyMapping;
-import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,12 +39,6 @@ public class Kine implements ClientModInitializer {
     public static final String MOD_ID = "kine";
 
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-
-    // Keybind category, so Kine's keys get their own section in the controls screen. Registered at
-    // class load, before the features create their keys; the title is "key.category.kine.keybinds" in
-    // the lang file.
-    public static final KeyMapping.Category KEY_CATEGORY =
-        KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "keybinds"));
 
     @Override
     public void onInitializeClient() {

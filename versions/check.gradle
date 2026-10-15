@@ -1,0 +1,124 @@
+// The version check for one release (versions/README.md). The shared code, src/main/java with its family's folder,
+// compiled against that release must link exactly as the jar's copy does:
+// - a release of the development family: the same bytes as the development build's classes;
+// - a release of an older family (1.21.x): the source is first translated (versions/renames.txt), compiled with the
+//   game's Mojang names and remapped to the names the game runs with (intermediary); the remapped classes must match
+//   those of the family's base release, whose copy the family's jar carries.
+// Same code means every game member the shared code uses exists there and resolves the same way (an inlined
+// constant, a method made static, a field's type changed would all show). A class that differs is game code that
+// differs between releases: it belongs behind ai.rrw.kine.compat. The task prints the differing classes and the first
+// differences in them.
+apply from: rootProject.file('versions/table.gradle')
+apply from: rootProject.file('versions/translate.gradle')
+
+def release = project.name.substring('check-'.length())
+def row = kineRows.find { it.minecraft == release }
+def devFamily = row.family == kineDev.family
+def family = kineFamily(row.family)
+apply plugin: devFamily ? 'net.fabricmc.fabric-loom' : 'net.fabricmc.fabric-loom-remap'
+
+repositories { mavenCentral() }
+
+dependencies {
+	minecraft "com.mojang:minecraft:${row.minecraft}"
+	if (devFamily) {
+		// the development build's loader (its Mixin version shapes the annotations), so only the game differs
+		implementation "net.fabricmc:fabric-loader:${kineDev.loader}"
+		implementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
+	} else {
+		mappings loom.officialMojangMappings()
+		modImplementation "net.fabricmc:fabric-loader:${family.base.loader}"
+		modImplementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
+	}
+}
+
+def shared = [rootProject.file('src/main/java'), rootProject.file("versions/${row.family}/src/main/java")]
+if (devFamily) {
+	sourceSets.main.java.srcDirs = shared
+} else {
+	def translated = layout.buildDirectory.dir('translated/java')
+	def translate = tasks.register('translateSources') {
+		inputs.files(shared).withPropertyName('shared')
+		inputs.file(rootProject.file('versions/renames.txt'))
+		outputs.dir translated
+		doLast { kineTranslate(shared, translated.get().asFile, release) }
+	}
+	sourceSets.main.java.srcDirs = [files(translated).builtBy(translate)]
+	loom { mixin { useLegacyMixinAp = false } }   // mixin targets remapped in the classes themselves, no refmap
+}
+sourceSets.main.resources.srcDirs = []
+tasks.withType(JavaCompile).configureEach { it.options.release = row.java; it.options.compilerArgs += ['-Xmaxerrs', '10000'] }
+loom { runConfigs.configureEach { ideConfigGenerated = false } }
+
+// What the JVM links by: code, member signatures, constant values, annotations. Not the constant pool's order, line
+// numbers, or the InnerClasses flags javac copies from the game (26.3 made Direction.Axis final; harmless).
+def norm = { File f ->
+	def lines = ['javap', '-v', '-p', '-constants', f.path].execute().text.readLines()
+	def out = [], body = false, skip = false
+	for (l in lines) {
+		if (!body) { if (l.startsWith('{')) body = true; continue }
+		if (l.trim().startsWith('LineNumberTable:') || l.trim().startsWith('InnerClasses:')) { skip = true; continue }
+		if (skip) { if (l.trim().matches(/(line \d+: \d+|.*\/\/ .*class .*)/) || l.trim().startsWith('public ') && l.contains('// ') && l.contains(' of class ')) continue; skip = false }
+		out << l.replaceAll(/#\d+(,\d+)?/, '#').replaceAll(/^\s*\d+: /, '').replaceAll(/\bldc_w\b/, 'ldc').replaceAll(/\s+/, ' ').trim()
+	}
+	out
+}
+def compareTrees = { File a, File b, String aName, String bName ->
+	def differ = [:]
+	b.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+		if (!f.name.endsWith('.class')) return
+		def rel = b.toPath().relativize(f.toPath()).toString()
+		def g = new File(a, rel)
+		if (!g.exists()) { differ[rel] = [[], ["(missing from ${aName})".toString()]]; return }
+		if (Arrays.equals(g.bytes, f.bytes)) return
+		def x = norm(g), y = norm(f)
+		if (x != y) differ[rel] = [x - y, y - x]
+	}
+	if (!differ.isEmpty()) {
+		def report = new StringBuilder("Shared code compiled against Minecraft ${release} differs from ${aName} in ${differ.size()} class(es):\n")
+		differ.keySet().sort().each { rel ->
+			report.append("  ${rel}\n")
+			def (onlyA, onlyB) = differ[rel]
+			onlyA.take(4).each { report.append("    ${aName}: ${it}\n") }
+			onlyB.take(4).each { report.append("    ${bName}: ${it}\n") }
+		}
+		report.append("Route that game code through ai.rrw.kine.compat (versions/README.md).")
+		throw new GradleException(report.toString())
+	}
+}
+
+tasks.register('versionCheck') {
+	group = 'verification'
+	def marker = layout.buildDirectory.file('version-check.ok')
+	outputs.file marker
+	if (devFamily) {
+		description = "The shared code compiled against ${release} is byte-identical to the development build's."
+		dependsOn 'compileJava', ':compileJava'
+		inputs.files(tasks.named('compileJava'))
+		inputs.files(rootProject.tasks.named('compileJava'))
+		def mine = layout.buildDirectory.dir('classes/java/main')
+		def dev = rootProject.layout.buildDirectory.dir('classes/java/main')
+		doLast {
+			compareTrees(dev.get().asFile, mine.get().asFile, "the development build (${kineDev.minecraft})".toString(), release)
+			marker.get().asFile.text = "ok\n"
+		}
+	} else if (release == family.base.minecraft) {
+		description = "${release} is the base of its family: the reference the others are compared with."
+		doLast { marker.get().asFile.text = "base\n" }
+	} else {
+		description = "The shared code compiled against ${release} and remapped is identical to the family base's."
+		def baseProject = ":check-${family.base.minecraft}"
+		dependsOn 'remapJar', "${baseProject}:remapJar"
+		inputs.files(tasks.named('remapJar'))
+		def mineJar = tasks.named('remapJar').flatMap { it.archiveFile }
+		def baseJar = provider { project(baseProject).tasks.named('remapJar').get().archiveFile.get() }
+		inputs.files(baseJar)
+		doLast {
+			def unzip = { File jar, File dir -> dir.deleteDir(); dir.mkdirs(); project.copy { from project.zipTree(jar); into dir; include '**/*.class' } ; dir }
+			def a = unzip(baseJar.get().asFile, layout.buildDirectory.dir('version-check/base').get().asFile)
+			def b = unzip(mineJar.get().asFile, layout.buildDirectory.dir('version-check/mine').get().asFile)
+			compareTrees(a, b, "the family base (${family.base.minecraft})".toString(), release)
+			marker.get().asFile.text = "ok\n"
+		}
+	}
+}

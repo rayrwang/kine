@@ -1,5 +1,6 @@
 package ai.rrw.kine.fight;
 
+import ai.rrw.kine.compat.Rules;
 import ai.rrw.kine.move.BlockGrid;
 import ai.rrw.kine.move.BlockInfo;
 
@@ -9,7 +10,9 @@ import ai.rrw.kine.move.BlockInfo;
  * and 0.05 down; thrown items fall first, then move; others straight), hits the player if its move this tick meets the
  * player's box grown by the arrow's margin (ProjectileUtil.computeMargin: (age - 2) / 20, at most 0.3, age 1 on its
  * first tick), and stops at the first full block in its way (the copy counts only full blocks, and none outside the
- * block snapshot, so it is never stopped sooner than the game's).
+ * block snapshot, so it is never stopped sooner than the game's). Up to 1.21.1 thrown items and fireballs move before
+ * their drag, gravity or speed-up, as arrows do (Rules.PROJECTILES_MOVE_FIRST: the caller sets gravityFirst by it);
+ * up to 1.21.5 the margin is 0.3 from the first tick (Rules.FIXED_HIT_MARGIN).
  */
 public final class ArrowSim {
     public double x, y, z, vx, vy, vz;
@@ -66,22 +69,43 @@ public final class ArrowSim {
     double tick(double[] pb, BlockGrid grid) {
         if (!alive) return -1;
         age++;
-        if (accel > 0) inertia();
-        else if (gravityFirst) { vy -= gravity; vx *= drag; vy *= drag; vz *= drag; }
+        beforeMove();
         double t = blockAlong(grid);   // the share of this move before a block, 1 if none
-        double m = Math.max(0.0F, Math.min(0.3F, (age - 2) / 20.0F));
+        double m = Rules.FIXED_HIT_MARGIN ? 0.3F : Math.max(0.0F, Math.min(0.3F, (age - 2) / 20.0F));
         double s = clip(pb, m, t);
         if (s >= 0) {
             double dmg = damage();
-            alive = false;
-            endX = x + vx * s; endY = y + vy * s; endZ = z + vz * s;
+            stopAt(s, false);
             return dmg;
         }
-        if (t < 1.0) { alive = false; endX = x + vx * t; endY = y + vy * t; endZ = z + vz * t; return -1; }
+        if (t < 1.0) { stopAt(t, true); return -1; }
         x += vx; y += vy; z += vz;
-        if (!gravityFirst && accel <= 0) { vx *= drag; vy *= drag; vz *= drag; vy -= gravity; }
+        afterMove();
         if (age > 100 || y < grid.y0 - 4) { alive = false; endX = Double.NaN; }
         return -1;
+    }
+
+    /** The velocity's change before the tick's move: a fireball's speed-up, a thrown item's gravity and drag (from
+     *  1.21.2; up to 1.21.1 the fireball's comes after the move, Rules.PROJECTILES_MOVE_FIRST). */
+    void beforeMove() {
+        if (accel > 0) { if (!Rules.PROJECTILES_MOVE_FIRST) inertia(); }
+        else if (gravityFirst) { vy -= gravity; vx *= drag; vy *= drag; vz *= drag; }
+    }
+
+    /** The velocity's change after the tick's move: an arrow's drag and gravity (a thrown item's too up to 1.21.1), and
+     *  up to 1.21.1 a fireball's speed-up. */
+    void afterMove() {
+        if (accel > 0) { if (Rules.PROJECTILES_MOVE_FIRST) inertia(); }
+        else if (!gravityFirst) { vx *= drag; vy *= drag; vz *= drag; vy -= gravity; }
+    }
+
+    /** It stops this share along its move, on the player or on a block (`block`). From 1.21.2 the hit is handled at the
+     *  hit point; up to 1.21.1 before the move, where it was (a wind charge on a block still bursts at the hit point:
+     *  AbstractWindCharge.onHitBlock), so a splash or a burst on the player comes from there (Rules.PROJECTILES_MOVE_FIRST). */
+    private void stopAt(double share, boolean block) {
+        alive = false;
+        if (Rules.PROJECTILES_MOVE_FIRST && !(block && burst > 0)) { endX = x; endY = y; endZ = z; }
+        else { endX = x + vx * share; endY = y + vy * share; endZ = z + vz * share; }
     }
 
     /** A fireball's speed-up before its move: v + |v|-normalised x accel, x inertia. */
@@ -93,9 +117,18 @@ public final class ArrowSim {
 
     /** A splash's intensity on the player (box minX, minY, minZ, maxX, maxY, maxZ) after it stopped at a block:
      *  1 - d / 4, d the distance between the potion's box at the stop (0.25 wide) and the player's grown by the margin,
-     *  0 from 4 on (ThrownSplashPotion.onHitAsPotion). */
+     *  0 from 4 on (ThrownSplashPotion.onHitAsPotion). Up to 1.21.5 (Rules.SPLASH_FROM_FEET) d is from the potion's
+     *  position to the player's feet, for a player whose box meets the potion's grown by (4, 2, 4). */
     double splashOn(double[] pb) {
         if (Double.isNaN(endX)) return 0.0;
+        if (Rules.SPLASH_FROM_FEET) {
+            double h = 0.125;
+            boolean near = pb[0] < endX + h + 4.0 && pb[3] > endX - h - 4.0 && pb[1] < endY + 0.25 + 2.0 && pb[4] > endY - 2.0
+                && pb[2] < endZ + h + 4.0 && pb[5] > endZ - h - 4.0;
+            double fx = (pb[0] + pb[3]) / 2.0 - endX, fy = pb[1] - endY, fz = (pb[2] + pb[5]) / 2.0 - endZ;
+            double d2 = fx * fx + fy * fy + fz * fz;
+            return near && d2 < 16.0 ? 1.0 - Math.sqrt(d2) / 4.0 : 0.0;
+        }
         double m = Math.max(0.0F, Math.min(0.3F, (age - 2) / 20.0F)), h = 0.125;
         double gx = Math.max(0.0, Math.max(pb[0] - m - (endX + h), (endX - h) - (pb[3] + m)));
         double gy = Math.max(0.0, Math.max(pb[1] - m - (endY + 0.25), endY - (pb[4] + m)));

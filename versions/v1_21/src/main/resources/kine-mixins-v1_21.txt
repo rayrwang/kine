@@ -1,0 +1,25 @@
+# The mixins of this epoch (versions/README.md), in ai.rrw.kine.mixin.v1_21: applied only on its releases.
+# The same jobs as the v1_21_11 epoch's list; where one differs, the line's comment says how.
+v1_21.AfterRotationSentMixin
+v1_21.GuiOverlayMixin
+# kine's HUD elements, after the camera overlays (no HUD element registry in these Fabric APIs)
+v1_21.HudMixin
+v1_21.ScreenEffectMixin
+v1_21.FreecamCullMixin
+v1_21.FreecamCameraMixin
+v1_21.LightmapMixin
+v1_21.CameraSkyMixin
+v1_21.LevelRendererSkyMixin
+# the Nether's and the boss bar's fog (LevelRenderer.renderLevel), and the clouds' fade
+v1_21.AtmosphericFogMixin
+# also v1_21_11's LavaFogMixin, PowderSnowFogMixin and WaterFogMixin: every fog is set in FogRenderer.setupFog here
+v1_21.FogRendererMixin
+v1_21.MobEffectFogMixin
+# v1_21_11's EntityRendererMixin: the outline colour is Entity.getTeamColor in LevelRenderer.renderLevel here
+v1_21.GlowColorMixin
+v1_21.KeyboardInputMixin
+# the sprint key, which the input of these releases doesn't carry
+v1_21.SprintKeyMixin
+v1_21.ClientPacketListenerMixin
+v1_21.GameRendererFovInvoker
+# no PiercingAttackMixin: no spears before 1.21.11
