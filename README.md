@@ -115,7 +115,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Range and endurance counting height less
 	- Nav screen: a map in Managed mode; saved per world and dimension, with waypoints and a home
 - Walking pathfinder:
-	- Breaking and placing blocks, bridging included, preferring common, easy to get blocks
+	- Breaking and placing blocks with players' techniques (speed and god bridging and the more advanced ones, towering, fast breaking), preferring common, easy to get blocks
 	- Setting for how much damage the walk may take, counting armour, Feather Falling and Protection
 	- Neo port and the triple neo for long routes
 	- Jump search from a moving start, so jumps chain without stopping on each landing
