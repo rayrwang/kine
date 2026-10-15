@@ -9,6 +9,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.cubemob.AbstractCubeMob;
 import net.minecraft.world.entity.monster.cubemob.MagmaCube;
 import net.minecraft.world.entity.monster.cubemob.Slime;
 import net.minecraft.world.level.block.state.BlockState;
@@ -16,7 +17,8 @@ import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
 /** Minecraft 26.2: the screen, the overlay and the HUD (now Hud) moved into Gui (mc.gui), the main camera's getter
- *  renamed, slimes and magma cubes moved to monster.cubemob. */
+ *  renamed, slimes and magma cubes moved to monster.cubemob (each its own AbstractCubeMob: a magma cube is no longer a
+ *  Slime). */
 public final class EpochImpl extends ai.rrw.kine.compat.f26.Base26 {
     private WorldDraw world;   // made on first use, as the pipelines it registers were before
 
@@ -43,11 +45,13 @@ public final class EpochImpl extends ai.rrw.kine.compat.f26.Base26 {
 
     @Override public boolean isEnderman(Entity e) { return e instanceof EnderMan; }
 
-    @Override public boolean isSlime(Entity e) { return e instanceof Slime; }
+    /** A slime or a magma cube: from 26.2 each is its own AbstractCubeMob, and a magma cube is no longer a Slime (the
+     *  third, the sulfur cube, hurts nothing and is left out). */
+    @Override public boolean isSlime(Entity e) { return e instanceof Slime || e instanceof MagmaCube; }
 
     @Override public boolean isMagmaCube(Entity e) { return e instanceof MagmaCube; }
 
-    @Override public int slimeSize(Entity e) { return e instanceof Slime s ? s.getSize() : 0; }
+    @Override public int slimeSize(Entity e) { return isSlime(e) ? ((AbstractCubeMob) e).getSize() : 0; }
 
     @Override
     public Vec3 interpolationTarget(Entity e) {

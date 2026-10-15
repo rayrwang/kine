@@ -584,14 +584,36 @@ public final class MobCheck {
         return m;
     }
 
+    /** Whether a mob's server tick is a full goal tick (Mob.serverAiStep: its tickCount at most 1, or tickCount + id
+     *  even), the only ticks the slime's move control is asked to move, so the only ticks it counts its wait down and
+     *  hops. */
+    static boolean fullGoalTick(int tickCount, int id) {
+        return tickCount <= 1 || (tickCount + id) % 2 == 0;
+    }
+
     /** Slimes and magma cubes: the waits between hops against the copy's range (counted down on full goal ticks, so
      *  twice the wait in ticks, give or take one), each hop's flight replayed from the tick before it against the
      *  player's recorded positions, the turn a tick, and the player's contact hits against the copy's touch test (a
-     *  scene holds the one summoned and the splits of the last scene's, killed as it began: each mob's size is read
-     *  from its health on its first row). Returns {worst flight error, waits shorter than the copy's shortest, hits no copy touched,
-     *  ticks a copy touched with the window open and no hit, damage errors}. */
+     *  scene holds the one summoned, the newest id, and in the older recordings the splits of the last scene's, killed
+     *  as it began: each mob's size is read from its health on its first row).
+     *
+     *  <p>Full goal ticks come every other tick, so every hop of a mob comes on ticks of one parity. The summoned mob's
+     *  rows start with its first tick (tickCount 1: summoned at rest on the floor, its first move has no fall in it yet,
+     *  so its first row is off the ground and its second the landing), so its full goal ticks are known from its id: each of its hops must
+     *  come on one, the first on the first one after the landing (the move control's jumpDelay starts at 0, as the
+     *  copy's), 0 or 1 ground ticks after it by the id's parity. The copy takes the next tick as full (FightSnapshot),
+     *  so its first wait is 0, never longer than the game's. Which parity a mob gets differs between the families only
+     *  through the ids: up to 26.1.2 Entity takes its id from one counter in the JVM, which the client's copy of each
+     *  entity also draws from in singleplayer, so in these recordings the server's ids go up by two and are all odd
+     *  (first wait 0); from 26.2 ServerLevel.getNextEntityId hands them out and the client's copies take 0
+     *  (Level.getNextEntityId) until the packet's id is set, so both parities come (first wait 0 or 1). A split's age
+     *  isn't known, so its first wait is only held to the copy's range when it isn't 0 (it may have landed just before
+     *  its first row).
+     *  Returns {worst flight error, waits shorter than the copy's shortest or a summoned mob's first wait other than
+     *  its goal ticks give, hits no copy touched, ticks a copy touched with the window open and no hit, damage errors,
+     *  hops off a full goal tick (off the parity of the mob's other hops, for a split)}. */
     static double[] slimes(Scene s) {
-        double[] res = new double[5];
+        double[] res = new double[6];
         Map<Integer, MobSim> ref = new LinkedHashMap<>();
         Map<Integer, Map<Integer, M>> at = new HashMap<>();
         for (var e : s.mobs.entrySet()) {
@@ -604,12 +626,15 @@ public final class MobCheck {
             for (M r : e.getValue()) byT.put(r.t(), r);
             at.put(e.getKey(), byT);
         }
+        int newest = ref.keySet().stream().max(Integer::compare).orElse(-1);
         for (var e : ref.entrySet()) {
             List<M> rows = s.mobs.get(e.getKey());
             MobSim r = e.getValue();
+            int id = e.getKey(), t0 = rows.get(0).t();
+            boolean summoned = id == newest;   // its first row is its tickCount 1
             int lo = r.minJumpDelay(), hi = (29 * (r.magma ? 4 : 1)) / (r.touchDamage ? 3 : 1);
             List<Integer> waits = new ArrayList<>();
-            int landed = -1, hops = 0, outside = 0, below = 0;
+            int landed = -1, hops = 0, outside = 0, below = 0, offFull = 0, firstRule = -1, parity = -1;
             double worst = 0, turn = 0;
             for (int k = 1; k < rows.size(); k++) {
                 M prev = rows.get(k - 1), q0 = rows.get(k);
@@ -618,11 +643,21 @@ public final class MobCheck {
                 boolean hop = prev.ground() && q0.y() - prev.y() > 0.3;
                 if (!hop) continue;
                 hops++;
+                if (summoned ? !fullGoalTick(q0.t() - t0 + 1, id) : parity >= 0 && (q0.t() & 1) != parity) offFull++;
+                if (parity < 0) parity = q0.t() & 1;
                 if (landed >= 0) {
                     int d = q0.t() - landed - 1;   // ground ticks between: the countdown runs on every other one
                     waits.add(d);
-                    if (d < 2 * lo || d > 2 * hi + 1) outside++;
-                    if (d > 0 && d < 2 * lo) below++;   // sooner than the copy's shortest (0: landed as the scene began)
+                    if (summoned && waits.size() == 1) {
+                        // the first, after the landing as the scene began: on the first full goal tick after it
+                        int full = landed + 1;
+                        while (!fullGoalTick(full - t0 + 1, id)) full++;
+                        firstRule = full - landed - 1;
+                        if (d != firstRule) below++;
+                    } else {
+                        if (d < 2 * lo || d > 2 * hi + 1) outside++;
+                        if (d < 2 * lo && (summoned || waits.size() > 1 || d > 0)) below++;   // sooner than the copy's shortest
+                    }
                 }
                 // the flight: the copy from the row before (on the ground, its wait run out, this a full tick)
                 MobSim m = slime(prev, r.magma, r.slimeSize);
@@ -643,8 +678,10 @@ public final class MobCheck {
             }
             res[0] = Math.max(res[0], worst);
             res[1] += below;
-            out(String.format(Locale.ROOT, "%s %s size %d (%d): %d hops, ground ticks between %s (copy %d to %d, about 2x %d to %d), %d outside; flight error %.2e; turn at most %.1f a tick (copy 10)",
-                s.name, r.magma ? "magma cube" : "slime", r.slimeSize, e.getKey(), hops, waits, 2 * lo, 2 * hi + 1, lo, hi, outside, worst, turn));
+            res[5] += offFull;
+            out(String.format(Locale.ROOT, "%s %s size %d (%d%s): %d hops, %d off a full goal tick; ground ticks between %s (%scopy %d to %d, about 2x %d to %d), %d outside; flight error %.2e; turn at most %.1f a tick (copy 10)",
+                s.name, r.magma ? "magma cube" : "slime", r.slimeSize, id, summoned ? ", summoned" : "", hops, offFull, waits,
+                summoned ? "the first by its goal ticks " + firstRule + ", then " : "", 2 * lo, 2 * hi + 1, lo, hi, outside, worst, turn));
         }
         // contact hits: each full hit of the player against the copies' touch test at that tick and the tick before
         List<Integer> hits = fullHits(s);

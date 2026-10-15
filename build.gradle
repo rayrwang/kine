@@ -75,7 +75,9 @@ tasks.register('traceTest', Test) {
 				  'scaffold_traces.txt': 'ai.rrw.kine.move.ScaffoldPhysicsTest', 'zombie_traces.txt': 'ai.rrw.kine.fight.ZombieModelTest',
 				  'mob_traces.txt.gz': 'ai.rrw.kine.fight.MobModelTest',
 				  // the recordings of the moves whose rules differ between releases (ct2 ProofPhysicsTest, ProofFightTest)
-				  'proof_traces.txt': 'ai.rrw.kine.move.RulesTraceTest', 'proof_fight.txt': 'ai.rrw.kine.fight.RulesFightTest']
+				  'proof_traces.txt': 'ai.rrw.kine.move.RulesTraceTest', 'proof_fight.txt': 'ai.rrw.kine.fight.RulesFightTest',
+				  // the 26.x family's (ct2 RulesPhysicsTest)
+				  'rules_traces.txt': 'ai.rrw.kine.move.Rules26TraceTest']
 	filter {
 		failOnNoMatchingTests = false
 		def found = tracesDir == null ? [] : byFile.findAll { new File("${tracesDir}/move/${it.key}").exists() }.values().toList()

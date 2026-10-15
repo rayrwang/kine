@@ -11,6 +11,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enderman;
+import net.minecraft.world.entity.monster.cubemob.AbstractCubeMob;
 import net.minecraft.world.entity.monster.cubemob.MagmaCube;
 import net.minecraft.world.entity.monster.cubemob.Slime;
 import net.minecraft.world.level.block.state.BlockState;
@@ -19,8 +20,9 @@ import org.lwjgl.sdl.SDLMouse;
 import org.lwjgl.system.MemoryStack;
 
 /** Minecraft 26.3: as 26.2, and SDL input (keys numbered by scancode, the KEYBOARD key type), EnderMan renamed
- *  Enderman, an entity's interpolation target and hurt cooldown behind getters, the swing state behind isSwinging, and
- *  BlockState.blocksMotion gone (the heightmap's motion test is now the blocks_motion_in_heightmap tag). */
+ *  Enderman, an entity's interpolation target behind a getter, a living entity's hurt cooldown in a field of its own
+ *  (LivingEntity.damageCooldownTime), the swing state behind isSwinging, and BlockState.blocksMotion gone (the
+ *  heightmap's motion test is now the blocks_motion_in_heightmap tag). */
 public final class EpochImpl extends ai.rrw.kine.compat.f26.Base26 {
     private WorldDraw world;   // made on first use, as the pipelines it registers were before
 
@@ -50,11 +52,13 @@ public final class EpochImpl extends ai.rrw.kine.compat.f26.Base26 {
 
     @Override public boolean isEnderman(Entity e) { return e instanceof Enderman; }
 
-    @Override public boolean isSlime(Entity e) { return e instanceof Slime; }
+    /** A slime or a magma cube: from 26.2 each is its own AbstractCubeMob, and a magma cube is no longer a Slime (the
+     *  third, the sulfur cube, hurts nothing and is left out). */
+    @Override public boolean isSlime(Entity e) { return e instanceof Slime || e instanceof MagmaCube; }
 
     @Override public boolean isMagmaCube(Entity e) { return e instanceof MagmaCube; }
 
-    @Override public int slimeSize(Entity e) { return e instanceof Slime s ? s.getSize() : 0; }
+    @Override public int slimeSize(Entity e) { return isSlime(e) ? ((AbstractCubeMob) e).getSize() : 0; }
 
     @Override
     public Vec3 interpolationTarget(Entity e) {
@@ -64,7 +68,13 @@ public final class EpochImpl extends ai.rrw.kine.compat.f26.Base26 {
 
     @Override public boolean swinging(LivingEntity e) { return e.isSwinging(); }
 
-    @Override public int invulnerableTime(Entity e) { return e.getInvulnerableTime(); }
+    /** A living entity's hurt cooldown is its own field from 26.3, LivingEntity.damageCooldownTime (set to 20 by
+     *  hurtServer, and on the client by handleDamageEvent); Entity's invulnerableTime, now private, is only a
+     *  temporary invulnerability that a few things set (a converted mob keeps its old one, a skeleton trap's horse). */
+    @Override
+    public int invulnerableTime(Entity e) {
+        return e instanceof LivingEntity l ? l.damageCooldownTime : e.getInvulnerableTime();
+    }
 
     @Override public float bounceRestitution(BlockState state) { return state.getBlock().getBounceRestitution(); }
 

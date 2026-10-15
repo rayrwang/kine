@@ -160,7 +160,9 @@ class MobModelTest {
     /** mob_traces_slime.txt.gz: run trace4_slime (lockstep, no lag), the server's rows only: a size 4 slime, a size 4
      *  and a size 1 magma cube against a still player, with the size 2 and size 1 splits of the scene before (killed as
      *  each scene began). The flights of the lone slimes replay to within 1e-3; every hit the player took comes from a
-     *  copy touching it, at its damage; no wait between hops is shorter than the copy's shortest. */
+     *  copy touching it, at its damage; every hop comes on a full goal tick, the first on the first one after the
+     *  landing (0 or 1 ground ticks by the mob's id: MobCheck.slimes says why both come from 26.2 on, where the
+     *  recordings up to 26.1.2 had only 0), and no wait between hops is shorter than the copy's shortest. */
     @Test
     void slimesHopAndHurtAsTheRealOnes() throws Exception {
         Map<String, MobCheck.Scene> sc;
@@ -169,7 +171,8 @@ class MobModelTest {
         }
         for (String name : new String[]{"sl4_still", "sl2_still", "mc4_still", "mc1_still"}) {
             double[] r = MobCheck.slimes(sc.get(name));
-            assertEquals(0.0, r[1], name + ": a wait shorter than the copy's shortest");
+            assertEquals(0.0, r[5], name + ": a hop off a full goal tick");
+            assertEquals(0.0, r[1], name + ": a first wait other than the goal ticks give, or a later one shorter than the copy's shortest");
             assertEquals(0.0, r[2], name + ": a hit with no copy touching");
             assertEquals(0.0, r[4], 0.01, name + ": damage");
         }

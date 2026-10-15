@@ -1,5 +1,6 @@
 package ai.rrw.kine.move;
 
+import ai.rrw.kine.compat.Rules;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStreamReader;
@@ -51,6 +52,9 @@ public class GlidePhysicsTest {
     void theWallRunHitsTheWallAtItsTick() throws Exception {
         Traces.Run wall = traces().runs().stream().filter(r -> r.name().equals("glide_wall")).findFirst().orElseThrow();
         assertTrue(wall.ticks().get(WALL_HIT - 1).vx() > 0.4, "flying at the wall");
-        assertEquals(0.0, wall.ticks().get(WALL_HIT).vx(), "stopped by it");
+        // the hit axis's speed: up to 26.1.2 Entity.move sets it to 0.0; from 26.2 restituteMovementAfterCollisions sets
+        // it to -v.x times the player's bounciness 0 (Rules.BOUNCE_RESTITUTION), which is -0.0 for a flight toward +x,
+        // and assertEquals tells the two zeros apart
+        assertEquals(Rules.BOUNCE_RESTITUTION ? -0.0 : 0.0, wall.ticks().get(WALL_HIT).vx(), "stopped by it");
     }
 }
