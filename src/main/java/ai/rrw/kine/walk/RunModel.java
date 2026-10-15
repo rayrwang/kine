@@ -169,7 +169,9 @@ final class RunModel implements Model<RunWorld> {
         // at Walk any jump (one while walking gains nothing, so it is for the ground or for nothing); at Sprint one
         // made while sprinting
         boolean counts = cap == ai.rrw.kine.Settings.GAIT_WALK || s.sprinting;
-        if (!air0 && !s.onGround && (keys & MoveState.JUMP) != 0 && counts && s.vy > 0.0 && !s.inWater) {
+        // off the ground with the jump key down: a jump, even one a ceiling cut short at once (a head hitter: the bonk
+        // leaves no upward speed, and the jump is all the faster for it)
+        if (!air0 && !s.onGround && (keys & MoveState.JUMP) != 0 && counts && !s.inWater) {
             p[0] = y0;
             p[1] = 0;
             return 0.0;

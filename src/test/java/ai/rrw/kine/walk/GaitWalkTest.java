@@ -116,4 +116,20 @@ public class GaitWalkTest {
         assertEquals(Costs.LAYER2, Costs.forGait(Costs.LAYER2, Settings.GAIT_SPRINT_JUMP), "the default as before");
         assertEquals(Costs.LAYER2, Costs.forGait(Costs.LAYER2, Settings.GAIT_HOPS));
     }
+
+    /** Under a ceiling two blocks over the floor (leaves overhead, a head hitter): a sprint-jump there bonks at once and
+     *  is faster than sprinting, but it is still a jump for speed alone. At Sprint none (RW 2026-10-14: "itstil dos ethea
+     *  dhtiters at sprint"); at Sprint-jump it may. */
+    @Test
+    void noHeadHitterJumpsAtSprint() {
+        TestWorld w = blocks(-8, -8, 63, 23);
+        w.fill(-4, F - 1, -4, 60, F - 1, 4, STONE);
+        w.fill(8, F + 2, -4, 40, F + 2, 4, STONE);   // the ceiling over x 8 to 40: 0.2 over the head
+        Run sprint = walk(w, Settings.GAIT_SPRINT, 0.5, 0.5, 50, 0, F, 600);
+        Run jump = walk(w, Settings.GAIT_SPRINT_JUMP, 0.5, 0.5, 50, 0, F, 600);
+        System.out.printf(Locale.ROOT, "under a head hitter: sprint %d ticks, %d jumps; sprint-jump %d ticks, %d jumps%n",
+            sprint.ticks(), sprint.jumps(), jump.ticks(), jump.jumps());
+        assertTrue(sprint.arrived() && jump.arrived());
+        assertEquals(0, sprint.jumps(), "at Sprint no jump under the ceiling either");
+    }
 }
