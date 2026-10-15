@@ -147,6 +147,27 @@ public class RailPathTest {
         }
         System.out.printf("KINEMEASURE rails stairs: largest rise between neighbouring points %.3f (points %.2f apart)%n", worstStep, RailPath.STEP);
         assertTrue(worstStep <= RailPath.SLOPE * RailPath.STEP * 1.6 + 1e-6, "steps of " + worstStep);
+        // RW 2026-10-15: rounded where a ramp starts and ends, not a corner (an unrounded ramp at SLOPE changes its rise
+        // by SLOPE x STEP = 0.25 from one piece to the next at each corner)
+        double worstBend = 0;
+        for (int i = 1; i + 1 < rp.n; i++) worstBend = Math.max(worstBend, Math.abs(rp.leftY[i + 1] - 2 * rp.leftY[i] + rp.leftY[i - 1]));
+        System.out.printf("KINEMEASURE rails stairs: largest change of rise between neighbouring pieces %.3f%n", worstBend);
+        assertTrue(worstBend < 0.1, "corners of " + worstBend);
+        sameWidthAndHeight(rp);
+    }
+
+    @Test
+    void railsCrossingTheEdgesOfHigherBlocksDontSpike() {
+        // a row of posts a block high, every other block, under the centre and the left rail of a straight route: without
+        // rounding the rails rise and fall over each post, a spike a block high every two blocks
+        TestWorld w = blocks(0, 0, 31, 15).floor(10);
+        for (int x = 0; x <= 31; x += 2) w.fill(x, 11, 7, x, 11, 7, STONE);
+        View v = w.view();
+        Route r = new Route(new double[]{1.5, 28.5}, new double[]{12, 12}, new double[]{7.7, 7.7},
+            new byte[]{(byte) Route.START, (byte) Route.WALK}, 2, false, 28, 7);
+        r.gx = new float[]{1.5F, 28.5F}; r.gy = new float[]{12, 12}; r.gz = new float[]{7.7F, 7.7F}; r.gn = 2;
+        RailPath rp = new RailPath(v, r);
+        for (int i = 0; i < rp.n; i++) assertEquals(12 + RailPath.LIFT, rp.leftY[i], 1e-9, "rail at x " + rp.x[i]);
         sameWidthAndHeight(rp);
     }
 

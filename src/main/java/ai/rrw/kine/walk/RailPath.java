@@ -18,6 +18,9 @@ package ai.rrw.kine.walk;
  *       same envelope over the highest of the centre's and both rails' surfaces, so they never dip below the
  *       centreline, never part in height where one side drops, and never sink into a block. Plants are drawn over
  *       them.</li>
+ *   <li>The envelope's ramps start and end in corners, and a rail that crosses the edges of a higher block one point
+ *       at a time rises and falls in a row of spikes; so the heights are then rounded (round): curves instead of
+ *       corners, and spikes close together merged into one level stretch, still never under a surface.</li>
  * </ul>
  * Plain arrays and no Minecraft class: WalkRender streams the part near the player each frame, fading it by distance
  * along the centreline.
@@ -29,6 +32,7 @@ public final class RailPath {
     static final double SLOPE = 1.0;      // the steepest a rail ramps (blocks up a block along)
     static final double LIFT = 0.04;      // above the surface
     static final double SHIFT_STEP = 0.05;   // the pair slides across in these steps, up to HALF
+    static final int ROUND = 3;           // heights rounded over this many points either side (3 x STEP = 0.75 blocks)
 
     /** Points: the centreline (x, z), its height, the across direction (unit, pointing left of travel), the distance
      *  along it, and each rail's height (left = +across, right = -across). */
@@ -106,6 +110,8 @@ public final class RailPath {
         }
         envelope(sc, y);
         envelope(sh, leftY);
+        round(y);
+        round(leftY);
         for (int i = 0; i < n; i++) { y[i] += LIFT; leftY[i] += LIFT; rightY[i] = leftY[i]; }
     }
 
@@ -189,6 +195,26 @@ public final class RailPath {
             }
             out[i] = best;
         }
+    }
+
+    /** Rounds heights in place without letting them under where they were: first each point takes the highest within
+     *  ROUND points either side, then ROUND passes of a (1, 2, 1) / 4 average. Each pass reaches one point further, so
+     *  every height that goes into point i's average is a highest taken over a window holding i itself: none is below
+     *  what i had, so neither is the average. The highest-first step also fills the dips between spikes up to ROUND
+     *  apart, and like the averages it keeps the slope within SLOPE. */
+    private void round(double[] h) {
+        if (n < 3) return;
+        double[] a = new double[n], b = new double[n];
+        for (int i = 0; i < n; i++) {
+            double best = h[i];
+            for (int j = Math.max(0, i - ROUND); j <= Math.min(n - 1, i + ROUND); j++) best = Math.max(best, h[j]);
+            a[i] = best;
+        }
+        for (int pass = 0; pass < ROUND; pass++) {
+            for (int i = 0; i < n; i++) b[i] = (a[Math.max(0, i - 1)] + 2 * a[i] + a[Math.min(n - 1, i + 1)]) / 4;
+            double[] t = a; a = b; b = t;
+        }
+        System.arraycopy(a, 0, h, 0, n);
     }
 
     /** The index of the centreline segment nearest (px, pz), searching from `hint` outward (the last frame's), and the
