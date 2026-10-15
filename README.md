@@ -104,6 +104,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 		- Descend gradually before reaching destination
 		- Fly on, land, or rockets, instead of tripping off after a collision avoidance rescue?
 		- Support fireworks? (rockets in flight, not only the takeoff)
+		- Terrain aware flight with fireworks under the Nether roof, as Baritone's
 		- Warnings?
 		- Faster porpoise profile (law2)?
 	- Takeoff and landing:
@@ -122,10 +123,13 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Neos in the long-range route (today the walk finds them near the jump)
 	- More parkour: the course's jumps never made yet (head-hitter and nix neos, butterflies, the harder triples, the longest gaps and momentum jumps, the ladder spiral)
 	- Each water entry slid along the shore to the quickest crossing
+	- Any-angle swims (Theta* over water), if swimming against walking round goes wrong in play
 	- Parkour risk setting
 	- Opening doors
 	- Combat aware routes, and pausing a walk for a fight
 	- Handing off between walking and elytra flight
+	- A heading mode, a ground autopilot: `J` on the ground, `A` and `D` (or the mouse?) steer
+	- Searches that keep looking for a better way while you stand still? (idea)
 	- Boats
 	- Show which way the walk is crossing (route, jump search, movement search, template), as text or drawn
 	- Route lines and rails at consistent heights
@@ -134,6 +138,7 @@ Make sure to install [Fabric API](https://modrinth.com/mod/fabric-api).
 	- Benchmarks against Baritone on random seeds, and a comparison video
 	- Real parkour maps as a test bed
 	- Publish the parkour test world
+	- Building from schematics, and maybe a bot that beats the game
 - Combat:
 	- Kill aura only on player attack or being attacked
 	- Expand configurability especially aimbot, kill aura
