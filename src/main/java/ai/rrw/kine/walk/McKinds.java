@@ -26,8 +26,8 @@ import java.util.List;
  * global id in an array, without a lock, so the table builder can call it for every block of a chunk on its worker.
  *
  * <p>Shapes are taken at a fixed position: blocks whose shape moves with their position (bamboo, pointed dripstone)
- * come out at one offset. Shapes that depend on who touches them come out as for no one: scaffolding and powder snow
- * are marked to be avoided anyway.
+ * come out at one offset. Shapes that depend on who touches them come out as for no one: powder snow is marked to be
+ * avoided anyway; scaffolding is a block whose top is a floor (its shape for no one: the top slab and the legs).
  */
 public final class McKinds {
     private McKinds() {}
@@ -53,9 +53,31 @@ public final class McKinds {
         }
     }
 
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, Integer> CLIMBABLE_BY_STATE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The kind id of st made climbable: an open trapdoor over a ladder facing the same way (WorldSnapshot.trapdoorLadder,
+     *  as the movement copy has it since 5784759; the walk table had it as a plain trapdoor, so a walk landing on
+     *  trapdoor_ladder's trapdoor had no climb up). */
+    public static int climbableId(BlockState st) {
+        Integer have = CLIMBABLE_BY_STATE.get(Block.getId(st));
+        if (have != null) return have;
+        synchronized (LOCK) {
+            have = CLIMBABLE_BY_STATE.get(Block.getId(st));
+            if (have != null) return have;
+            int id = make(st, true).id;
+            CLIMBABLE_BY_STATE.put(Block.getId(st), id);
+            return id;
+        }
+    }
+
     private static Kind make(BlockState st) {
+        return make(st, false);
+    }
+
+    private static Kind make(BlockState st, boolean climb) {
         VoxelShape vs = st.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
         BlockInfo info = WorldSnapshot.info(st, vs);
+        if (climb) info = WorldSnapshot.climbable(info);
         List<double[]> boxes = new ArrayList<>();
         for (AABB b : vs.toAabbs()) boxes.add(new double[]{b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ});
         int flags = 0;
@@ -65,9 +87,14 @@ public final class McKinds {
             || st.is(Blocks.CAMPFIRE) || st.is(Blocks.SOUL_CAMPFIRE) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.POINTED_DRIPSTONE))
             flags |= Kind.HAZARD;
         if (st.is(Blocks.MAGMA_BLOCK)) flags |= Kind.FLOOR_HAZARD;
-        if (st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= Kind.CLIMB;
-        if (st.is(Blocks.COBWEB) || st.is(Blocks.SCAFFOLDING) || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL)
-            || st.is(Blocks.END_GATEWAY) || st.is(Blocks.SLIME_BLOCK) || st.is(Blocks.HONEY_BLOCK) || st.is(Blocks.BUBBLE_COLUMN))
+        if (climb || st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= Kind.CLIMB;
+        // slime is a floor (no longer avoided: layer 2's copy bounces on it, 0be5aef, and its friction is the block's):
+        // a slime runway had no floor at all, so a walk standing on one ended at once (the course's slime_friction_run)
+        // scaffolding is no longer avoided either (2026-10-15: the copy has it): the table takes its shape for no one in
+        // particular (SHAPE_STABLE: the top a floor, the rest a wall), so a column's top is a floor the walk can aim at
+        // (the course's scaffolding_jump); going into or through it is layer 2's and the jump search's, from the copy
+        if (st.is(Blocks.COBWEB) || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL)
+            || st.is(Blocks.END_GATEWAY) || st.is(Blocks.HONEY_BLOCK) || st.is(Blocks.BUBBLE_COLUMN))
             flags |= Kind.AVOID;
         Block b = st.getBlock();
         if (b instanceof DoorBlock || b instanceof TrapDoorBlock || b instanceof FenceGateBlock) flags |= Kind.DOOR;
@@ -81,6 +108,6 @@ public final class McKinds {
             double top = drawn.max(Direction.Axis.Y);
             if (vs.isEmpty() || top > vs.max(Direction.Axis.Y) + 1e-6) drawnTop = (float) top;
         }
-        return Palette.add(st.toString(), info, boxes, flags, drawnTop);
+        return Palette.add(climb ? st + "[climbable]" : st.toString(), info, boxes, flags, drawnTop);
     }
 }

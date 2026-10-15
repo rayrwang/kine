@@ -59,10 +59,40 @@ public final class WorldSnapshot {
                     pos.set(x, y, z);
                     BlockState st = level.getBlockState(pos);
                     if (st.isAir()) continue;
-                    g.set(x, y, z, info(st, ctx.getCollisionShape(st, level, pos)));
+                    // scaffolding's shape depends on where the player is at each collision query: the snapshot keeps
+                    // the shape for no one in particular (SHAPE_STABLE) and flags it (BlockInfo.SCAFFOLD); the copy
+                    // picks the player's tick by tick
+                    BlockInfo bi = info(st, st.is(Blocks.SCAFFOLDING)
+                        ? st.getCollisionShape(level, pos, CollisionContext.empty()) : ctx.getCollisionShape(st, level, pos));
+                    // an open trapdoor over a ladder facing the same way is climbable (LivingEntity.onClimbable,
+                    // trapdoorUsableAsLadder): the course's trapdoor_ladder
+                    if (st.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock
+                        && st.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN)) {
+                        BlockState below = level.getBlockState(pos.below());
+                        if (below.is(Blocks.LADDER) && below.getValue(net.minecraft.world.level.block.LadderBlock.FACING)
+                            == st.getValue(net.minecraft.world.level.block.TrapDoorBlock.FACING)) bi = climbable(bi);
+                    }
+                    g.set(x, y, z, bi);
                 }
             }
         return g;
+    }
+
+    /** Whether st, with below under it, is an open trapdoor over a ladder facing the same way (climbable:
+     *  LivingEntity.trapdoorUsableAsLadder). */
+    public static boolean trapdoorLadder(BlockState st, BlockState below) {
+        return st.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock
+            && st.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN)
+            && below.is(Blocks.LADDER) && below.getValue(net.minecraft.world.level.block.LadderBlock.FACING)
+            == st.getValue(net.minecraft.world.level.block.TrapDoorBlock.FACING);
+    }
+
+    private static final Map<BlockInfo, BlockInfo> CLIMBABLE_OF = new IdentityHashMap<>();
+
+    /** A block's info climbable (CLIMBABLE and SPECIAL added, as a ladder's). */
+    public static synchronized BlockInfo climbable(BlockInfo b) {
+        return CLIMBABLE_OF.computeIfAbsent(b, k -> new BlockInfo(k.shape, k.friction, k.speedFactor, k.jumpFactor,
+            k.flags | BlockInfo.CLIMBABLE | BlockInfo.SPECIAL, k.fluid, k.fluidHeight, k.fallFactor));
     }
 
     /** The blocks within r horizontally and from down below to up above the player's feet. */
@@ -92,7 +122,12 @@ public final class WorldSnapshot {
                 || st.is(Blocks.COBWEB) || st.is(Blocks.SCAFFOLDING) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.BUBBLE_COLUMN)
                 || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL) || st.is(Blocks.END_GATEWAY))
                 flags |= BlockInfo.SPECIAL;
-            if (st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= BlockInfo.CLIMBABLE;
+            if (st.is(BlockTags.CLIMBABLE)) flags |= BlockInfo.CLIMBABLE;   // scaffolding too, since 2026-10-15
+            if (st.is(Blocks.SCAFFOLDING)) {
+                flags |= BlockInfo.SCAFFOLD;
+                if (st.getValue(net.minecraft.world.level.block.ScaffoldingBlock.DISTANCE) != 0
+                    && st.getValue(net.minecraft.world.level.block.ScaffoldingBlock.BOTTOM)) flags |= BlockInfo.SCAFFOLD_BOTTOM;
+            }
             if (st.is(Blocks.SLIME_BLOCK)) flags |= BlockInfo.SLIME;
             if (st.is(BlockTags.BEDS)) flags |= BlockInfo.BED;
             var fs = st.getFluidState();

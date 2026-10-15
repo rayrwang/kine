@@ -47,8 +47,14 @@ final class RunModel implements Model<RunWorld> {
      *  water must leave the air to reach air again (the ticks to the nearest open water top, straight up or a few blocks
      *  across) with AIR_RESERVE to spare, the shortfall counted as the drowning it would bring; and each tick with the
      *  eyes under water costs AIR_TICK, so of two equal ways the one breathing wins (a sprint swim held at the top with
-     *  the eyes out is as fast as one under it). */
-    static final double DROWN_COST = 60.0, AIR_RESERVE = 30.0, AIR_TICK = 0.02, RISE_TICKS = 8.0;
+     *  the eyes out is as fast as one under it). A run that ends with the eyes under water has the way back up to the air
+     *  ahead of it: UNDER_END of its ticks counted (settled), so the search keeps the head up where nothing else is to
+     *  be had. Without it, at the floor nearest a goal it can't reach in a pond, every run scored about the same and the
+     *  one letting the player sink often won: the walk stood on the bottom with the eyes under until it gave up there
+     *  (pondIslandFar in a lockstep test; RW 2026-10-14: "the layer 2 search got me stuck at the bottom of a bpond and i
+     *  started dorwnign"). AIR_TICK alone is too small for that (under the field's unevenness of about 2 ticks), and
+     *  made larger it charges every tick under water, wherever the run ends. */
+    static final double DROWN_COST = 60.0, AIR_RESERVE = 30.0, AIR_TICK = 0.02, RISE_TICKS = 8.0, UNDER_END = 0.25;
     /** Count the air (on; off only to measure what it changes). */
     boolean airAware = true;
     /** Parkour (the setting): off, a run that crosses a gap in the air and lands on its far side is UNSAFE (gapCheck). */
@@ -227,7 +233,10 @@ final class RunModel implements Model<RunWorld> {
             c += (s.drownDamage - drowned0) * DROWN_COST;
             if (s.eyesInWater && s.waterBreathingTicks < 0) c += AIR_TICK;
         }
-        if (arrived(s)) w.arrived = true;
+        if (arrived(s)) {
+            if (!stand || still(s)) w.arrived = true;
+            else c -= 1.0 - SETTLE_COST;   // on the hop's floor, not yet still: a cheap tick
+        }
         return c;
     }
 
@@ -279,12 +288,38 @@ final class RunModel implements Model<RunWorld> {
         w.sentPitch += (float) (dp * f);
     }
 
-    /** Whether the walk would count the player as arrived. */
+    /** Whether the walk would count the player as arrived (at any speed). */
     boolean arrived(MoveState s) {
         double dx = goalX - s.x, dz = goalZ - s.z;
-        return dx * dx + dz * dz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s))
+        // climbing counts on a ladder or a vine (it holds), not in scaffolding (2026-10-15: inside its top piece the
+        // player sinks to the piece under once the keys are up; the top is arrived at standing on it)
+        return dx * dx + dz * dz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s) && !phys.inScaffolding(s))
             && (Double.isNaN(goalY) || Math.abs(s.y - goalY) < 0.6);
     }
+
+    /** Standing still: on the ground with horizontal speed squared at most STILL2 (as Walk.standing); in water or on a
+     *  climbable, any. */
+    boolean still(MoveState s) {
+        return !s.onGround || s.inWater || phys.onClimbable(s) || s.vx * s.vx + s.vz * s.vz <= STILL2;
+    }
+
+    /**
+     * A hop's floor (Walk: walking without a route to a floor past where a far goal's route stops): the walk counts it
+     * reached only standing still on it (the next jump starts from a standing start), so a run arrives only once still
+     * (horizontal speed squared at most STILL2, as Walk.standing), and a tick on the floor before that, moving, costs
+     * SETTLE_COST instead of a whole tick. Without it every run counted as arrived the tick it came within half a block
+     * of the centre, at any speed, and cost nothing after: all ties, and the plan kept was the shifted last one, walking
+     * toward the centre the player already stood on, the keys flipping every tick for the 30 ticks until the walk's
+     * settle rule gave up waiting (RW 2026-10-14 17:25:43: "when it landso on a blaock it can vibrate in spot for a
+     * second or two before making the next jump"; walk 2 of final3d_pk39: 30 ticks of it at nearly every hop). The moving
+     * ticks are cheap, not whole. Set only for a replan from a state already on the floor (Layer2: settling there); a
+     * run toward it from elsewhere arrives as before, at any speed: judged by standing, a landing at speed on a small
+     * floor (an end rod) slides off it in the copy under the run's held keys, so every flight toward the rod looked
+     * unsafe, and the replans in flight released the keys or sneaked and came down short (full3_c1 walk 1 and dev3_c3,
+     * end_rod_jump).
+     */
+    boolean stand = false;
+    static final double STILL2 = 1e-4, SETTLE_COST = 0.25;
 
     /** The destination's Y (feet): only that floor of the goal column is arriving (within 0.6); NaN: any floor. */
     double goalY = Double.NaN;
@@ -370,8 +405,8 @@ final class RunModel implements Model<RunWorld> {
     }
 
     /** The floor under (x, z) below the feet at y: the top of the first block with a collision, scanning down to 5
-     *  below the take-off; water there counts as a floor at the take-off's height (safe to fall into), something that
-     *  hurts as no floor; NEGATIVE_INFINITY when there is none. */
+     *  below the take-off; water or a climbable there counts as a floor at the take-off's height (safe to fall into,
+     *  held on to), something that hurts as no floor; NEGATIVE_INFINITY when there is none. */
     private double floorUnder(double x, double y, double z, double takeoff) {
         int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
         int top = (int) Math.floor(y), bottom = (int) Math.floor(takeoff) - 5;
@@ -379,6 +414,10 @@ final class RunModel implements Model<RunWorld> {
             ai.rrw.kine.move.BlockInfo b = phys.grid().get(bx, by, bz);
             if ((b.flags & ai.rrw.kine.move.BlockInfo.HAZARD) != 0) return Double.NEGATIVE_INFINITY;
             if ((b.flags & ai.rrw.kine.move.BlockInfo.WATER) != 0) return takeoff;
+            // a ladder or a vine in the column is held on to, not fallen past: no gap (climbing off a vine's top onto
+            // the wall it hangs on looked like a crossing over the vine's column, UNSAFE with Parkour off, and the walk
+            // hung at the top: the vine5off scene, "Stuck")
+            if ((b.flags & ai.rrw.kine.move.BlockInfo.CLIMBABLE) != 0) return takeoff;
             if (!b.shape.empty && by + b.shape.top() <= y + 1e-6) return by + b.shape.top();
         }
         return Double.NEGATIVE_INFINITY;
@@ -442,9 +481,10 @@ final class RunModel implements Model<RunWorld> {
         return settled(r, extra);
     }
 
-    /** The time left from a state on the ground (or in water): the field's, and the air short. */
+    /** The time left from a state on the ground (or in water): the field's, the air short, and with the eyes under
+     *  water a part of the way back up (UNDER_END). */
     private double settled(MoveState s, double extra) {
-        if (airAware) extra += airShort(s);
+        if (airAware) extra += airShort(s) + (s.eyesInWater && s.waterBreathingTicks < 0 ? UNDER_END * ticksToAir(s) : 0.0);
         double v = field.at(s.x, s.y, s.z);
         if (Double.isNaN(v)) return extra + OFF_FIELD + Math.hypot(goalX - s.x, goalZ - s.z) * field.rate;
         return extra + v;
@@ -480,12 +520,15 @@ final class RunModel implements Model<RunWorld> {
         return best == Double.MAX_VALUE ? 200.0 : best;
     }
 
+    /** How far up the water's top is looked for (Layer2's blocks reach two past it, up to 32 above the feet). */
+    static final int TOP_SCAN = 40;
+
     /** The height of the water's top in column (x, z) above block y, where air is over it; NaN under a ceiling or
-     *  with no water top within 16. */
+     *  with no water top within TOP_SCAN (it was 16: from deeper the way up was not seen). */
     private double openTop(int x, int y, int z) {
         BlockInfo b = phys.grid().get(x, y, z);
         if (b.fluid != BlockInfo.WATER_FLUID) return b.shape.empty ? y : Double.NaN;   // eyes' block not water: there
-        for (int k = 1; k <= 16; k++) {
+        for (int k = 1; k <= TOP_SCAN; k++) {
             BlockInfo up = phys.grid().get(x, y + k, z);
             if (up.fluid == BlockInfo.WATER_FLUID) continue;
             if (!up.shape.empty || up.is(BlockInfo.SPECIAL)) return Double.NaN;   // a ceiling (or the snapshot's edge)

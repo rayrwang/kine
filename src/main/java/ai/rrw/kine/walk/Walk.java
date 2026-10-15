@@ -98,6 +98,8 @@ public final class Walk {
     private static final java.util.Map<Long, Integer> hopArrivals = new java.util.HashMap<>();
     static final double HOP_PROGRESS = 1.0;
     static final int HOP_TRIES = 2;
+    /** Ticks standing still after a hop's jump searches found nothing before the hop is given up (see endTick). */
+    static final int HOP_GIVE_UP = 60;
     private static double hopBest = Double.MAX_VALUE;
     private static int hops = 0;
     private static boolean hopsOff = false;
@@ -112,6 +114,13 @@ public final class Walk {
     /** A hop arrived on a climbable: its plan without a route holds on until layer 1's next plan, which replaces it. */
     private static boolean hopTaken = false;
     static final int SETTLE_TICKS = 30;
+
+    /** On a climbable that holds the player where it is (a ladder, a vine), for the arrivals; not scaffolding
+     *  (2026-10-15): inside its top piece, arriving there let go of the keys and the player sank onto the piece under
+     *  it (the course's scaffolding_jump: the top is arrived at standing on it). */
+    private static boolean holdingClimb(LocalPlayer p) {
+        return p.onClimbable() && !p.getInBlockState().is(net.minecraft.world.level.block.Blocks.SCAFFOLDING);
+    }
 
     /** Still: no more horizontal speed than layer 2's jump search allows for a standing start. */
     private static boolean standing(LocalPlayer p) {
@@ -183,6 +192,8 @@ public final class Walk {
         return k.sprint() ? new Input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), k.shift(), false) : k;
     }
     public static final long FIRST_BUDGET = 400_000_000L, REPLAN_BUDGET = 200_000_000L;
+    /** Ticks a walk started in water with no floor found waits for the float to bring the player up to open water. */
+    static final int UNDER_WATER_WAIT = 400;
 
     // measured, for tests and the report
     public static long clientNanos = 0, clientMaxNanos = 0, clientTicks = 0;
@@ -316,6 +327,7 @@ public final class Walk {
         walkY = destinationY();
         dismissed = false;
         endPreview();
+        Afloat.disarm();
         if (job != null) job.cancelled = true;   // an earlier walk's search: its plan is not for this walk
         job = null;
         state = State.PLANNING;
@@ -331,6 +343,7 @@ public final class Walk {
         noWaySeen = false;
         hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
         hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest = Double.MAX_VALUE; hops = 0; hopsOff = false; hopFails = 0; hopOnSince = -1; hopTaken = false;
+        hopsChained = 0;
         progressed = 0;
         replans = 0;
         replanWhy.clear();
@@ -384,6 +397,7 @@ public final class Walk {
         if (active()) {
             state = State.STOPPED;
             message = why.isEmpty() ? "Paused" : "Paused: " + why;
+            Afloat.arm();   // in water the head kept above it until your keys (taking over by them ends it at once)
         }
         steering = false;
     }
@@ -407,6 +421,7 @@ public final class Walk {
         state = State.FAILED;
         message = why;
         steering = false;
+        Afloat.arm();
         lastWhy = why;
         Minecraft mc = Minecraft.getInstance();
         mc.gui.setOverlayMessage(Component.literal("Walk: " + why), false);
@@ -428,6 +443,9 @@ public final class Walk {
         long start = startNode(view, p);
         if (start == View.NONE) {
             if (settleWaits++ < 40) { message = "Reading the terrain"; return; }
+            // in water with no floor over it (a roof, lily pads, deeper than 24): the float (Afloat, on the ticks it plans)
+            // takes the player to open water, whose top is a floor to start from
+            if (p.isInWater() && settleWaits < UNDER_WATER_WAIT) { message = "Coming up for air"; return; }
             if (plan == null) fail("can't tell where you stand");
             return;
         }
@@ -435,10 +453,22 @@ public final class Walk {
         boolean canSprint = canSprint(p);
         boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
         job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget);
+        lastPlanStart = start;
+        lastPlanTerrain = Layer2.terrain();
         jobReplay = replayNext;
         replayNext = true;
         lastPlanTick = tick;
         plans++;
+    }
+
+    /** The start floor and the terrain's version (Layer2.terrain) of the last plan asked for. */
+    private static long lastPlanStart = View.NONE, lastPlanTerrain = -1;
+
+    /** Whether a replan now would search what the last one did: the same start floor, nothing loaded or changed since,
+     *  and the last search not cut short by its budget (a partial result). */
+    private static boolean sameAsLastPlan(LocalPlayer p) {
+        if (plan == null || plan.result.partial || Layer2.terrain() != lastPlanTerrain) return false;
+        return startNode(WalkTable.snapshot(), p) == lastPlanStart;
     }
 
     /** Whether the walk may jump gaps: the Parkour setting (off by default: a jump that falls short lands in the gap;
@@ -524,10 +554,19 @@ public final class Walk {
     }
 
     /** The floor the player is on: its column, else a neighbour its box overlaps, else, deep in water, the water's top
-     *  above. */
+     *  above. Standing on the ground on the block of a neighbouring column (the box overhangs it), with no ground floor
+     *  at the feet in its own column, that block's floor. */
     static long startNode(View v, LocalPlayer p) {
         int bx = Mth.floor(p.getX()), bz = Mth.floor(p.getZ());
         long n = v.nodeAt(bx, p.getY(), bz);
+        if (p.onGround() && !p.onClimbable() && (n == View.NONE || !groundAt(v, n, p.getY()))) {
+            // at the top of a vine wall, climbed from the vine's column, the player stands on the wall's top block with
+            // the box over the vine's column: its own column's nearest floor is the vine's top (a climb floor a block
+            // under the feet), so layer 1 planned a climb off onto where it stood, the hop there arrived at once, and it
+            // planned the same again, 247 ticks a round (the course's vine_jump and twisting_vines_free, full3_c1)
+            long sup = p.mainSupportingBlockPos.map(b -> v.nodeAt(b.getX(), p.getY(), b.getZ())).orElse(View.NONE);
+            if (sup != View.NONE && groundAt(v, sup, p.getY())) return sup;
+        }
         if (n != View.NONE) return n;
         double best = Double.MAX_VALUE;
         long bestN = View.NONE;
@@ -548,6 +587,84 @@ public final class Walk {
                 }
             }
         return bestN;
+    }
+
+    // ---------------------------------------------------------------- chained hops (the jump search from a moving start)
+
+    /**
+     * The floor the walk would hop to next from a landing on block column (lx, lz) with the feet at (x, y, z), as
+     * startHop would pick it standing there once across: {x, z, feet height, node, the hop floor's own node}, or null. Only while a hop is under
+     * way without a route (Layer2 chains the next jump onto the one being played: RW 2026-10-14 00:57:04, the jump
+     * search from a moving start, "yea hfiel as todo").
+     */
+    static double[] nextHopFrom(int lx, int lz, double x, double y, double z) {
+        if (hop == null || plan == null || !plan.direct || hopTaken || hopsOff || hops + 1 >= HOP_MAX
+            || !Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour) return null;
+        // the jump being played lands on the hop's floor, block (lx, lz) (else it isn't across yet)
+        if (lx != hop[0] || lz != hop[1] || Math.abs(y - hopY) >= 0.6) return null;
+        int[] d = destination();
+        if (d == null) return null;
+        View view = WalkTable.snapshot();
+        double best = Math.min(hopBest, Math.hypot(d[0] - Math.floor(x), d[1] - Math.floor(z)));
+        long pick = Hop.pick(view, x, y, z, d[0], d[1], walkY, best, new java.util.HashSet<>(), costs().maxFall, HOP_REACH);
+        if (pick == View.NONE || pick == hopNode) return null;
+        int px = View.nodeX(pick), pz = View.nodeZ(pick);
+        ChunkFloors c = view.chunk(px, pz);
+        if (c == null) return null;
+        return new double[]{px, pz, c.h(view.index(pick)), pick, hopNode};
+    }
+
+    /**
+     * A chained jump (Layer2: the next jump found from where the one being played lands, played on without stopping)
+     * takes the walk over the hop's floor: what arriving on it does (the progress, the counts), then the next hop under
+     * way without a route to `next` (nextHopFrom), its plan adopted at once, with no stop to plan (layer 1 is asked
+     * again on the way, every 5 s, as while walking without a route). False if no plan to it can be made.
+     */
+    static boolean chainHop(double[] next) {
+        if (hop == null || plan == null || !plan.direct) return false;
+        int[] d = destination();
+        if (d == null) return false;
+        View view = WalkTable.snapshot();
+        int nx = (int) next[0], nz = (int) next[1];
+        double h = next[2];
+        long node = (long) next[3];
+        Planner.Plan dp = Planner.direct(view, hopNode, nx, nz, h, costs(), margin(),
+            Minecraft.getInstance().player == null || Minecraft.getInstance().player.getFoodData().getFoodLevel() > 6);
+        if (dp == null) return false;
+        // across the hop's floor (as the arrival in endTick, the floor its own column)
+        double sd = Math.hypot(d[0] - hop[0], d[1] - hop[1]);
+        if (sd < hopBest - HOP_PROGRESS) hopArrivals.clear();
+        hopBest = Math.min(hopBest, sd);
+        hopArrivals.merge(hopNode, 1, Integer::sum);
+        hopFails = 0;
+        hopsTried.clear();
+        hopTries.clear();
+        double fromY = hopY;
+        hop = new int[]{nx, nz};
+        hopY = h;
+        hopNode = node;
+        hopFromY = fromY;
+        hopOnSince = -1;
+        hopTaken = false;
+        hops++;
+        hopsChained++;
+        adoptDirect(dp);
+        stuckReplans = 0;
+        progressed = 0;
+        message = String.format(java.util.Locale.ROOT, "No route on from here: walking without one to %d %d %d (chained)", nx, (int) Math.floor(h), nz);
+        if (replanWhy.size() < 200) replanWhy.add(tick + ": chained on to " + nx + " " + nz + " (hop " + hops + ")");
+        return true;
+    }
+
+    /** Hops taken by a chained jump this walk (tests). */
+    public static int hopsChained = 0;
+
+    /** Whether node n is a ground floor with its top at the feet (y, within 0.1). */
+    private static boolean groundAt(View v, long n, double y) {
+        ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
+        if (c == null) return false;
+        int i = v.index(n);
+        return c.type(i) == ChunkFloors.GROUND && Math.abs(c.h(i) - y) < 0.1;
     }
 
     // ---------------------------------------------------------------- the tick
@@ -607,15 +724,17 @@ public final class Walk {
     public static Input adjustInput(LocalPlayer p, Input keys) {
         long t0 = System.nanoTime();
         try {
-            if (handBack) return handBackKeys(keys);
-            if (!active()) return keys;
+            if (handBack) { Afloat.disarm(); return handBackKeys(keys); }
+            if (!active()) return Afloat.after(p, keys);   // after a walk that left you in water: the head kept above it
             // your keys as the game read them this tick (a press that came after the tick's start)
             if (keys.forward() || keys.backward() || keys.left() || keys.right() || keys.jump()) {
                 stop("you took over");
                 handBack = true;
+                Afloat.disarm();
                 return handBackKeys(keys);
             }
-            if (state == State.PLANNING || !steering) return underGait(p, Input.EMPTY);   // stand while the first plan is made
+            // stand while the first plan is made (in water: up to the air, Afloat)
+            if (state == State.PLANNING || !steering) return underGait(p, Afloat.during(p));
             if (layer2) return underGait(p, WorldSnapshot.input(Layer2.keys(p)));
             int k = wantKeys ? Moves.keys(wantYaw, p.getYRot(), wantSprint ? Moves.SPRINT : Moves.WALK) : 0;
             if (wantJump) k |= MoveState.JUMP;
@@ -763,9 +882,9 @@ public final class Walk {
                 replanFor("fell on the way, without a route", mc);
                 measure(t0);
                 return;
-            } else if ((p.onGround() || p.onClimbable()) && Math.abs(p.getY() - hopY) < 0.6
+            } else if ((p.onGround() || holdingClimb(p)) && Math.abs(p.getY() - hopY) < 0.6
                        && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75
-                       && (standing(p) || p.onClimbable() || tick - hopOnTick(tick) > SETTLE_TICKS)) {
+                       && (standing(p) || holdingClimb(p) || tick - hopOnTick(tick) > SETTLE_TICKS)) {
                 // on a ladder or a vine the walk never stands: it is across once on it in the hop's column (it waited
                 // 30 ticks there and slid off: the course's ladder_diagonal, RW 2026-10-14; the plan up the climb then
                 // takes over, layer 2 keeping hold till it comes, hopTaken below)
@@ -808,23 +927,36 @@ public final class Walk {
 
         // arrived: within half a block of the destination's centre
         double gx = d[0] + 0.5 - p.getX(), gz = d[1] + 0.5 - p.getZ();
-        if (gx * gx + gz * gz <= 0.25 && (p.onGround() || p.isInWater() || p.onClimbable())
+        if (gx * gx + gz * gz <= 0.25 && (p.onGround() || p.isInWater() || holdingClimb(p))
             && (Double.isNaN(walkY) || Math.abs(p.getY() - walkY) < 0.6)) {
             state = State.ARRIVED;
             message = "Arrived";
             steering = false;
+            Afloat.arm();
             measure(t0);
             return;
         }
 
         // progress, stuck and off-route checks; replans
         double left = remaining(p, r);
-        if (plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
+        // a jump search running, or its jump playing: no stuck time while it does (Layer2.busy)
+        boolean l2busy = Layer2.busy();
+        if (l2busy) bestLeftTick = tick;
+        if (!l2busy && plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
             && nearestCheckedId != plan.id && (standing(p) || p.isInWater() || p.onClimbable())) {
             // at the floor nearest a goal with no way onto it: one more search on the table as it is now (ground loaded
             // since may open a way); if it finds none nearer, the walk ends here (the exhausted replan, below)
             nearestCheckedId = plan.id;
-            replanFor(AT_NEAREST, mc);
+            if (Layer2.terrain() != lastPlanTerrain) replanFor(AT_NEAREST, mc);
+            else {
+                // nothing loaded or changed since the plan that found no way: its search again finds the same (RW
+                // 2026-10-15); straight on to the hops, or the end, as the exhausted replan would
+                if (startHop(p, d)) { measure(t0); return; }
+                double gd = Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ());
+                fail(String.format(java.util.Locale.ROOT, "No way onto the destination: stopped as near as it gets, %.1f blocks off", gd));
+                measure(t0);
+                return;
+            }
         }
         if (left < bestLeft - 0.25 || mc.screen != null) {   // a screen pauses it
             if (bestLeft != Double.MAX_VALUE && left < bestLeft) progressed += bestLeft - left;
@@ -833,7 +965,26 @@ public final class Walk {
             bestLeftTick = tick;
         }
         boolean idle = job == null || job.done;
+        // layer 2 stood before a gap of a route to the floor nearest the goal and the jump search found no way over it:
+        // on to the hops now, not after 4 no-progress replans (245 ticks standing, 12 times in walk 2 of final3d_pk39)
+        if (Layer2.routeJumpNone() && noWaySeen && !plan.direct && hop == null) {
+            stuckReplans = Math.max(stuckReplans, 3);
+            bestLeftTick = Math.min(bestLeftTick, tick - 61);
+        }
+        // a hop whose jump searches (from here, the spots, the templates) found no way, and the player has stood still
+        // HOP_GIVE_UP ticks: layer 2's own free search toward the landing has had its time (it spreads its grid of jumps
+        // over its replans and keeps the best: a search cut short by its budget gets more each tick, so it is let run
+        // a while; with 10 ticks the course's neo_winged, neo_headhitter and neo_nix, crossed by layer 2's own moves
+        // before, were given up at once), so the hop is given up now, not after HOP_STUCK no-progress replans of 61 ticks
+        // (RW 2026-10-15: a deterministic search retried from the same state finds the same nothing)
+        if (hop != null && plan.direct && !hopTaken && Layer2.hopJumpNone() && standing(p) && Layer2.stillTicks() >= HOP_GIVE_UP) {
+            stuckReplans = Math.max(stuckReplans, HOP_STUCK);
+            bestLeftTick = Math.min(bestLeftTick, tick - 61);
+        }
         if (tick - bestLeftTick > 60 && idle) {
+            // standing still where the last plan was made, on the same terrain, its search not cut short: a replan would
+            // search the same again (deterministic) and layer 2 has had its time; on to what comes after the replans
+            if (hop == null && standing(p) && Layer2.stillTicks() >= 60 && sameAsLastPlan(p)) stuckReplans = Math.max(stuckReplans, 3);
             if (++stuckReplans > (hop != null ? HOP_STUCK : 3)) {
                 if (hop != null) {
                     hop = null;
@@ -877,7 +1028,7 @@ public final class Walk {
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
         if (state == State.WALKING) {
-            if (hop != null && plan.direct) Layer2.endTick(mc, plan, hop, hopY);
+            if (hop != null && plan.direct) Layer2.endTick(mc, plan, hop, hopY, true);
             else Layer2.endTick(mc, plan, d, walkY);
             tickEta(mc, p);
         }

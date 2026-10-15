@@ -16,6 +16,12 @@ package ai.rrw.kine.move;
  * (WaterPhysicsTest). A current (flowing water) is not copied: touching it marks MoveState.touched SPECIAL; lava marks
  * it HAZARD.
  *
+ * <p>Since 2026-10-15 also scaffolding: its collision shape from the player's collision context, made afresh by every
+ * collision query from the feet's height at that moment and the shift key then (BlockInfo.scaffoldShape; the field
+ * descending), so it holds a player above it, lets one inside it or under it through, and gives way under the shift
+ * key; climbing in it (it is climbable), where the shift key does not hold the player as on a ladder. Checked against
+ * recorded ticks (ScaffoldPhysicsTest).
+ *
  * <p>The order is the game's, for a tick in which the player is in survival, on foot, not using an item and not
  * riding:
  * <ol>
@@ -30,7 +36,7 @@ package ai.rrw.kine.move;
  *   <li>Player.tick: the pose for the next tick.</li>
  * </ol>
  * Left out (a plan that meets them is marked through MoveState.touched or wouldGlide): currents, lava's own movement,
- * bouncy and sticky blocks, cobwebs, scaffolding, powder snow, bubble columns, entities with collision boxes (boats,
+ * sticky blocks, cobwebs, powder snow, bubble columns, entities with collision boxes (boats,
  * shulkers), the world border, auto-jump (off by default), a fall of a block or more in one tick (its fall-distance
  * reset by a ray).
  */
@@ -47,6 +53,10 @@ public final class GroundPhysics {
     // this tick's input after LocalPlayer.applyInput (xxa, zza), for isHorizontalCollisionMinor
     private float xxa, zza;
     private float yRot, xRot;
+    /** Entity.isDescending as each collision context reads it (LocalPlayer.isShiftKeyDown: input.keyPresses, which
+     *  hold last tick's keys until KeyboardInput.tick in aiStep, this tick's after). With the feet's height at the
+     *  moment of each query, it picks scaffolding's shape (BlockGrid.collect). */
+    private boolean descending;
 
     public GroundPhysics(BlockGrid grid, Body body) {
         this.grid = grid;
@@ -65,6 +75,7 @@ public final class GroundPhysics {
     public void step(MoveState s, int keys, float yaw, float pitch) {
         yRot = yaw;
         xRot = pitch;
+        descending = (s.lastKeys & MoveState.SHIFT) != 0;   // the keys of last tick until KeyboardInput.tick below
         // a landed glide ends between ticks: the server, on its tick after the landing, clears the flag and stands the
         // pose up, and both come to the client together in its entity data (measured in a lockstep test: the client
         // glides on the ground for 3 ticks, then the 4th is on foot)
@@ -92,7 +103,8 @@ public final class GroundPhysics {
         boolean wasShiftKeyDown = (s.lastKeys & MoveState.SHIFT) != 0;
         boolean hadForwardImpulse = s.lastMoveForward > 1.0E-5F;
         s.crouching = !s.swimming && canFit(s, POSE_CROUCH) && (wasShiftKeyDown || !canFit(s, POSE_STAND));
-        // KeyboardInput.tick: the move vector from the keys
+        // KeyboardInput.tick: the move vector from the keys (and from here on the shift key read is this tick's)
+        descending = (keys & MoveState.SHIFT) != 0;
         float left = impulse((keys & MoveState.LEFT) != 0, (keys & MoveState.RIGHT) != 0);
         float fwd = impulse((keys & MoveState.FORWARD) != 0, (keys & MoveState.BACKWARD) != 0);
         float dist = (float) Math.sqrt(left * left + fwd * fwd);   // Vec2.normalized
@@ -291,7 +303,9 @@ public final class GroundPhysics {
             s.vx = GameMath.clamp(s.vx, -0.15F, 0.15F);
             s.vz = GameMath.clamp(s.vz, -0.15F, 0.15F);
             s.vy = Math.max(s.vy, -0.15F);
-            if (s.vy < 0.0 && (keys & MoveState.SHIFT) != 0) s.vy = 0.0;   // sneaking holds you on the ladder
+            // sneaking holds you on the ladder, not in scaffolding (getInBlockState is scaffolding: the shift key
+            // takes you down through it instead)
+            if (s.vy < 0.0 && (keys & MoveState.SHIFT) != 0 && !feetBlock(s).is(BlockInfo.SCAFFOLD)) s.vy = 0.0;
         }
         move(s, keys);
         if ((s.horizontalCollision || jumping) && onClimbable(s)) s.vy = 0.2;
@@ -327,9 +341,21 @@ public final class GroundPhysics {
         if (s.horizontalCollision && isFree(s, s.vx, s.vy + 0.6F - s.y + oldY, s.vz)) s.vy = 0.3F;
     }
 
-    /** LivingEntity.onClimbable: the block at the feet is climbable (scaffolding left out). */
+    /** LivingEntity.onClimbable: the block at the feet (getInBlockState) is climbable (scaffolding too, since
+     *  2026-10-15). */
     public boolean onClimbable(MoveState s) {
-        return grid.get(GameMath.floor(s.x), GameMath.floor(s.y), GameMath.floor(s.z)).is(BlockInfo.CLIMBABLE);
+        return feetBlock(s).is(BlockInfo.CLIMBABLE);
+    }
+
+    /** Whether the feet are in scaffolding: climbable, but it does not hold the player where it is (with no keys the
+     *  player sinks through it to the piece under, and the shift key takes it down): for the planner's arrivals. */
+    public boolean inScaffolding(MoveState s) {
+        return feetBlock(s).is(BlockInfo.SCAFFOLD);
+    }
+
+    /** The block at the feet (Entity.getInBlockState: the block at blockPosition, the position floored). */
+    private BlockInfo feetBlock(MoveState s) {
+        return grid.get(GameMath.floor(s.x), GameMath.floor(s.y), GameMath.floor(s.z));
     }
 
     /** Entity.getEyeHeight in the pose now. */
@@ -381,7 +407,7 @@ public final class GroundPhysics {
     private boolean isFree(MoveState s, double dx, double dy, double dz) {
         makeBox(s, box);
         double[] b = {box[0] + dx, box[1] + dy, box[2] + dz, box[3] + dx, box[4] + dy, box[5] + dz};
-        grid.collect(b, cols2);
+        grid.collect(b, cols2, s.y, descending);   // the context from where the player is now (after the move)
         if (cols2.n != 0) return false;
         int x0 = GameMath.floor(b[0]), x1 = (int) Math.ceil(b[3]), y0 = GameMath.floor(b[1]), y1 = (int) Math.ceil(b[4]);
         int z0 = GameMath.floor(b[2]), z1 = (int) Math.ceil(b[5]);
@@ -508,7 +534,7 @@ public final class GroundPhysics {
             sx = mx; sy = my; sz = mz;
         } else {
             expandTowards(box, mx, my, mz, q);
-            grid.collect(q, cols);
+            grid.collect(q, cols, s.y, descending);   // the context from the feet before the move (setPos comes after)
             collideWithShapes(mx, my, mz, box, cols, mv);
             sx = mv[0]; sy = mv[1]; sz = mv[2];
         }
@@ -520,7 +546,7 @@ public final class GroundPhysics {
             double[] up = new double[6];
             expandTowards(grounded, mx, maxUp, mz, up);
             if (!onGroundAfter) expandTowards(up.clone(), 0.0, -1.0E-5F, 0.0, up);
-            grid.collect(up, cols2);
+            grid.collect(up, cols2, s.y, descending);
             float skip = (float) sy;
             int n = candidateStepUpHeights(grounded, cols2, maxUp, skip);
             for (int i = 0; i < n; i++) {
@@ -600,7 +626,7 @@ public final class GroundPhysics {
     /** CollisionGetter.findSupportingBlock: the colliding block nearest the player's position, the greater on a tie
      *  (BlockPos.compareTo: y, then z, then x). Sets the support in s when found. */
     private boolean findSupportingBlock(MoveState s, double[] area) {
-        grid.collect(area, cols);
+        grid.collect(area, cols, s.y, descending);   // after setPos: the feet where the move ended
         boolean found = false;
         int bx = 0, by = 0, bz = 0;
         double best = Double.MAX_VALUE;
@@ -648,15 +674,16 @@ public final class GroundPhysics {
         makeBox(s, box);
         double[] b = {box[0] + 1.0E-7 + dx, box[1] - minHeight - 1.0E-7, box[2] + 1.0E-7 + dz,
                       box[3] - 1.0E-7 + dx, box[1], box[5] - 1.0E-7 + dz};
-        grid.collect(b, cols2);
+        grid.collect(b, cols2, s.y, descending);   // the shift key is down here: scaffolding under the feet gives way
         return cols2.n == 0;
     }
 
-    /** Player.canPlayerFitWithinBlocksAndEntitiesWhen(pose): no block in the pose's box, shrunk by 1e-7. */
+    /** Player.canPlayerFitWithinBlocksAndEntitiesWhen(pose): no block in the pose's box, shrunk by 1e-7 (the shift key
+     *  in the context: last tick's for aiStep's crouching, this tick's for the pose after the move). */
     private boolean canFit(MoveState s, int pose) {
         float w = body.width / 2.0F, h = pose == POSE_SWIM || pose == POSE_GLIDE ? body.swimHeight : pose == POSE_CROUCH ? body.crouchHeight : body.height;
         double[] b = {s.x - w + 1.0E-7, s.y + 1.0E-7, s.z - w + 1.0E-7, s.x + w - 1.0E-7, s.y + h - 1.0E-7, s.z + w - 1.0E-7};
-        grid.collect(b, cols2);
+        grid.collect(b, cols2, s.y, descending);
         return cols2.n == 0;
     }
 
@@ -729,7 +756,7 @@ public final class GroundPhysics {
         makeBox(s, box);
         double[] b = {box[0] + 1.0E-7 + dx, box[1] - depth - 1.0E-7, box[2] + 1.0E-7 + dz,
                       box[3] - 1.0E-7 + dx, box[1], box[5] - 1.0E-7 + dz};
-        grid.collect(b, cols2);
+        grid.collect(b, cols2, s.y, false);   // standing there, not sneaking (scaffolding under the feet holds)
         if (cols2.n == 0) return true;
         int xa = GameMath.floor(b[0]), xb = GameMath.floor(b[3]), za = GameMath.floor(b[2]), zb = GameMath.floor(b[5]);
         int ya = GameMath.floor(box[1] - 1.0), yb = GameMath.floor(box[4] - 1.0E-5);

@@ -115,6 +115,10 @@ final class Layer2Sim {
     int glideTicks = 0;
     /** Ticks the copy's player was sprinting (after the tick), all walks. */
     int sprintTicks = 0;
+    /** The goal counts as reached only standing still on it (a hop's floor: RunModel.stand, as the game's walk). */
+    boolean stand = false;
+    /** A recipe's arrival also within 0.6 of goalY, as the game's Walk counts it (off: the column alone, as before). */
+    boolean arrivalY = false;
 
     Layer2Sim(TestWorld w) {
         this.world = w;
@@ -267,7 +271,9 @@ final class Layer2Sim {
                 path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
                     recipe.keys[Math.min(recipeT, recipe.ticks) - 1], s.air, s.drownDamage});
                 double gdx = gx + 0.5 - s.x, gdz = gz + 0.5 - s.z;
-                if (gdx * gdx + gdz * gdz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s)))
+                // as Walk's arrival: climbing counts where it holds (not inside scaffolding, 2026-10-15)
+                if (gdx * gdx + gdz * gdz <= 0.25 && (s.onGround || s.inWater || phys.onClimbable(s) && !phys.inScaffolding(s))
+                    && (!arrivalY || Double.isNaN(goalY) || Math.abs(s.y - goalY) < 0.6))
                     return new Outcome(true, t + 1, jumps, replans, worst, replans == 0 ? 0 : sum / replans, path, "");
                 prev = null;
                 continue;
@@ -278,6 +284,7 @@ final class Layer2Sim {
             model.parkour = parkour;
             model.cap = gait;
             model.goalY = goalY;   // the destination's Y (as the game's): only that floor of the goal column
+            model.stand = stand && model.arrived(s);   // settling once on the floor (as Layer2)
             if (parkour && freeJumps) {
                 double[] tg = f.jumpAhead(s.x, s.y, s.z, 5.0);
                 if (tg != null) {
@@ -315,7 +322,9 @@ final class Layer2Sim {
             sentYaw = w.sentYaw; sentPitch = w.sentPitch;
             path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
                 w.lastKeys, s.air, s.drownDamage});
-            if (w.arrived) return new Outcome(true, t + 1, jumps, replans, worst, sum / replans, path, "");
+            // standing to arrive (a hop's floor): once on it, on until still (as the game's walk)
+            if (w.arrived && (!stand || !s.onGround || s.vx * s.vx + s.vz * s.vz <= RunModel.STILL2))
+                return new Outcome(true, t + 1, jumps, replans, worst, sum / replans, path, "");
         }
         return new Outcome(false, maxTicks, jumps, replans, worst, sum / replans, path, "out of ticks");
     }

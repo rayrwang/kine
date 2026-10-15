@@ -74,9 +74,20 @@ public class BlockGrid {
     /**
      * BlockCollisions(level, entity, box): every block whose collision shape overlaps the box (minX, minY, minZ, maxX,
      * maxY, maxZ). The ring of blocks just outside the box is read only for tall shapes (fences, walls), as the game
-     * does; corners never.
+     * does; corners never. Shapes that depend on who touches them (scaffolding) as for no one in particular
+     * (CollisionContext.empty(): BlockInfo.shape).
      */
     public void collect(double[] box, Colliders out) {
+        collect(box, out, Double.POSITIVE_INFINITY, false);
+    }
+
+    /**
+     * The same with the player's collision context (EntityCollisionContext, made by each BlockCollisions from the
+     * player at that moment): its feet's height then (entityBottom) and whether the shift key is down (descending).
+     * Scaffolding's shape comes from them (BlockInfo.scaffoldShape); every other block's is BlockInfo.shape. An
+     * entityBottom of +infinity, not descending, is the empty context's choice for scaffolding (SHAPE_STABLE).
+     */
+    public void collect(double[] box, Colliders out, double entityBottom, boolean descending) {
         out.n = 0;
         int xa = GameMath.floor(box[0] - 1.0E-7) - 1, xb = GameMath.floor(box[3] + 1.0E-7) + 1;
         int ya = GameMath.floor(box[1] - 1.0E-7) - 1, yb = GameMath.floor(box[4] + 1.0E-7) + 1;
@@ -89,6 +100,7 @@ public class BlockGrid {
                     BlockInfo b = get(x, y, z);
                     if (type == 1 && !b.is(BlockInfo.LARGE)) continue;
                     Shape s = b.shape;
+                    if ((b.flags & BlockInfo.SCAFFOLD) != 0) s = BlockInfo.scaffoldShape(b, y, entityBottom, descending);
                     if (s.block) {
                         if (box[0] < x + 1.0 && box[3] > x && box[1] < y + 1.0 && box[4] > y && box[2] < z + 1.0 && box[5] > z)
                             out.add(s, x, y, z);

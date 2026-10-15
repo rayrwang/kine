@@ -23,21 +23,45 @@ public final class BlockInfo {
      *  powder snow, pointed dripstone. */
     public static final int HAZARD = 64;
     /** Movement the copy leaves out: climbable blocks, slime and beds (bounce; these three copied now), honey (wall slide), cobwebs,
-     *  scaffolding and powder snow (shape depends on the player), bubble columns, portals. */
+     *  scaffolding (copied now) and powder snow (shape depends on the player), bubble columns, portals. */
     public static final int SPECIAL = 128;
 
-    /** A climbable block (BlockTags.CLIMBABLE, scaffolding aside): LivingEntity.onClimbable. Also SPECIAL, as before,
-     *  for the combat model, which leaves climbing out. */
+    /** A climbable block (BlockTags.CLIMBABLE, scaffolding too since 2026-10-15): LivingEntity.onClimbable. Also
+     *  SPECIAL, as before, for the combat model, which leaves climbing out. */
     public static final int CLIMBABLE = 256;
     /** Water that may flow (not a source, or falling): its current is not copied, a plan touching it is marked. */
     public static final int CURRENT = 512;
-    /** Only in MoveState.touched: the plan met movement the copy leaves out (a current, slime, honey, cobwebs,
-     *  scaffolding, the edge of the snapshot), as SPECIAL but without ladders and vines, which are copied now. */
+    /** Only in MoveState.touched: the plan met movement the copy leaves out (a current, honey, cobwebs, the edge of the
+     *  snapshot), as SPECIAL but without ladders, vines, scaffolding, slime and beds, which are copied now. */
     public static final int UNCOPIED = 1024;
     /** A slime block and a bed: a fall onto them bounces (SlimeBlock, BedBlock), copied now. Also SPECIAL, as before,
      *  for the combat model. In MoveState.touched: a landing on slime without the shift key (no fall damage), on a bed
      *  (half). */
     public static final int SLIME = 2048, BED = 4096;
+    /**
+     * Scaffolding (2026-10-15): its collision shape depends on who touches it (ScaffoldingBlock.getCollisionShape with
+     * the entity's collision context), so {@link #shape} holds the one the game gives no one in particular
+     * (CollisionContext.empty(): SHAPE_STABLE, the top slab and the four corner legs), and BlockGrid.collect picks the
+     * player's from where the player's feet are and the shift key at that moment (see {@link #scaffoldShape}).
+     * SCAFFOLD_BOTTOM: a piece with distance above 0 and bottom set (held from the side, nothing of its kind under it),
+     * which has a floor in its own bottom eighth for a player above its bottom or sneaking (SHAPE_UNSTABLE_BOTTOM).
+     * Scaffolding is CLIMBABLE too (BlockTags.CLIMBABLE).
+     */
+    public static final int SCAFFOLD = 8192, SCAFFOLD_BOTTOM = 16384;
+
+    /**
+     * ScaffoldingBlock.getCollisionShape for an entity whose feet were at entityBottom when its collision context was
+     * made, with the shift key down (Entity.isDescending) or not, for the scaffolding block b at height y:
+     * SHAPE_STABLE (b.shape) when the entity is above it (EntityCollisionContext.isAbove: entityBottom &gt; y + 1 -
+     * 1.0E-5F) and not descending; else, for a bottom piece, SHAPE_UNSTABLE_BOTTOM when the entity is above the block
+     * under it (entityBottom &gt; y + 0 - 1.0E-5F, SHAPE_BELOW_BLOCK's top); else nothing. The sums in the game's order
+     * and types (int plus double, less the float widened).
+     */
+    public static Shape scaffoldShape(BlockInfo b, int y, double entityBottom, boolean descending) {
+        if (entityBottom > y + 1.0 - (double) 1.0E-5F && !descending) return b.shape;
+        if ((b.flags & SCAFFOLD_BOTTOM) != 0 && entityBottom > y + 0.0 - (double) 1.0E-5F) return Shape.SCAFFOLD_UNSTABLE_BOTTOM;
+        return Shape.EMPTY;
+    }
 
     /** The fluid in the block (FluidState): none, water or lava; and its own height (FluidState.getOwnHeight: amount /
      *  9, a source 8/9). The height the player meets is 1 where the same fluid is above (FlowingFluid.getHeight). */

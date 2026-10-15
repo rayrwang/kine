@@ -25,6 +25,26 @@ public final class Shape {
     public static final Shape EMPTY = new Shape(new double[][]{{0, 1}, {0, 1}, {0, 1}}, new boolean[1], false);
     public static final Shape BLOCK = new Shape(new double[][]{{0, 1}, {0, 1}, {0, 1}}, new boolean[]{true}, true);
 
+    private static final double[] EIGHTHS = {0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1};
+    /** ScaffoldingBlock.SHAPE_STABLE as the game builds it (Shapes.or of the top slab, 14 to 16, and the four 2 by 2
+     *  legs: an ArrayVoxelShape on eighths along every axis; ScaffoldShapeTest checks it against the game's): the
+     *  shape for a player above the block and not sneaking. WorldSnapshot takes the game's own for BlockInfo.shape. */
+    public static final Shape SCAFFOLD_STABLE;
+    /** ScaffoldingBlock.SHAPE_UNSTABLE_BOTTOM (Block.column(16, 0, 2): a CubeVoxelShape 1 by 8 by 1, its lowest cell
+     *  full): a bottom piece's floor for a player above its bottom or sneaking. */
+    public static final Shape SCAFFOLD_UNSTABLE_BOTTOM;
+    static {
+        boolean[] full = new boolean[8 * 8 * 8];
+        for (int x = 0; x < 8; x++)
+            for (int y = 0; y < 8; y++)
+                for (int z = 0; z < 8; z++)
+                    full[(x * 8 + y) * 8 + z] = y == 7 || (x == 0 || x == 7) && (z == 0 || z == 7);
+        SCAFFOLD_STABLE = new Shape(new double[][]{EIGHTHS.clone(), EIGHTHS.clone(), EIGHTHS.clone()}, full, false);
+        boolean[] bottom = new boolean[8];
+        bottom[0] = true;
+        SCAFFOLD_UNSTABLE_BOTTOM = new Shape(new double[][]{{0, 1}, EIGHTHS.clone(), {0, 1}}, bottom, false);
+    }
+
     public Shape(double[][] coords, boolean[] full, boolean block) {
         this.coords = coords;
         this.size = new int[]{coords[0].length - 1, coords[1].length - 1, coords[2].length - 1};

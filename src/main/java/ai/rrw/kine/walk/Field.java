@@ -75,17 +75,121 @@ public final class Field {
     /** Walking without a route: the floors the graph joins to the goal within `radius` (horizontal) of (x, z), from
      *  3.2 below to 1.3 above y, best (lowest time plus the straight line to them) first; at most `max`. */
     int[] joinedNear(double x, double y, double z, double radius, int max) {
+        return joinedNear(x, y, z, radius, max, false);
+    }
+
+    /** As above; climb: a climbable's cells joined to the goal count too (the jump search's landings: ladder_5b's
+     *  ladder, trapdoor_ladder's, whose templates land held on them; detect_c14 searched only the floors). */
+    int[] joinedNear(double x, double y, double z, double radius, int max, boolean climb) {
         if (joined == null) return new int[0];
         java.util.List<double[]> c = new java.util.ArrayList<>();
         for (int i = 0; i < n; i++) {
-            if (!joined[i] || type[i] != ChunkFloors.GROUND) continue;
+            if (!joined[i] || !(type[i] == ChunkFloors.GROUND || climb && type[i] == ChunkFloors.CLIMB)) continue;
             double d = Math.hypot(px[i] - x, pz[i] - z);
-            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3) continue;
-            c.add(new double[]{value[i] + d * rate, i});
+            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3 && !scaffoldTop(i, y)) continue;
+            // the floors first, then the climbables (a jump onto a floor before one onto a ladder: detect_c15's first
+            // walk took ladder_diagonal by its ladder, and the walk on from it fell)
+            c.add(new double[]{value[i] + d * rate + (type[i] == ChunkFloors.CLIMB ? 1e9 : 0), i});
         }
         c.sort((a, b) -> Double.compare(a[0], b[0]));
         int[] out = new int[Math.min(max, c.size())];
         for (int k = 0; k < out.length; k++) out[k] = (int) c.get(k)[1];
+        return out;
+    }
+
+    /** How far above the feet a scaffolding column's top may be for joinedNear (blocks): a jump into its side and the
+     *  climb with the jump key held (some 0.12 a tick) within the jump search's 60 ticks. */
+    static final double SCAFFOLD_CLIMB = 5.0;
+
+    /** Whether floor i, higher than a jump reaches from y, is the top of a scaffolding piece no more than SCAFFOLD_CLIMB
+     *  above (2026-10-15, the course's scaffolding_jump): reached by jumping into its column and climbing it (the jump
+     *  search climbs one; whether the column below reaches down to where a jump gets in is the copy's to find). */
+    private boolean scaffoldTop(int i, double y) {
+        if (py[i] > y + SCAFFOLD_CLIMB) return false;
+        int bx = (int) Math.floor(px[i]), by = (int) Math.floor(py[i] - 1e-3), bz = (int) Math.floor(pz[i]);
+        // the floor's own block, from the floors' windows as View.block reads it (by chunkAt: View.chunk's cache is not
+        // for a second thread, and this runs on the client's)
+        ChunkFloors ch = v.chunkAt(bx >> 4, bz >> 4);
+        if (ch == null) return false;
+        int col = (bx & 15) + 16 * (bz & 15);
+        for (int j = ch.start[col]; j < ch.start[col + 1]; j++) {
+            int k = by - ch.fb[j];
+            if (k >= 0 && k < ChunkFloors.WINDOW)
+                return Palette.get(ch.window[j * ChunkFloors.WINDOW + k]).info.is(ai.rrw.kine.move.BlockInfo.SCAFFOLD);
+        }
+        return false;
+    }
+
+    /**
+     * Floors at the level of y (within 0.05) within radius horizontally, joined to the goal or not, the nearest first, at
+     * most max; each {x, y, z} as a block (the one under the feet). The templates' key blocks besides the one the walk
+     * stands on: on RW's triple neo the walk came to rest 3 blocks short of the take-off, on the walkway.
+     */
+    int[][] levelNear(double x, double y, double z, double radius, int max) {
+        java.util.List<double[]> c = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (type[i] != ChunkFloors.GROUND || Math.abs(py[i] - y) > 0.05) continue;
+            double d = Math.hypot(px[i] - x, pz[i] - z);
+            if (d > radius) continue;
+            c.add(new double[]{d, i});
+        }
+        c.sort((a, b) -> Double.compare(a[0], b[0]));
+        int[][] out = new int[Math.min(max, c.size())][];
+        for (int k = 0; k < out.length; k++) {
+            int i = (int) c.get(k)[1];
+            out[k] = new int[]{(int) Math.floor(px[i]), (int) Math.round(py[i]) - 1, (int) Math.floor(pz[i])};
+        }
+        return out;
+    }
+
+    /**
+     * Floors joined to the goal within radius horizontally and 3.2 below to 1.3 above y that bring the walk nearer it than
+     * the floor at (x, y, z) (their value less than its, by at least 0.5; every joined one when the walk's floor is not
+     * joined), most progress first, at most max; each {x, y, z} as the searches name a landing. The templates' landings:
+     * on RW's triple neo the floor right past the wall was not among joinedNear's four (the walkway past it and the
+     * platform after it came first), so the triple template's landing, 4 ahead, was never tried.
+     */
+    int[][] progressNear(double x, double y, double z, double radius, int max) {
+        if (joined == null) return new int[0][];
+        int here = nodeAt(x, y, z);
+        double hv = here >= 0 && joined[here] ? value[here] : Double.POSITIVE_INFINITY;
+        java.util.List<double[]> c = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (!joined[i] || type[i] != ChunkFloors.GROUND || i == here) continue;
+            double d = Math.hypot(px[i] - x, pz[i] - z);
+            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3) continue;
+            if (!(value[i] < hv - 0.5)) continue;
+            c.add(new double[]{value[i], i});
+        }
+        c.sort((a, b) -> Double.compare(a[0], b[0]));
+        int[][] out = new int[Math.min(max, c.size())][];
+        for (int k = 0; k < out.length; k++) {
+            int i = (int) c.get(k)[1];
+            out[k] = new int[]{(int) Math.floor(px[i]), (int) Math.round(py[i]) - 1, (int) Math.floor(pz[i])};
+        }
+        return out;
+    }
+
+    /**
+     * Climbable cells joined to the goal within radius horizontally and from 1 below to up above y (a ladder chain's
+     * far ladder, beyond joinedNear's 1.3: the climb templates' landings, ladder_90_spiral's fourth ladder), the
+     * cheapest first, at most max. Each {x, y, z} as the searches name a landing (the block under its feet rounded).
+     */
+    int[][] climbsNear(double x, double y, double z, double radius, double up, int max) {
+        if (joined == null) return new int[0][];
+        java.util.List<double[]> c = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (!joined[i] || type[i] != ChunkFloors.CLIMB) continue;
+            double d = Math.hypot(px[i] - x, pz[i] - z);
+            if (d > radius || py[i] < y - 1 || py[i] > y + up) continue;
+            c.add(new double[]{value[i] + d * rate, i});
+        }
+        c.sort((a, b) -> Double.compare(a[0], b[0]));
+        int[][] out = new int[Math.min(max, c.size())][];
+        for (int k = 0; k < out.length; k++) {
+            int i = (int) c.get(k)[1];
+            out[k] = new int[]{(int) Math.floor(px[i]), (int) Math.round(py[i]) - 1, (int) Math.floor(pz[i])};
+        }
         return out;
     }
 

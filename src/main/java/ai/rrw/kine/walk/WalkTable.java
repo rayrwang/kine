@@ -206,11 +206,18 @@ public final class WalkTable {
         public int maxY() { return minY + copies.length * 16; }
         public void column(int lx, int lz, int[] ids) {
             int air = Palette.AIR.id;
+            BlockState below = null;
             for (int s = 0; s < copies.length; s++) {
                 PalettedContainer<BlockState> c = copies[s];
                 int base = s * 16;
-                if (c == null) { java.util.Arrays.fill(ids, base, base + 16, air); continue; }
-                for (int y = 0; y < 16; y++) ids[base + y] = McKinds.id(c.get(lx, y, lz));
+                if (c == null) { java.util.Arrays.fill(ids, base, base + 16, air); below = null; continue; }
+                for (int y = 0; y < 16; y++) {
+                    BlockState st = c.get(lx, y, lz);
+                    // an open trapdoor over a ladder facing the same way climbs as a ladder (the copy's rule)
+                    ids[base + y] = below != null && net.minecraft.world.level.block.Block.getId(st) != 0
+                        && ai.rrw.kine.move.WorldSnapshot.trapdoorLadder(st, below) ? McKinds.climbableId(st) : McKinds.id(st);
+                    below = st;
+                }
             }
         }
     }

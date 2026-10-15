@@ -25,8 +25,8 @@ public final class Kind {
     public static final int FLOOR_HAZARD = 8;
     /** A ladder, vine or other climbable block. */
     public static final int CLIMB = 16;
-    /** Passable for collision but not to walk through: cobwebs, scaffolding, portals, honey and slime (bounce and
-     *  stick), beds, end gateways. The table treats them as walls. */
+    /** Passable for collision but not to walk through: cobwebs, portals, honey (stick), bubble columns, end gateways
+     *  (scaffolding and slime no longer: McKinds). The table treats them as walls. */
     public static final int AVOID = 32;
     /** A door, trapdoor or fence gate (closed ones are walls through their collision shape). */
     public static final int DOOR = 64;
