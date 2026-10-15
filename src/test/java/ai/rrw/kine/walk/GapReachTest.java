@@ -26,7 +26,7 @@ public class GapReachTest {
     static final int FLOOR = 10;   // the take-off's top; its block at FLOOR - 1
     static final double PIT = -20;
 
-    record Result(int dx, int dz, int dh, int runUp, int wins, int tried, String best) {}
+    record Result(int dx, int dz, int dh, int runUp, int wins, int tried, String best, double margin) {}
 
     /** The blocks: T, the runway behind it along T to L, and L. */
     static BlockGrid world(int dx, int dz, int dh, int runUp) {
@@ -48,6 +48,11 @@ public class GapReachTest {
 
     /** All the ways tried for one geometry. */
     static Result measure(int dx, int dz, int dh, int runUp) {
+        return measure(dx, dz, dh, runUp, true);
+    }
+
+    /** As above; sprint false: no sprint key anywhere (the gait setting's Walk: walking, and jumps while walking). */
+    static Result measure(int dx, int dz, int dh, int runUp, boolean sprint) {
         BlockGrid g = world(dx, dz, dh, runUp);
         GroundPhysics phys = new GroundPhysics(g, new Body());
         double len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len;
@@ -65,7 +70,7 @@ public class GapReachTest {
                     float moveYaw = lineYaw + off;
                     // a strafe key turns the view 45 degrees the other way so the movement keeps its heading
                     float viewYaw = moveYaw - strafe * 45f;
-                    int keys = MoveState.FORWARD | MoveState.SPRINT | (strafe < 0 ? MoveState.LEFT : strafe > 0 ? MoveState.RIGHT : 0);
+                    int keys = MoveState.FORWARD | (sprint ? MoveState.SPRINT : 0) | (strafe < 0 ? MoveState.LEFT : strafe > 0 ? MoveState.RIGHT : 0);
                     List<MoveState> ground = new ArrayList<>();
                     for (int t = 0; t < 120 && s.y > FLOOR - 0.5; t++) {
                         if (s.onGround) ground.add(s.copy());
@@ -103,12 +108,12 @@ public class GapReachTest {
                             if (margin > bestMargin) {
                                 bestMargin = margin;
                                 best = String.format(Locale.ROOT, "%s off=%d strafe=%d jumpAt=-%d margin=%.2f",
-                                    chain == 1 ? "sprint-jumps" : "sprint", off, strafe, ground.size() - i, margin);
+                                    (chain == 1 ? "jumps" : "runs") + (sprint ? " sprinting" : " walking"), off, strafe, ground.size() - i, margin);
                             }
                         }
                     }
                 }
-        return new Result(dx, dz, dh, runUp, wins, tried, best);
+        return new Result(dx, dz, dh, runUp, wins, tried, best, bestMargin);
     }
 
     @Test
@@ -136,5 +141,31 @@ public class GapReachTest {
         java.nio.file.Files.createDirectories(out.getParent());
         java.nio.file.Files.writeString(out, csv);
         System.out.println("gap reach written to " + out);
+    }
+
+    /** Which of the gap jumps layer 1 offers (Jumps.TABLE) a walk without sprinting makes (the gait setting's Walk):
+     *  the same ways as the table's, a run-up of 2 (or the table's), no sprint key, and a stricter threshold
+     *  (walkable). Printed; the set is Jumps.WALKABLE. */
+    static final int RUNUP = Integer.parseInt(System.getenv().getOrDefault("KINE_WALK_RUNUP", "0"));
+
+    @Test
+    void whatAWalkingJumpClears() {
+        StringBuilder made = new StringBuilder();
+        for (int[] j : Jumps.TABLE) {
+            Result r = measure(j[0], j[1], j[2], RUNUP, false);
+            if (walkable(r)) made.append(String.format(Locale.ROOT, " {%d, %d, %d}", j[0], j[1], j[2]));
+            System.out.printf(Locale.ROOT, "walking: %d %d %d run-up %d: %d of %d %s%n", j[0], j[1], j[2], RUNUP, r.wins(), r.tried(), r.best());
+        }
+        System.out.println("walkable:" + made);
+        for (int[] w : Jumps.WALKABLE) {
+            Result r = measure(w[0], w[1], w[2], RUNUP, false);
+            assertTrue(walkable(r), "a walking jump makes " + w[0] + " " + w[1] + " " + w[2] + ": " + r);
+        }
+    }
+
+    /** Made walking with room to spare: at least 20 of the ways land (about one in eleven; the sprint table's 5 let in
+     *  jumps whose best landing was on the block's edge), the best with its centre 0.1 inside the landing. */
+    static boolean walkable(Result r) {
+        return r.wins() >= 20 && r.margin() >= 0.1;
     }
 }

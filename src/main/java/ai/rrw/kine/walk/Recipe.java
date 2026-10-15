@@ -50,6 +50,12 @@ public final class Recipe {
      *  starting at it, as a client that sets its view at once). */
     public static Recipe search(GroundPhysics phys, MoveState start, float startYaw, int lx, int ly, int lz, float yawA,
                                 float yawB, float step, int maxJump, int maxTurn, int limit) {
+        return search(phys, start, startYaw, lx, ly, lz, yawA, yawB, step, maxJump, maxTurn, limit, true);
+    }
+
+    /** As above; sprint false: walking only (the gait setting's Walk), no sprint key in any try. */
+    public static Recipe search(GroundPhysics phys, MoveState start, float startYaw, int lx, int ly, int lz, float yawA,
+                                float yawB, float step, int maxJump, int maxTurn, int limit, boolean sprint) {
         int ways = 0, tried = 0;
         double bestMargin = -1;
         float[] bestYaw = null;
@@ -65,13 +71,13 @@ public final class Recipe {
         double[] holdPos = new double[3 * HOLD];
         float wall = wallYaw(phys, lx, ly, lz);
         for (float yaw0 = yawA; yaw0 <= yawB + 1e-3; yaw0 += step)
-            for (int sprint = 1; sprint >= 0; sprint--)
+            for (int run = sprint ? 1 : 0; run >= 0; run--)
                 for (int strafe = -1; strafe <= 1; strafe++)
                     for (int jumpAt = 0; jumpAt <= maxJump; jumpAt++)
                         for (int turnAt = 0; turnAt <= maxTurn; turnAt++) {
                             tried++;
                             MoveState s = start.copy();
-                            int base = MoveState.FORWARD | (sprint == 1 ? MoveState.SPRINT : 0)
+                            int base = MoveState.FORWARD | (run == 1 ? MoveState.SPRINT : 0)
                                 | (strafe < 0 ? MoveState.LEFT : strafe > 0 ? MoveState.RIGHT : 0);
                             float aim0 = yaw0 - strafe * 45f;
                             float view = Float.isNaN(startYaw) ? aim0 : startYaw;
@@ -118,7 +124,7 @@ public final class Recipe {
                                 bestKeys = java.util.Arrays.copyOf(ks, t);
                                 bestTicks = t;
                                 bestHow = String.format(java.util.Locale.ROOT, "yaw0 %.0f %s strafe %d jump t%d turn +%d", yaw0,
-                                    sprint == 1 ? "sprint" : "walk", strafe, jumpAt, turnAt);
+                                    run == 1 ? "sprint" : "walk", strafe, jumpAt, turnAt);
                                 bestEnd = new double[]{s.x, s.y, s.z};
                                 bestPath = java.util.Arrays.copyOf(pos, 3 * t);
                             }

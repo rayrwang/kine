@@ -97,6 +97,12 @@ public class ProjectileDodge {
         return new Input(c[0], c[1], c[2], c[3], keys.jump(), keys.shift(), keys.sprint());
     }
 
+    /** Whether a projectile is on course to hit the player now (the dodge's own test, whatever its setting): the
+     *  walk's alpha floor. */
+    public static boolean onCourse(LocalPlayer p, ClientLevel level) {
+        return threat(p, level) != null;
+    }
+
     /** Which way to step: the better side, and the other side if there is one (none for a projectile
      *  coming straight down, where the other way is toward it). */
     record Escape(Vec3 preferred, Vec3 fallback) {}

@@ -121,6 +121,7 @@ public final class RecedingSearch<W> {
             outer:
             for (Node n : beam) {
                 for (int a = 0; a < actions; a++) {
+                    if (!model.allowed(a)) continue;
                     if (System.nanoTime() > deadline) { timedOut = true; break outer; }
                     int[] seg = new int[e.hold];
                     Arrays.fill(seg, a);

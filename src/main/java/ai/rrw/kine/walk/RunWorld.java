@@ -23,6 +23,10 @@ final class RunWorld {
     /** Parkour off (RunModel.gapCheck): the height it last left the ground from, and the lowest floor under it since
      *  that it couldn't walk back out of (NaN for none). */
     double takeoffY = Double.NaN, gapFloor = Double.NaN, gapValue = Double.NaN;
+    /** The gait setting's Walk and Sprint (RunModel.paceCheck): the height a counted jump left the ground from (NaN:
+     *  none in the air now), and 1 once the ground under it fell away more than a jump's height (a gap: the jump was
+     *  needed). */
+    double paceFrom = Double.NaN, paceDeep = 0;
     /** The feet each tick, for the display (null unless recorded). */
     float[] trail;
     int trailN;
@@ -39,6 +43,7 @@ final class RunWorld {
         w.firstYaw = firstYaw; w.firstPitch = firstPitch; w.firstKeys = firstKeys;
         w.segHeading = segHeading; w.firstHeading = firstHeading;
         w.takeoffY = takeoffY; w.gapFloor = gapFloor; w.gapValue = gapValue;
+        w.paceFrom = paceFrom; w.paceDeep = paceDeep;
         if (trail != null) { w.trail = trail.clone(); w.trailN = trailN; }
         return w;
     }

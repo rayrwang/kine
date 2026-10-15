@@ -133,6 +133,58 @@ final class RunModel implements Model<RunWorld> {
     /** How many gaits the search may use (GAITS, or BASE_GAITS without sneaking, for measurement). */
     int gaits = GAITS;
 
+    /** The gait setting (Settings.GAIT_*: the most the walk may use). Walk: the sprinting gaits left out, and in the copy
+     *  no sprint key, the double-tap window closed and a running sprint ended each tick, as the walk's keys do in the
+     *  game (Walk.underGait). Walk and Sprint: a jump (at Sprint, one made while sprinting) that lands level with
+     *  nothing under it to cross (a pace jump, for speed alone, or at Walk for nothing) costs PACE. Sprint-jump and
+     *  above: everything. */
+    int cap = ai.rrw.kine.Settings.GAIT_SPRINT_JUMP;
+    /** A pace jump at the gait setting's Sprint: as five seconds, so walking on is always better where it can be. */
+    static final double PACE = 100.0;
+
+    @Override public boolean allowed(int a) {
+        if (cap >= ai.rrw.kine.Settings.GAIT_SPRINT || a == STOP || isFree(a)) return true;
+        int g = gait(a);
+        return g != SPRINT && g != SPRINT_JUMP && g != SPRINT_SNEAK;
+    }
+
+    /** The keys as the gait allows them, and (at Walk) the sprint the game would not start or keep. */
+    private int underGait(MoveState s, int keys) {
+        if (cap >= ai.rrw.kine.Settings.GAIT_SPRINT) return keys;
+        s.sprinting = false;
+        s.sprintTriggerTime = 0;
+        return keys & ~MoveState.SPRINT;
+    }
+
+    /**
+     * The gait setting's Walk and Sprint: a jump the ground doesn't need. p: {the height a jump made (at Sprint, while
+     * sprinting) left the
+     * ground from (NaN: none), 1 once the ground under it fell away more than a jump's height}. A jump needs no pace
+     * check when it lands higher (a step up, a block), crosses a gap (the floor under it more than JUMP_MAX below the
+     * take-off) or leaves or reaches water or a climbable; one that comes down level or lower with solid ground under it
+     * all the way could have been walked: PACE.
+     */
+    double paceCheck(MoveState s, boolean air0, double y0, int keys, double[] p) {
+        if (cap > ai.rrw.kine.Settings.GAIT_SPRINT) return 0.0;
+        // at Walk any jump (one while walking gains nothing, so it is for the ground or for nothing); at Sprint one
+        // made while sprinting
+        boolean counts = cap == ai.rrw.kine.Settings.GAIT_WALK || s.sprinting;
+        if (!air0 && !s.onGround && (keys & MoveState.JUMP) != 0 && counts && s.vy > 0.0 && !s.inWater) {
+            p[0] = y0;
+            p[1] = 0;
+            return 0.0;
+        }
+        if (Double.isNaN(p[0])) return 0.0;
+        if (s.inWater || phys.onClimbable(s)) { p[0] = Double.NaN; return 0.0; }
+        if (!s.onGround) {
+            if (p[1] == 0 && floorUnder(s.x, s.y, s.z, p[0]) < p[0] - Graph.JUMP_MAX - 1e-3) p[1] = 1;
+            return 0.0;
+        }
+        boolean pace = p[1] == 0 && s.y < p[0] + 0.5;
+        p[0] = Double.NaN;
+        return pace ? PACE : 0.0;
+    }
+
     @Override public int actionCount() { return 1 + DIRS * gaits; }
 
     @Override
@@ -149,7 +201,7 @@ final class RunModel implements Model<RunWorld> {
         }
         w.segPitch = pitch(a, s.inWater);
         turn(w);
-        int keys = keys(a, isFree(a) ? w.segHeading : w.segYaw, w.sentYaw, s.inWater, s.onGround, s.fallFlying, s.lastKeys);
+        int keys = underGait(s, keys(a, isFree(a) ? w.segHeading : w.segYaw, w.sentYaw, s.inWater, s.onGround, s.fallFlying, s.lastKeys));
         double y0 = s.y, fall0 = s.fallDistance, drowned0 = s.drownDamage;
         boolean air0 = !s.onGround;
         phys.step(s, keys, w.sentYaw, w.sentPitch);
@@ -158,6 +210,12 @@ final class RunModel implements Model<RunWorld> {
         w.ticks++;
         w.record();
         double c = 1.0 + marks(s, air0, y0, fall0) + (s.fallFlying ? GLIDE_WEAR : 0.0);
+        if (!allowed(a)) c += UNSAFE;   // a plan from before the gait changed
+        if (cap <= ai.rrw.kine.Settings.GAIT_SPRINT) {
+            double[] pc = {w.paceFrom, w.paceDeep};
+            c += paceCheck(s, air0, y0, keys, pc);
+            w.paceFrom = pc[0]; w.paceDeep = pc[1];
+        }
         if (!parkour) {
             double[] g = {w.takeoffY, w.gapFloor, w.gapValue};
             c += gapCheck(s, g);
@@ -356,16 +414,18 @@ final class RunModel implements Model<RunWorld> {
         double extra = 0;
         float yaw = w.sentYaw, pitch = w.sentPitch;
         int t = 0, held = 0;
-        double[] gap = {w.takeoffY, w.gapFloor, w.gapValue};
+        double[] gap = {w.takeoffY, w.gapFloor, w.gapValue}, pace = {w.paceFrom, w.paceDeep};
         // on a ladder it lets go of the keys (it slides down, held in the ladder's cell); caught once it has been on
         // one for CAUGHT ticks (a jump through a ladder's cell at speed can fly on out of it and fall)
         while (unsettled(r, held) && t < (r.fallFlying ? 60 : 40)) {
             double y0 = r.y, fall0 = r.fallDistance;
             boolean ladder = phys.onClimbable(r);
-            phys.step(r, ladder ? 0 : keys, yaw, pitch);
+            int k = underGait(r, ladder ? 0 : keys);
+            phys.step(r, k, yaw, pitch);
             held = phys.onClimbable(r) ? held + 1 : 0;
             t++;
             extra += 1.0 + marks(r, true, y0, fall0);
+            extra += paceCheck(r, true, y0, k, pace);
             if (!parkour) extra += gapCheck(r, gap);
             if (arrived(r)) return extra;
             float dy = GameMath.wrapDegrees(w.segYaw - yaw);
@@ -460,6 +520,7 @@ final class RunModel implements Model<RunWorld> {
         for (int d = 0; d < DIRS; d++)
             for (int g = 0; g < gaits; g++) {
                 if (d >= 2 && g != SPRINT_JUMP && g != JUMP) continue;
+                if (!model.allowed(action(d, g))) continue;
                 int[] p = new int[h];
                 java.util.Arrays.fill(p, action(d, g));
                 double sc = rs.score(root, p, e, seed);
@@ -469,9 +530,11 @@ final class RunModel implements Model<RunWorld> {
         // a sprint or a sprint-jump held (sinking before a sprint swim, which the beam's first depths can't see pay)
         int[] slow = gaits > SNEAK ? new int[]{STOP, action(DESCENT, WALK), action(DESCENT, SNEAK), action(DESCENT, SPRINT_SNEAK)}
             : new int[]{STOP, action(DESCENT, WALK)};
+        int[] fast = model.allowed(action(DESCENT, SPRINT)) ? new int[]{SPRINT, SPRINT_JUMP} : new int[]{WALK, JUMP};
         for (int a1 : slow)
-            for (int g2 : new int[]{SPRINT, SPRINT_JUMP})
+            for (int g2 : fast)
                 for (int k = e.hold; k < h && k <= 2 * e.hold; k += e.hold) {
+                    if (!model.allowed(a1)) continue;
                     int[] p = new int[h];
                     java.util.Arrays.fill(p, 0, k, a1);
                     java.util.Arrays.fill(p, k, h, action(DESCENT, g2));

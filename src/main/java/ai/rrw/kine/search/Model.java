@@ -26,4 +26,7 @@ public interface Model<W> {
 
     /** A world the plan must never reach (it would hurt the player regardless of cost): the candidate is dropped. */
     default boolean forbidden(W w) { return false; }
+
+    /** Whether the search may try this action at all (a model may leave some out: the walk's gait setting). */
+    default boolean allowed(int action) { return true; }
 }

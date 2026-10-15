@@ -156,7 +156,31 @@ public final class Walk {
     /** The move costs layer 1 plans with: Baritone's for its own follower, the ones fitted from layer 2's runs when
      *  layer 2 walks (Costs.layer2); layer 2's field uses the same. */
     static Costs costs() {
-        return Settings.walkLayer2 ? Costs.LAYER2 : Costs.BARITONE;
+        return Costs.forGait(Settings.walkLayer2 ? Costs.LAYER2 : Costs.BARITONE, gait());
+    }
+
+    /** The gait the walk may use now: Settings.walkGait (the most it may use; it still jumps where the ground needs), or
+     *  more while the alpha floor is on (AlphaFloor: something chasing you or about to hurt you). */
+    public static int gait() {
+        return AlphaFloor.raise(Settings.walkGait);
+    }
+
+    /** The gait the last tick walked at (a change replans: the alpha floor on or off). */
+    private static int lastGait = -1;
+
+    /** Whether the walk may sprint now: the gait allows it, and the game does (food above 6). */
+    static boolean canSprint(LocalPlayer p) {
+        return gait() >= Settings.GAIT_SPRINT && p.getFoodData().getFoodLevel() > 6;
+    }
+
+    /** The walk's keys under the gait: at Walk no sprint key, the double-tap sprint's window closed (a fresh W press
+     *  within it starts a sprint; this runs in KeyboardInput.tick, before LocalPlayer.aiStep looks at it), and a sprint
+     *  already running ended (it carries on by itself while W is held). The movement copy does the same (RunModel). */
+    private static Input underGait(LocalPlayer p, Input k) {
+        if (gait() >= Settings.GAIT_SPRINT) return k;
+        ((ai.rrw.kine.mixin.MoveLocalPlayerAccessor) p).kine$setSprintTriggerTime(0);
+        if (p.isSprinting()) p.setSprinting(false);
+        return k.sprint() ? new Input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), k.shift(), false) : k;
     }
     public static final long FIRST_BUDGET = 400_000_000L, REPLAN_BUDGET = 200_000_000L;
 
@@ -299,6 +323,8 @@ public final class Walk {
         plan = null;
         planId = -1;
         seenId = -1;
+        AlphaFloor.reset();
+        lastGait = -1;
         seg = 1;
         handBack = false;
         stuckReplans = 0;
@@ -406,7 +432,7 @@ public final class Walk {
             return;
         }
         settleWaits = 0;
-        boolean canSprint = p.getFoodData().getFoodLevel() > 6;
+        boolean canSprint = canSprint(p);
         boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
         job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget);
         jobReplay = replayNext;
@@ -455,7 +481,7 @@ public final class Walk {
         if (!view.known(d[0], d[1])) return null;
         long start = startNode(view, p);
         if (start == View.NONE) return null;
-        return Planner.direct(view, start, d[0], d[1], walkY, costs(), margin(), p.getFoodData().getFoodLevel() > 6);
+        return Planner.direct(view, start, d[0], d[1], walkY, costs(), margin(), canSprint(p));
     }
 
     /** No way on to a far goal (layer 1's every reachable place searched, the walk at the floor nearest it, the goal past
@@ -474,7 +500,7 @@ public final class Walk {
         int x = View.nodeX(pick), z = View.nodeZ(pick);
         ChunkFloors c = view.chunk(x, z);
         double h = c.h(view.index(pick));
-        Planner.Plan dp = Planner.direct(view, start, x, z, h, costs(), margin(), p.getFoodData().getFoodLevel() > 6);
+        Planner.Plan dp = Planner.direct(view, start, x, z, h, costs(), margin(), canSprint(p));
         if (dp == null) return false;
         hop = new int[]{x, z};
         hopY = h;
@@ -589,11 +615,11 @@ public final class Walk {
                 handBack = true;
                 return handBackKeys(keys);
             }
-            if (state == State.PLANNING || !steering) return Input.EMPTY;   // stand while the first plan is made
-            if (layer2) return WorldSnapshot.input(Layer2.keys(p));
+            if (state == State.PLANNING || !steering) return underGait(p, Input.EMPTY);   // stand while the first plan is made
+            if (layer2) return underGait(p, WorldSnapshot.input(Layer2.keys(p)));
             int k = wantKeys ? Moves.keys(wantYaw, p.getYRot(), wantSprint ? Moves.SPRINT : Moves.WALK) : 0;
             if (wantJump) k |= MoveState.JUMP;
-            return WorldSnapshot.input(k);
+            return underGait(p, WorldSnapshot.input(k));
         } finally {
             measure(t0);
         }
@@ -640,6 +666,12 @@ public final class Walk {
         if (p == null || !active()) { measure(t0); return; }
         int[] d = destination();
         if (d == null) { cancel(); measure(t0); return; }
+        AlphaFloor.update(mc, p, tick);
+        int g = gait();
+        if (lastGait >= 0 && g != lastGait && state == State.WALKING) {
+            replanFor(AlphaFloor.on() ? "alpha floor on: " + AlphaFloor.why() : "alpha floor off", mc);
+        }
+        lastGait = g;
 
         // a plan in: the first one starts the walk; later ones replace the route
         if (job != null) {
@@ -857,7 +889,7 @@ public final class Walk {
         boolean walking = steering && !mc.isPaused();   // it walks on under a screen, unless the game pauses
         eta.blocksPerPoint = Settings.walkLayer2 ? 60.0 : 40.0;   // layer 2 sprint-jumps (the air costs no food)
         net.minecraft.world.food.FoodData food = p.getFoodData();
-        boolean canSprint = food.getFoodLevel() > 6;   // as the plans are made (replan)
+        boolean canSprint = canSprint(p);   // as the plans are made (replan): the gait and food
         eta.tick(p.getX(), p.getZ(), walking, canSprint);
         boolean peaceful = mc.level != null && mc.level.getDifficulty() == net.minecraft.world.Difficulty.PEACEFUL;
         etaRaw = eta.rawSeconds(food.getFoodLevel(), food.getSaturationLevel(), canSprint, peaceful);
@@ -922,7 +954,7 @@ public final class Walk {
         double px = p.getX(), py = p.getY(), pz = p.getZ();
         double tx = r.x[seg], ty = r.y[seg], tz = r.z[seg];
         double dist = Math.hypot(tx - px, tz - pz);
-        boolean canSprint = p.getFoodData().getFoodLevel() > 6;
+        boolean canSprint = canSprint(p);
         wantJump = false;
         wantKeys = true;
         wantSprint = canSprint;

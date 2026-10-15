@@ -173,12 +173,15 @@ class SettingsTest {
         // layer 2 (the movement search) and its display on: it presses only the game's own keys
         assertTrue(Settings.walkLayer2);
         assertTrue(Settings.walkLayer2Display);
-        // elytra hops off: they wear the elytra (RW's scope ruling: "hops off by default")
+        // elytra hops off: they wear the elytra (RW's scope ruling: "hops off by default"); the gait (RW 2026-10-14)
+        // at Sprint-jump, the walk as it was before the setting
         assertFalse(Settings.walkElytraHops);
+        assertEquals(Settings.GAIT_SPRINT_JUMP, Settings.walkGait);
+        assertTrue(Settings.WALK_GAIT.isChoice());
         assertTrue(Settings.WALK_MARGIN.isLevel());
         for (Settings.Option o : new Settings.Option[]{Settings.WALK_PATHFINDER, Settings.WALK_PATH_DISPLAY,
                 Settings.WALK_SEARCH_DISPLAY, Settings.WALK_MARGIN, Settings.WALK_LAYER2, Settings.WALK_LAYER2_DISPLAY,
-                Settings.WALK_ELYTRA_HOPS})
+                Settings.WALK_GAIT})
             assertEquals(Settings.Section.WALK, o.section);
         // the section switch and the all-features switch reach every one, each keeping its own setting
         Settings.setSectionOn(Settings.Section.WALK, false);
@@ -205,5 +208,54 @@ class SettingsTest {
         load(saved);
         assertEquals(35, Settings.walkMargin);
         assertTrue(Settings.walkSearchDisplay);
+    }
+
+    /** The gait setting (RW 2026-10-14, "add teh gaint"): four levels saved by key; the old Elytra hops switch is its top
+     *  level, so a file saved with it on reads as Elytra hops, and with it off as the default. */
+    @Test
+    void theGaitAndTheOldElytraHopsSwitch() throws Exception {
+        load("""
+            {"walkElytraHops": true}
+            """);
+        assertEquals(Settings.GAIT_HOPS, Settings.walkGait);
+        assertTrue(Settings.walkElytraHops);
+        Settings.save();
+        String saved = Files.readString(file);
+        assertTrue(saved.contains("\"walkGait\": \"elytraHops\""), saved);
+        assertFalse(saved.contains("walkElytraHops"), saved);
+        Settings.resetDefaults();
+        load("""
+            {"walkElytraHops": false}
+            """);
+        assertEquals(Settings.GAIT_SPRINT_JUMP, Settings.walkGait);
+        load("""
+            {"walkGait": "walk", "walkElytraHops": true}
+            """);
+        assertEquals(Settings.GAIT_WALK, Settings.walkGait, "the gait's own key wins");
+        assertFalse(Settings.walkElytraHops);
+        load("""
+            {"walkGait": "sprint"}
+            """);
+        assertEquals(Settings.GAIT_SPRINT, Settings.walkGait);
+        // the cycle: walk, sprint, sprint-jump, elytra hops, walk
+        Settings.WALK_GAIT.cycle();
+        assertEquals(Settings.GAIT_SPRINT_JUMP, Settings.walkGait);
+        Settings.WALK_GAIT.cycle();
+        assertEquals(Settings.GAIT_HOPS, Settings.walkGait);
+        assertTrue(Settings.walkElytraHops);
+        Settings.WALK_GAIT.cycle();
+        assertEquals(Settings.GAIT_WALK, Settings.walkGait);
+        assertFalse(Settings.walkElytraHops);
+        // Parkour needs sprint-jumps (RW 2026-10-14 22:46): off below Sprint-jump, its own setting kept
+        if (Settings.WALK_PARKOUR.value() == 0) Settings.WALK_PARKOUR.cycle();
+        assertFalse(Settings.walkParkour, "at Walk");
+        assertFalse(Settings.parkourAllowed());
+        assertEquals(1, Settings.WALK_PARKOUR.value(), "its own setting kept");
+        Settings.WALK_GAIT.cycle();
+        assertFalse(Settings.walkParkour, "at Sprint");
+        Settings.WALK_GAIT.cycle();
+        assertTrue(Settings.walkParkour, "at Sprint-jump, the user's own setting again");
+        Settings.WALK_GAIT.cycle();
+        assertTrue(Settings.walkParkour, "at Elytra hops");
     }
 }

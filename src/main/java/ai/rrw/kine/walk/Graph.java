@@ -268,6 +268,8 @@ final class Graph {
 
     /** One jump of the table from (x, z) at height ah, if its landing, gap and run-up are there. */
     private void jump(float ah, int x, int z, Jumps.Jump j) {
+        // without sprinting (the gait setting's Walk, or food at 6 or less) only the gaps a walking jump makes
+        if (!canSprint && !Jumps.walkable(j)) return;
         int lx = x + j.dx, lz = z + j.dz;
         ChunkFloors b = v.chunk(lx, lz);
         if (b == null) return;

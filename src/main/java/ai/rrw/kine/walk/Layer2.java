@@ -181,6 +181,8 @@ public final class Layer2 {
     /** The free search's memory toward the jump ahead (RunModel.FreeMemory): a new one for each landing. */
     private static volatile RunModel.FreeMemory freeMemory = null;
     private static long recipeTryKey = Long.MIN_VALUE;
+    /** Whether the field being built or in use counts sprinting (the gait and food when it was asked for). */
+    private static boolean fieldSprint = true;
     public static int recipesFound = 0, recipesPlayed = 0, recipesDropped = 0;
     public static String lastRecipe = "";
 
@@ -309,11 +311,12 @@ public final class Layer2 {
         int[][] land = new int[cand.length][];
         for (int k = 0; k < cand.length; k++)
             land[k] = new int[]{(int) Math.floor(f.x(cand[k])), (int) Math.round(f.y(cand[k])) - 1, (int) Math.floor(f.z(cand[k]))};
+        boolean sprint = Walk.gait() >= Settings.GAIT_SPRINT;   // the gait: at Walk, walking jumps only
         recipeJob = RECIPES.submit(() -> {
             GroundPhysics phys = new GroundPhysics(g, body);
             for (int[] l : land) {
                 float bearing = Recipe.yawTo(s.x, s.z, l[0] + 0.5, l[2] + 0.5);
-                Recipe r = Recipe.search(phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60);
+                Recipe r = Recipe.search(phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60, sprint);
                 if (r.found()) return r;
             }
             return null;
@@ -364,12 +367,13 @@ public final class Layer2 {
             fieldJob = null;
         }
         long[] path = plan.result.path;
-        boolean stale = field == null || field.path != path
+        boolean stale = field == null || field.path != path || fieldSprint != Walk.canSprint(p)
             || field.to < path.length - 1 && Field.nearestIndex(path, p.getX(), p.getZ()) > (field.from + field.to) / 2;
         if (stale && fieldJob == null && path.length > 0) {
             View v = WalkTable.snapshot();
             double px = p.getX(), pz = p.getZ();
-            boolean canSprint = p.getFoodData().getFoodLevel() > 6;
+            boolean canSprint = Walk.canSprint(p);
+            fieldSprint = canSprint;
             boolean reached = plan.result.found && !plan.result.viaExit && !plan.result.partial;
             Costs costs = Walk.costs();
             boolean glides = Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
@@ -441,11 +445,13 @@ public final class Layer2 {
             if (mem == null || mem.target != key) freeMemory = mem = new RunModel.FreeMemory(key);
         }
         RunModel.FreeMemory freeMem = mem;
+        int gait = Walk.gait();
         job = WORKER.submit(() -> {
             long r0 = System.nanoTime();
             RunModel model = new RunModel(new GroundPhysics(g, body), f, dest[0], dest[1], viewPitch, maxFall);
             model.parkour = parkour;
             model.goalY = goalY;
+            model.cap = gait;
             if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
             model.freeMemory = freeMem;
             model.now = at;

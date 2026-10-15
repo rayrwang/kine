@@ -71,6 +71,12 @@ public final class Settings {
     public static int collisionCooldown;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
         walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps;
+    /** The walk's gait (RW 2026-10-14, "add teh gaint"): the most the walk may use, as an Airbus thrust lever sets the
+     *  most the autothrust may command; it still jumps where the ground needs it. GAIT_WALK: no sprint key at all;
+     *  GAIT_SPRINT: sprinting, a jump only where the ground needs one; GAIT_SPRINT_JUMP: sprint-jumping as before (the
+     *  default); GAIT_HOPS: that and elytra hops (was the Elytra hops switch; walkElytraHops is this level). */
+    public static int walkGait;
+    public static final int GAIT_WALK = 0, GAIT_SPRINT = 1, GAIT_SPRINT_JUMP = 2, GAIT_HOPS = 3;
     /** The walking route's safety margin, hundredths of a block. */
     public static int walkMargin;
     public static Show displaySpeed, displayGroundSpeed,
@@ -216,7 +222,9 @@ public final class Settings {
     public static final Option WALK_MARGIN                = level("walkSafetyMargin", WALK, 20, 50, v -> walkMargin = v);
     public static final Option WALK_LAYER2                = toggle("walkLayer2", WALK, true, v -> walkLayer2 = v);
     public static final Option WALK_LAYER2_DISPLAY        = toggle("walkLayer2Display", WALK, true, v -> walkLayer2Display = v);
-    public static final Option WALK_ELYTRA_HOPS           = toggle("walkElytraHops", WALK, false, v -> walkElytraHops = v);
+    public static final Option WALK_GAIT                  = choice("walkGait", WALK,
+        new String[]{"WALK", "SPRINT", "SPRINT-JUMP", "ELYTRA HOPS"}, new String[]{"walk", "sprint", "sprintJump", "elytraHops"},
+        GAIT_SPRINT_JUMP, v -> { walkGait = v; walkElytraHops = v == GAIT_HOPS; });
     public static final Option WALK_PARKOUR               = toggle("walkParkour", WALK, false, v -> walkParkour = v);
     public static final Option WALK_DIRECT                = toggle("walkDirect", WALK, true, v -> walkDirect = v);
     public static final Option WALK_FREE_JUMPS            = toggle("walkFreeJumps", WALK, true, v -> walkFreeJumps = v);
@@ -262,6 +270,14 @@ public final class Settings {
     /** Write every feature's effective value: its own setting while its section and the mod are on, else off. */
     public static void apply() {
         for (Option o : ALL) o.field.accept(enabled && SECTION_ON.get(o.section) ? o.value : 0);
+        if (!parkourAllowed()) walkParkour = false;
+    }
+
+    /** Parkour needs sprint-jumping (RW 2026-10-14 22:46, "gray out hte parkor lock to off if the gaint lowr htan sprint
+     *  jump"): below the Sprint-jump gait it is off and its row greyed, its own setting kept for when the gait goes back
+     *  up. */
+    public static boolean parkourAllowed() {
+        return walkGait >= GAIT_SPRINT_JUMP;
     }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -291,6 +307,10 @@ public final class Settings {
                     opt.set(v.getAsBoolean() ? 1 : 0);
                 }
             }
+            // the gait's top level was the Elytra hops switch: a file from before the gait reads its true as that level
+            JsonElement hops = o.get("walkElytraHops");
+            if (o.get(WALK_GAIT.key) == null && hops != null && hops.isJsonPrimitive() && hops.getAsJsonPrimitive().isBoolean()
+                && hops.getAsBoolean()) WALK_GAIT.set(GAIT_HOPS);
             if (o.has("enabled") && o.get("enabled").isJsonPrimitive()) enabled = o.get("enabled").getAsBoolean();
             if (o.has("navArrival") && o.get("navArrival").isJsonPrimitive()) navArrival = o.get("navArrival").getAsString();
             for (Section s : Section.values()) {

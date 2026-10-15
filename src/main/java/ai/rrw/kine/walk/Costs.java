@@ -95,6 +95,59 @@ public final class Costs {
 
     public static final Costs LAYER2 = layer2();
 
+    /** The gait setting's top speeds on foot, on the movement copy (GaitSpeedTest, 2026-10-14): walking 4.376 m/s at
+     *  the most (on blue ice; 4.317 on stone, and no faster with jumps: a jump adds its push only while sprinting),
+     *  sprinting 5.689 (blue ice; 5.612 on stone). The estimate's rate at each, a little under: 20 / 4.40 and 20 / 5.72
+     *  ticks a block. (Sprint-jumping keeps fastest's 7.127, measured on stone: on ice it reaches 9.3.) */
+    public static final double WALK_FASTEST = 20 / 4.40, SPRINT_FASTEST = 20 / 5.72;
+    /** A sprint, and a swim, a block at Walk and Sprint (layer 2 on the copy: a swim without sprinting 8.5). */
+    public static final double SPRINT_RATE = 20 / 5.612, SWIM_WALKING = 8.5;
+
+    private static final Costs[] LAYER2_BY_GAIT = byGait(LAYER2), BARITONE_BY_GAIT = byGait(BARITONE);
+
+    /** These costs at a gait (Settings.GAIT_*): the rates and the estimate's top speed at the fastest it allows, so
+     *  the estimate never exceeds a cost; Sprint-jump and Elytra hops as they are. */
+    public static Costs forGait(Costs base, int gait) {
+        Costs[] t = base == LAYER2 ? LAYER2_BY_GAIT : base == BARITONE ? BARITONE_BY_GAIT : null;
+        if (t != null) return t[Math.max(0, Math.min(t.length - 1, gait))];
+        return atGait(base, gait);
+    }
+
+    private static Costs[] byGait(Costs base) {
+        Costs[] t = new Costs[4];
+        for (int g = 0; g < 4; g++) t[g] = atGait(base, g);
+        return t;
+    }
+
+    static Costs atGait(Costs base, int gait) {
+        if (gait >= ai.rrw.kine.Settings.GAIT_SPRINT_JUMP) return base;
+        Costs c = base.copy();
+        if (gait == ai.rrw.kine.Settings.GAIT_WALK) {
+            // walking everywhere: the walk's rate (as without sprinting), a swim without sprint
+            c.sprint = c.noSprint;
+            c.walk = c.noSprint;
+            c.noSprintFactor = 1.0;
+            c.water = Math.max(c.water, SWIM_WALKING);
+            c.fastest = WALK_FASTEST;
+        } else {
+            // sprinting, no pace jumps: a sprint's rate where layer 2 would sprint-jump
+            c.sprint = Math.max(base.sprint, SPRINT_RATE);
+            c.walk = base.walk == base.sprint ? c.sprint : base.walk;   // layer 2's table runs everything at its sprint
+            c.noSprintFactor = c.noSprint / c.sprint;
+            c.fastest = SPRINT_FASTEST;
+        }
+        return c;
+    }
+
+    /** A copy of every number. */
+    Costs copy() {
+        Costs t = timeOnly();
+        t.hazardNear = hazardNear;
+        t.waterPenalty = waterPenalty;
+        t.glideWear = glideWear;
+        return t;
+    }
+
     /** The same costs as time alone (ticks), for the arrival time: no penalty for a hazard next to the way, for
      *  getting into water or for the elytra's wear. */
     public Costs timeOnly() {

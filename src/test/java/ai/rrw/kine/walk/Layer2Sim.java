@@ -69,7 +69,11 @@ final class Layer2Sim {
     final BlockGrid grid;
     final Body body = new Body();
     final GroundPhysics phys;
-    final Costs costs = Costs.layer2();
+    private final Costs base = Costs.layer2();
+    /** The costs at the gait (set at each walk). */
+    Costs costs = base;
+    /** The gait setting (Settings.GAIT_*): the costs, layer 1's sprinting, layer 2's cap and the jump search's. */
+    int gait = ai.rrw.kine.Settings.GAIT_SPRINT_JUMP;
     RecedingSearch.Effort effort = new RecedingSearch.Effort();
     PathSearch.Result lastRoute;
     /** The gaits the search may use (RunModel.GAITS, or BASE_GAITS without sneaking). */
@@ -109,6 +113,8 @@ final class Layer2Sim {
     boolean wentDirect;
     long directFieldNanos;
     int glideTicks = 0;
+    /** Ticks the copy's player was sprinting (after the tick), all walks. */
+    int sprintTicks = 0;
 
     Layer2Sim(TestWorld w) {
         this.world = w;
@@ -172,15 +178,28 @@ final class Layer2Sim {
 
     /** Walk with layer 2 from s to column (gx, gz). */
     Outcome walk(MoveState s, float yaw, int gx, int gz, int maxTicks) {
+        costs = Costs.atGait(base, gait);
+        boolean canSprint = gait >= ai.rrw.kine.Settings.GAIT_SPRINT;
+        // Parkour needs sprint-jumping (as Settings.parkourAllowed): off below Sprint-jump for this walk
+        boolean parkourSet = parkour;
+        if (gait < ai.rrw.kine.Settings.GAIT_SPRINT_JUMP) parkour = false;
+        try {
+            return walkAtGait(s, yaw, gx, gz, maxTicks, canSprint);
+        } finally {
+            parkour = parkourSet;
+        }
+    }
+
+    private Outcome walkAtGait(MoveState s, float yaw, int gx, int gz, int maxTicks, boolean canSprint) {
         long start = view.nodeAt((int) Math.floor(s.x), s.y, (int) Math.floor(s.z));
         if (start == View.NONE) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "no start floor");
         if (glides) { body.canGlide = true; body.glide = true; }
-        PathSearch ps = new PathSearch(view, costs).gaps(parkour).glides(glides).goalY(goalY);
+        PathSearch ps = new PathSearch(view, costs).canSprint(canSprint).gaps(parkour).glides(glides).goalY(goalY);
         PathSearch.Result r = ps.run(start, gx, gz, 1.0, Long.MAX_VALUE, 2_000_000, false);
         wentDirect = false;
         boolean nearestWay = !r.found && !forceDirect && acceptNearest && r.nearest && r.path.length > 1;
         if ((!r.found || forceDirect) && direct && !nearestWay) {
-            Planner.Plan dp = Planner.direct(view, start, gx, gz, goalY, costs, 0.2, true);
+            Planner.Plan dp = Planner.direct(view, start, gx, gz, goalY, costs, 0.2, canSprint);
             if (dp == null) return new Outcome(false, 0, 0, 0, 0, 0, List.of(), "layer 1: no route, and no goal floor");
             r = dp.result;
             wentDirect = true;
@@ -213,11 +232,11 @@ final class Layer2Sim {
         for (int t = 0; t < maxTicks; t++) {
             if (f == null || f.to < r.path.length - 1
                 && Field.nearestIndex(r.path, s.x, s.z) > (f.from + f.to) / 2) {
-                if (route == null) route = new Tighten(view, costs, 0.2, true).route(r, gx, gz);
+                if (route == null) route = new Tighten(view, costs, 0.2, gait >= ai.rrw.kine.Settings.GAIT_SPRINT).route(r, gx, gz);
                 if (wentDirect) {
-                    f = Field.direct(view, costs, true, parkour, glides, 1, r.path, gx, gz, goalY);
+                    f = Field.direct(view, costs, gait >= ai.rrw.kine.Settings.GAIT_SPRINT, parkour, glides, 1, r.path, gx, gz, goalY);
                     directFieldNanos = f.buildNanos;
-                } else f = Field.build(view, costs, true, parkour, glides, 1, r.path, route, s.x, s.z, gx, gz, goalY, !r.viaExit && !r.partial);
+                } else f = Field.build(view, costs, gait >= ai.rrw.kine.Settings.GAIT_SPRINT, parkour, glides, 1, r.path, route, s.x, s.z, gx, gz, goalY, !r.viaExit && !r.partial);
                 prev = null;
             }
             // walking without a route (as Layer2): on a floor the graph doesn't join to the goal, a jump found in the copy
@@ -230,7 +249,7 @@ final class Layer2Sim {
                     for (int c : f.joinedNear(s.x, s.y, s.z, 6.0, 3)) {
                         int lx = (int) Math.floor(f.x(c)), ly = (int) Math.round(f.y(c)) - 1, lz = (int) Math.floor(f.z(c));
                         float bearing = Recipe.yawTo(s.x, s.z, lx + 0.5, lz + 0.5);
-                        Recipe rc = Recipe.search(phys, s, sentYaw, lx, ly, lz, bearing - 90f, bearing + 90f, 6f, 8, 8, 60);
+                        Recipe rc = Recipe.search(phys, s, sentYaw, lx, ly, lz, bearing - 90f, bearing + 90f, 6f, 8, 8, 60, gait >= ai.rrw.kine.Settings.GAIT_SPRINT);
                         if (rc.found()) { recipe = rc; recipeT = 0; recipesFound++; break; }
                     }
                 }
@@ -242,6 +261,7 @@ final class Layer2Sim {
                 sentYaw = recipe.yaw[recipeT];
                 boolean ground0 = s.onGround;
                 phys.step(s, recipe.keys[recipeT], sentYaw, 0f);
+                if (s.sprinting) sprintTicks++;
                 if ((recipe.keys[recipeT] & MoveState.JUMP) != 0 && ground0 && !s.onGround) jumps++;
                 recipeT++;
                 path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
@@ -256,6 +276,7 @@ final class Layer2Sim {
             model.gaits = glides ? RunModel.GLIDE_GAITS : gaits;
             model.airAware = airAware;
             model.parkour = parkour;
+            model.cap = gait;
             model.goalY = goalY;   // the destination's Y (as the game's): only that floor of the goal column
             if (parkour && freeJumps) {
                 double[] tg = f.jumpAhead(s.x, s.y, s.z, 5.0);
@@ -290,6 +311,7 @@ final class Layer2Sim {
             if ((w.lastKeys & MoveState.JUMP) != 0 && ground && !w.s.onGround) jumps++;
             s = w.s;
             if (s.fallFlying) glideTicks++;
+            if (s.sprinting) sprintTicks++;
             sentYaw = w.sentYaw; sentPitch = w.sentPitch;
             path.add(new double[]{s.x, s.y, s.z, (s.inWater ? 1 : 0) + (s.swimming ? 2 : 0) + (s.onGround ? 4 : 0) + (s.eyesInWater ? 8 : 0),
                 w.lastKeys, s.air, s.drownDamage});

@@ -32,6 +32,23 @@ final class Jumps {
         {4, 1, 1, 1}, {3, 3, 1, 1}, {4, 2, 1, 2},
     };
 
+    /** The jumps of TABLE ({dx, dz, dh}) a walk without the sprint key makes (GapReachTest.whatAWalkingJumpClears,
+     *  2026-10-14: the same ways, no sprint key, at least 20 of about 200 landing with the best 0.1 inside, from a
+     *  standing start and from a run-up of 2 both): gaps of one and two blocks level or one down, of one block one up.
+     *  Without sprinting (the gait setting's Walk, or food at 6 or less) layer 1 offers only these. */
+    static final int[][] WALKABLE = {
+        {2, 0, -1}, {2, 1, -1}, {2, 2, -1}, {3, 0, -1}, {3, 1, -1}, {3, 2, -1},
+        {2, 0, 0}, {2, 1, 0}, {2, 2, 0}, {3, 0, 0}, {3, 1, 0}, {3, 2, 0},
+        {2, 0, 1}, {2, 1, 1}, {2, 2, 1},
+    };
+
+    /** Whether a walk without the sprint key makes this jump (WALKABLE, either way across). */
+    static boolean walkable(Jump j) {
+        int ax = Math.abs(j.dx), az = Math.abs(j.dz), a = Math.max(ax, az), b = Math.min(ax, az);
+        for (int[] w : WALKABLE) if (w[0] == a && w[1] == b && w[2] == j.dh) return true;
+        return false;
+    }
+
     /** The half width of the band of columns the player's box (0.3 each side) may sweep, with slack for the heading. */
     static final double BAND = 0.45;
 
