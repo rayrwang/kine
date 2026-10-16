@@ -32,14 +32,17 @@ dependencies {
 	testImplementation "org.junit.jupiter:junit-jupiter"
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
+// the annotations' shapes from the oldest Mixin the jar admits, not the development release's (versions/table.gradle)
+kineCompileAgainstMixinFloor(project, kineDev.family)
 
 test {
 	useJUnitPlatform()
 	// Minecraft's log4j setup writes logs/latest.log in the working directory; keep it out of the repo
 	workingDir = layout.buildDirectory.dir("test-run").get().asFile
 	doFirst { workingDir.mkdirs() }
-	// the release whose rules the copies follow (compat/Rules.java): the development one
-	systemProperty 'kine.minecraft', kineDev.minecraft
+	// the release whose rules the copies follow (compat/Rules.java): the one the tests' recordings and expectations
+	// come from (gradle.properties' unit_test_release), not the development release, so dev_version changes no test
+	systemProperty 'kine.minecraft', project.property('unit_test_release')
 }
 
 // The physics and mob copies replayed against another release's recorded traces (versions/README.md):
@@ -61,7 +64,7 @@ tasks.register('traceTest', Test) {
 	group = 'verification'
 	description = 'Replays a release\'s recorded traces through the copies.'
 	def tracesDir = project.findProperty('traces')
-	def release = project.findProperty('release') ?: kineDev.minecraft
+	def release = project.findProperty('release') ?: project.property('unit_test_release')
 	testClassesDirs = sourceSets.test.output.classesDirs
 	// the release must be in the epoch table GameVersion reads; the jar's holds only the development family, so every
 	// release's rows come first here (only the release counts: the copies run no epoch code)
@@ -135,6 +138,49 @@ jar {
 	}
 }
 
+// The jar is the same whatever dev_version is (versions/README.md). Two things in it would otherwise follow the
+// development release: the manifest lines Loom writes after the jar is written (the release, loader and Mixin it ran
+// the build with), and the entries' order (the development epoch's classes come first, from the main source set).
+// So, once Loom's own action has run, the jar is rewritten: the family's values in those lines (its range, and the floor
+// loader and Mixin the code is compiled against), the entries in name order, each with the time it had.
+afterEvaluate {
+	def mixin = kineMixinFloor(project, kineDev.family).find { it.startsWith('net.fabricmc:sponge-mixin:') }.split(':')[2]
+	def values = ['Fabric-Minecraft-Version': family.label, 'Fabric-Loader-Version': family.loaderMin, 'Fabric-Mixin-Version': mixin]
+	tasks.named('jar') {
+		inputs.property 'familyManifest', values
+		doLast {
+			def jarFile = archiveFile.get().asFile
+			def entries = new java.util.TreeMap<String, Object[]>()   // name -> {entry, bytes}
+			new java.util.zip.ZipFile(jarFile).withCloseable { z ->
+				z.entries().each { e -> entries[e.name] = [e, z.getInputStream(e).bytes] as Object[] }
+			}
+			def mfEntry = entries['META-INF/MANIFEST.MF']
+			if (mfEntry != null) {
+				def m = new java.util.jar.Manifest(new ByteArrayInputStream((byte[]) mfEntry[1]))
+				values.each { k, v -> m.mainAttributes.putValue(k, v) }
+				def out = new ByteArrayOutputStream()
+				m.write(out)
+				mfEntry[1] = out.toByteArray()
+			}
+			def tmp = new File(jarFile.path + '.tmp')
+			new java.util.zip.ZipOutputStream(new FileOutputStream(tmp)).withCloseable { zo ->
+				// the manifest first, where a jar reader looks for it, then every other entry in name order
+				def names = entries.keySet().toList()
+				['META-INF/', 'META-INF/MANIFEST.MF'].reverse().each { n -> if (names.remove(n)) names.add(0, n) }
+				names.each { n ->
+					def e = (java.util.zip.ZipEntry) entries[n][0]
+					def ne = new java.util.zip.ZipEntry(n)
+					ne.time = e.time
+					zo.putNextEntry(ne)
+					zo.write((byte[]) entries[n][1])
+					zo.closeEntry()
+				}
+			}
+			java.nio.file.Files.move(tmp.toPath(), jarFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+		}
+	}
+}
+
 // `./gradlew build` checks that the jar runs on every release of the family (versions/check.gradle)
 def versionChecks = tasks.register('versionCheck') {
 	group = 'verification'
@@ -144,6 +190,18 @@ gradle.projectsEvaluated {
 	versionChecks.configure { t -> subprojects.findAll { it.name.startsWith('check-') }.each { t.dependsOn("${it.path}:versionCheck") } }
 }
 tasks.named('check') { dependsOn versionChecks }
+
+// `./gradlew build` also checks every release's mixins against its game classes (versions/mixincheck.gradle)
+apply from: 'versions/mixincheck.gradle'
+def mixinChecks = tasks.register('mixinChecks') {
+	group = 'verification'
+	description = "Kine's mixins against every release, without starting the game."
+	dependsOn 'mixinCheck'
+}
+gradle.projectsEvaluated {
+	mixinChecks.configure { t -> subprojects.findAll { it.name.startsWith('check-') }.each { t.dependsOn("${it.path}:mixinCheck") } }
+}
+tasks.named('check') { dependsOn mixinChecks }
 
 // and each older family's jar (versions/family.gradle)
 tasks.named('assemble') { t -> kineFamilies.findAll { it != kineDev.family }.each { f -> t.dependsOn(":family-${f}:familyJar") } }

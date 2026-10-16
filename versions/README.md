@@ -43,7 +43,12 @@
   left out unless the build is run with `-Pkine.pending=true`.
 
 - **`gradle.properties` `dev_version`** is the release `./gradlew runClient` runs, and where features are written
-  first.
+  first. It changes nothing in the jars: the shared code links the same on every release (the version check), every
+  family's code is compiled against the Mixin and MixinExtras of the oldest loader its jar admits (versions/table.gradle:
+  javac writes an annotation's values in the shape the Mixin it compiles against declares, and an older Mixin can't
+  read a newer one's: Fabric Mixin 0.17.4 made @Redirect's `at` an array, which 0.17.2 fails on), and the 26.x jar is
+  rewritten after Loom with the family's values in its manifest and its entries in name order. The unit tests run
+  under `unit_test_release`'s rules, the release their recordings come from, not `dev_version`'s.
 
 - **A family** is the releases one jar covers: 26.x, which is unobfuscated, and 1.21.x, which runs with intermediary
   names.
@@ -70,9 +75,10 @@
   - It catches what compiling alone does not: a method made static, a field whose type changed, a method that kept
     its name but changed its intermediary, a constant inlined with another value. It prints the class and both
     releases' code.
-- `../tools/mixincheck.sh <release>` (in the porting folder; to move into the build) checks every mixin's targets
-  against a release without starting the game (for a 1.21.x release, after `-Pkine.pending=true
-  :check-<release>:compileJava :<epoch>:compileJava`).
+- The mixin check (`mixinChecks`, part of `build`; `mixinCheck` in each `check-<release>` project and the root, from
+  versions/mixincheck.gradle and versions/MixinCheck.java) checks every mixin a release applies against that release's
+  game classes, without starting the game: targets, injection points, handler parameters, accessors, shadows. It also
+  holds every Mixin and MixinExtras annotation to the shape the oldest Mixin the jar admits declares (below).
 - `./gradlew traceTest -Prelease=26.3 -Ptraces=<dir>` replays a release's recorded traces (`<dir>/move/*_traces*`)
   through the physics and mob copies, with that release's `Rules`.
 

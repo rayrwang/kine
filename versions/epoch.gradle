@@ -25,6 +25,9 @@ dependencies {
 	}
 }
 
+// the annotations' shapes from the family's floor Mixin, whatever this epoch's own loader (versions/table.gradle)
+kineCompileAgainstMixinFloor(project, row.family)
+
 tasks.named('compileJava') { dependsOn(devFamily ? ':compileJava' : ":check-${row.minecraft}:compileJava") }
 tasks.withType(JavaCompile).configureEach { it.options.release = row.java }
 if (!devFamily) loom { mixin { useLegacyMixinAp = false } }   // mixin targets remapped in the classes, no refmap

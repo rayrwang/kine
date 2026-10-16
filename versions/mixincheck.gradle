@@ -1,0 +1,62 @@
+// The mixin check of one release (versions/README.md), applied by the root project (the development release) and by
+// each check-<release> project: versions/MixinCheck.java run on the mixins that release applies (kine.mixins.json's
+// and its epoch's list), against that release's game classes and libraries, and with the annotations' shapes held to
+// the oldest Mixin the family's jar admits (versions/table.gradle). It fails the build on a target, injection point or
+// handler that doesn't fit the release, and on an annotation that release's oldest admitted Mixin can't read. No game
+// is started. `./gradlew mixinCheck` runs it for every release (part of `build`).
+apply from: rootProject.file('versions/table.gradle')
+
+def release = project == rootProject ? kineDev.minecraft : project.name.substring('check-'.length())
+def row = kineRows.find { it.minecraft == release }
+def devFamily = row.family == kineDev.family
+
+// the epoch's own classes (named, before any remapping): the root's for the development epoch, else its project's
+// (by its directory, read when the task runs: that project may not be configured yet)
+def epochProject = row.epoch == kineDev.epoch && devFamily ? rootProject : project(":${row.epoch}")
+def epochDir = epochProject.layout.buildDirectory.dir('classes/java/main')
+def epochClasses = "${epochProject.path == ':' ? '' : epochProject.path}:classes"
+
+def asm = configurations.detachedConfiguration(dependencies.create('org.ow2.asm:asm-tree:9.10.1'))
+def floor = configurations.detachedConfiguration(*kineMixinFloor(project, row.family).collect { dependencies.create(it) })
+floor.transitive = false
+
+def mixinLists = [rootProject.file('src/main/resources/kine.mixins.json'),
+				  rootProject.file("versions/${row.epoch}/src/main/resources/kine-mixins-${row.epoch}.txt")]
+
+tasks.register('mixinCheck') {
+	group = 'verification'
+	description = "Kine's mixins against Minecraft ${release}, without starting it (versions/MixinCheck.java)."
+	dependsOn 'classes', epochClasses
+	def tool = rootProject.file('versions/MixinCheck.java')
+	def classes = files(sourceSets.main.output.classesDirs, epochDir)
+	def classpath = sourceSets.main.compileClasspath
+	inputs.files(classes).withPropertyName('classes')
+	inputs.files(classpath).withPropertyName('classpath')
+	inputs.files(floor).withPropertyName('floor')
+	inputs.files(asm).withPropertyName('asm')
+	inputs.files(mixinLists + [tool]).withPropertyName('tool')
+	def dir = layout.buildDirectory.dir('mixin-check')
+	outputs.dir(dir)
+	doLast {
+		def d = dir.get().asFile
+		d.mkdirs()
+		// the mixins this release applies: kine.mixins.json's, then the epoch's list (both relative to its package)
+		def cfg = new groovy.json.JsonSlurper().parse(mixinLists[0])
+		def names = ((cfg.client ?: []) + (cfg.mixins ?: [])).collect { cfg['package'] + '.' + it }
+		mixinLists[1].eachLine { l -> l = l.trim(); if (l && !l.startsWith('#')) names << cfg['package'] + '.' + l }
+		new File(d, 'mixins.txt').text = names.join('\n') + '\n'
+		new File(d, 'classpath.txt').text = classpath.files*.absolutePath.join('\n') + '\n'
+		new File(d, 'floor.txt').text = floor.files*.absolutePath.join('\n') + '\n'
+		def java = new File(System.getProperty('java.home'), 'bin/java').absolutePath
+		def cmd = [java, '-cp', asm.files*.absolutePath.join(File.pathSeparator), tool.absolutePath,
+				   classes.files.findAll { it.exists() }*.absolutePath.join(File.pathSeparator),
+				   new File(d, 'mixins.txt').absolutePath, new File(d, 'classpath.txt').absolutePath,
+				   new File(d, 'floor.txt').absolutePath]
+		def proc = new ProcessBuilder(cmd).redirectErrorStream(true).start()
+		def text = proc.inputStream.text
+		int rc = proc.waitFor()
+		new File(d, 'result.txt').text = text
+		if (rc != 0) throw new GradleException("Kine's mixins don't fit Minecraft ${release}:\n" + text.trim())
+		logger.info("mixinCheck ${release}: " + text.readLines().last())
+	}
+}

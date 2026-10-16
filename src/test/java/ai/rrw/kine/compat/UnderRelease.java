@@ -10,7 +10,7 @@ import java.util.function.Supplier;
 
 /**
  * Runs test code under another release's rules. Rules fixes each flag when the class starts, from the release in the
- * kine.minecraft property, so one test JVM sees only the development release's. Here the kine classes are loaded
+ * kine.minecraft property, so one test JVM sees only gradle.properties' unit_test_release's. Here the kine classes are loaded
  * afresh in a class loader of their own: Rules starts there with the release asked for (and GameVersion is handed a
  * table that names it, since the build's table holds only the development family), and the code given runs there, so
  * the copies it calls take that release's branches. For unit tests of a rule's other side; a release's recorded traces

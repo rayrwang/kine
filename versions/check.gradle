@@ -22,7 +22,6 @@ repositories { mavenCentral() }
 dependencies {
 	minecraft "com.mojang:minecraft:${row.minecraft}"
 	if (devFamily) {
-		// the development build's loader (its Mixin version shapes the annotations), so only the game differs
 		implementation "net.fabricmc:fabric-loader:${kineDev.loader}"
 		implementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
 	} else {
@@ -31,6 +30,9 @@ dependencies {
 		modImplementation "net.fabricmc.fabric-api:fabric-api:${row.fabricApi}"
 	}
 }
+
+// the annotations' shapes from the family's floor Mixin, as the jar's copy has them (versions/table.gradle)
+kineCompileAgainstMixinFloor(project, row.family)
 
 def shared = [rootProject.file('src/main/java'), rootProject.file("versions/${row.family}/src/main/java")]
 if (devFamily) {
@@ -122,3 +124,6 @@ tasks.register('versionCheck') {
 		}
 	}
 }
+
+// the mixin check of this release (versions/mixincheck.gradle)
+apply from: rootProject.file('versions/mixincheck.gradle')

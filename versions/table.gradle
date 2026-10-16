@@ -50,9 +50,46 @@ def familyOf = { String fam ->
 	 loaderMin: minOf(fr*.loader), fabricApiMin: minOf(fr*.fabricApi), java: fr*.java.min()]
 }
 
+// The Mixin and MixinExtras a family's code is compiled against (versions/README.md): those the oldest loader its jar
+// admits brings (fabric.mod.json's floor, loaderMin), as 'group:name:version' to force on a compile class path. javac
+// writes an annotation's values in the shape the annotation class it compiles against declares: Fabric Mixin 0.17.4
+// (loader 0.19.5) made @Redirect's and @ModifyVariable's `at` an array, and 0.17.2 (loader 0.19.2) reads a single
+// value and fails on an array (MixinExtras' redirect transformer: ClassCastException, ArrayList to AnnotationNode),
+// while newer Mixins read the older shape. So code compiled against the floor's runs on every loader the jar admits,
+// and the jar doesn't depend on the development release's row. Read from the floor loader's fabric-installer.json.
+def mixinFloor = { Project p, String fam ->
+	def cache = p.rootProject.extensions.extraProperties
+	def key = 'kineMixinFloor_' + fam
+	if (cache.has(key)) return cache.get(key)
+	def loader = familyOf(fam).loaderMin
+	def conf = p.configurations.detachedConfiguration(p.dependencies.create("net.fabricmc:fabric-loader:${loader}"))
+	conf.transitive = false
+	def zip = new java.util.zip.ZipFile(conf.singleFile)
+	def json
+	try {
+		json = new groovy.json.JsonSlurper().parse(zip.getInputStream(zip.getEntry('fabric-installer.json')))
+	} finally {
+		zip.close()
+	}
+	def libs = json.libraries.values().flatten()*.name.findAll {
+		it.startsWith('net.fabricmc:sponge-mixin:') || it.startsWith('io.github.llamalad7:mixinextras-')
+	}.unique()
+	if (libs.size() < 2) throw new GradleException("fabric-loader ${loader}: no Mixin and MixinExtras in its fabric-installer.json")
+	cache.set(key, libs)
+	libs
+}
+
+// Compile this project's main code against its family's floor Mixin and MixinExtras (mixinFloor above).
+def compileAgainstMixinFloor = { Project p, String fam ->
+	def libs = mixinFloor(p, fam)
+	p.configurations.named('compileClasspath') { it.resolutionStrategy.force(*libs) }
+}
+
 ext.kineRows = rows
 ext.kineDev = dev
 ext.kineCompare = cmp
 ext.kineFamily = familyOf
+ext.kineMixinFloor = mixinFloor
+ext.kineCompileAgainstMixinFloor = compileAgainstMixinFloor
 
 ext.kineFamilies = rows*.family.unique()
