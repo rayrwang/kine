@@ -81,6 +81,13 @@ public final class Walk {
      *  job is the last search, from another place. In PLANNING it is not taken: its plan was made before a fall or a
      *  hop across, and its verdict (no way onto the goal) is not this place's. */
     private static boolean jobStale = false;
+    /** KINE_STALL_LOG (or KINE_SEARCH_LOG) set: a log line when an active walk has not moved half a block in STALL_TICKS
+     *  ticks, and every STALL_TICKS after, with the walk's state and per-walk memories (which one holds a stuck walk;
+     *  a fresh Go clears them all), and one when it moves on. */
+    static final boolean STALL_LOG = System.getenv("KINE_STALL_LOG") != null || Layer2.SEARCH_LOG;
+    static final int STALL_TICKS = 100;
+    private static double stallX = 0, stallY = 0, stallZ = 0;
+    private static int stallSince = 0, stallLogged = 0;
     private static Planner.Plan plan = null;        // the route being walked
     private static long planId = -1;
     private static int planPass = -1;
@@ -164,8 +171,14 @@ public final class Walk {
         double n = Hop.nearness(c, g, y, walkY);
         boolean step = n < hopBest.n - Hop.progress(c, walkY, HOP_PROGRESS);
         hopBest.stood(n, g, Hop.tie(c, walkY));
+        if (step) hopsBlind = 0;
         return step;
     }
+
+    /** Hops since the walk last stood a real step nearer the goal (hopStood): HOP_MAX bounds these, not the walk's hops
+     *  (200 in a walk stopped the Kine Parkour course's unbroken walk short of its end: about two hops a jump, 121 jumps;
+     *  cH1 stood at 196 by #93, and a fresh Go reset it). */
+    private static int hopsBlind = 0;
 
     /** The tick the walk came onto the hop's floor (now, the first time asked). */
     private static int hopOnTick(int now) {
@@ -209,6 +222,11 @@ public final class Walk {
         if (Settings.walkFallDamage <= 0) return 0;
         LocalPlayer p = Minecraft.getInstance().player;
         if (p == null) return 0;
+        // only toward a near goal (NEAR_GOAL): toward a far one the floor nearest it is the way's end, chosen by distance
+        // whatever the falls to it, and with damage allowed it lay on the ground under the Kine Parkour course: the walk
+        // dropped off the course after #5 and stopped at #6 (RW's settings from 2026-10-16 04:03, Fall damage allowed 2,
+        // for the Parkour Spiral's leg 13; the gate's q39_g2a, CB400_40, CB_41)
+        if (!nearGoal(destination())) return 0;
         return Math.max(0, Math.min(Settings.walkFallDamage, (int) Math.floor(p.getHealth()) - 8));
     }
 
@@ -235,10 +253,12 @@ public final class Walk {
         if (p.isSprinting()) p.setSprinting(false);
         return k.sprint() ? new Input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), k.shift(), false) : k;
     }
-    /** The strict search's time for a walk's first plan and for a replan. KINE_PLAN_BUDGET_MS (tests) sets both: a
-     *  loaded machine's real-time game ran out of the 400 ms where the lockstep tests didn't (RW's walk log 2026-10-16
-     *  02:15: plan 1 "out of time", a partial route, walked while the loose job searched). */
-    public static final long FIRST_BUDGET = budget(400_000_000L), REPLAN_BUDGET = budget(200_000_000L);
+    /** The strict search's time for a walk's first plan and for a replan: 1000 and 500 ms (were 400 and 200). On RW's
+     *  loaded machine the first plan ran out of 400 ms in every walk logged on 2026-10-16 (plan 1 "out of time": a partial
+     *  route walked toward the sea's edge while the loose job searched from the start, the corner at 02:15, the swaps at
+     *  03:14 and 03:56) where the same search ended in time in the lockstep tests (no way: the loose job at once). RW
+     *  03:59: a cap is not a strict constraint, raised within reason. KINE_PLAN_BUDGET_MS (tests) sets both. */
+    public static final long FIRST_BUDGET = budget(1_000_000_000L), REPLAN_BUDGET = budget(500_000_000L);
 
     private static long budget(long nanos) {
         String ms = System.getenv("KINE_PLAN_BUDGET_MS");
@@ -379,25 +399,38 @@ public final class Walk {
         peakY = mc.player.getY();
         lastStand = View.NONE;
         retraces = 0;
+        gapSeg = -1;
+        wasOnGround = true;
+        looseFalls.clear();
+        fellGaps.clear();
         dismissed = false;
         endPreview();
         Afloat.disarm();
         if (job != null) job.cancelled = true;   // an earlier walk's search: its plan is not for this walk
         job = null;
         jobStale = false;
+        jobKeep = Double.NaN;
+        planKeep = Double.NaN;
+        stallX = mc.player.getX(); stallY = mc.player.getY(); stallZ = mc.player.getZ();
+        stallSince = tick;
+        stallLogged = 0;
         state = State.PLANNING;
         message = "Planning";
         plan = null;
         planId = -1;
         seenId = -1;
         AlphaFloor.reset();
+        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+            "Kine walk: t=%d go to %d %s %d from %.2f %.2f %.2f gait=%d parkour=%b margin=%.2f",
+            tick, d[0], Double.isNaN(walkY) ? "any" : String.format(java.util.Locale.ROOT, "%.1f", walkY), d[1],
+            mc.player.getX(), mc.player.getY(), mc.player.getZ(), gait(), parkour(), margin()));
         lastGait = -1;
         seg = 1;
         handBack = false;
         stuckReplans = 0;
         noWaySeen = false;
         hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
-        hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest.reset(); hops = 0; hopsOff = false; hopFails = 0; hopOnSince = -1; hopTaken = false;
+        hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest.reset(); hops = 0; hopsBlind = 0; hopsOff = false; hopFails = 0; hopOnSince = -1; hopTaken = false;
         hopsChained = 0;
         blocked.clear();
         looseMemo.clear();
@@ -525,14 +558,19 @@ public final class Walk {
         boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
         // the loosened layer 1 as the fallback (with Parkour on: its moves are parkour), and the moves found not to work
         // left out of the strict search too
+        // a walk on a found loose route searches the loose way again at once (Planner: loose.first), and the strict job's
+        // pass that falls short isn't walked meanwhile (the loose search runs: the walk keeps the route it has)
+        boolean onLoose = plan != null && !plan.direct && plan.result.found && plan.looseMoves > 0;
         Planner.LooseContext loose = parkour() && Settings.walkLoose
-            ? new Planner.LooseContext(blocked, looseMemo, GridRequests::around, WorldSnapshot.body(p), WalkTable.blockChanges, canSprint)
+            ? new Planner.LooseContext(blocked, looseMemo, GridRequests::around, WorldSnapshot.body(p), WalkTable.blockChanges, canSprint,
+                onLoose)
             : null;
         if (job != null) job.cancelled = true;   // a loose job still checking the old plan's moves lets go
         Graph.doorsOn = Settings.walkOpenDoors;
         Recipe.safeFall = costs().safeFall;   // the jump search and the checks take the walk's safe fall
+        jobKeep = keepAbove(p.getY());
         job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget, loose,
-            keepAbove(p.getY()));
+            jobKeep);
         jobStale = false;
         lastPlanStart = start;
         lastPlanTerrain = Layer2.terrain();
@@ -571,6 +609,115 @@ public final class Walk {
         movesBlocked++;
         return true;
     }
+
+    /** A jump the route's gap move (GAP) was making: its take-off and landing floors and the lower of their heights;
+     *  gapSeg -1 for none. */
+    private static int gapSeg = -1;
+    private static long gapFrom = View.NONE, gapTo = View.NONE;
+    private static double gapLow = Double.NaN;
+    private static boolean wasOnGround = true;
+
+    /**
+     * A gap jump that fell short: the player left the ground near a GAP move's take-off (within GAP_NEAR, at its height)
+     * and came down more than a block under both its take-off and its landing. A loose move that fell so twice is
+     * blocked with its family (LOOSE_FALLS). The proven move is blocked (its key only,
+     * Loose.strictEdge) and the walk plans again: the loose search offers the same jump, checked in the copy and made
+     * from rest at the take-off by the jump search, where layer 2's own run had made it on the go. The Parkour Spiral's
+     * leg 18 (f48 g3a): layer 2's run took the 4-block gap at 123 from 1.3 short of its edge, ran its side into the wall
+     * beside it, caught the corner of a brick, jumped on from there and fell 3; five times round, then the time-out.
+     * True when it planned again.
+     */
+    private static boolean watchGap(LocalPlayer p, Route r, Minecraft mc) {
+        boolean ground = p.onGround() || p.isInWater() || p.onClimbable();
+        boolean left = wasOnGround && !ground;
+        wasOnGround = ground;
+        if (r == null || plan.direct) { gapSeg = -1; return false; }
+        // the jump's move: the segment walked toward or one of the next two (layer 2's runs jump on the go, a
+        // waypoint or two before the follower's place has come to the gap: RW's far walk cleg1, f58, fell at the
+        // gap at (-28,63,-39) four times round with the place one segment short at the take-off)
+        int k = -1;
+        if (left && gapSeg < 0 && seg > 0)
+            for (int j = seg; j < Math.min(r.n, seg + 3) && k < 0; j++)
+                if ((r.move[j] == Route.GAP || r.move[j] == Route.LOOSE)
+                    && Math.hypot(p.getX() - r.x[j - 1], p.getZ() - r.z[j - 1]) <= GAP_NEAR && Math.abs(p.getY() - r.y[j - 1]) < 0.6)
+                    k = j;
+        if (k > 0) {
+            gapRecipe = Layer2.playingRecipe();
+            View v = WalkTable.snapshot();
+            // the move's own floors from the plan's path (the route's points can lie where the table has no floor: a
+            // route planned from a chorus stem's top starts there)
+            long[] mn = moveNodes(plan, r.move[k], r.x[k], r.y[k], r.z[k]);
+            gapFrom = mn != null ? mn[0] : v.nodeAt((int) Math.floor(r.x[k - 1]), r.y[k - 1], (int) Math.floor(r.z[k - 1]));
+            gapTo = mn != null ? mn[1] : v.nodeAt((int) Math.floor(r.x[k]), r.y[k], (int) Math.floor(r.z[k]));
+            gapLow = Math.min(r.y[k - 1], r.y[k]);
+            gapLoose = r.move[k] == Route.LOOSE;
+            gapSeg = gapFrom != View.NONE && gapTo != View.NONE && gapFrom != gapTo ? k : -1;
+            return false;
+        }
+        // a copy-found jump still playing (a drop onto slime and the bounce off it is one) has not come down yet
+        if (gapSeg < 0 || !ground || Layer2.playingRecipe()) return false;
+        boolean fell = p.getY() < gapLow - 1.0;
+        gapSeg = -1;
+        if (!fell) {
+            // a copy-found jump for a loose move that came down short of its landing at the take-off's height: counted
+            // with the falls (the 03:14 case, f67: the step from a chorus stem onto the flower beside it, 93 jumps found
+            // and played, each back on the stem)
+            View v = WalkTable.snapshot();
+            ChunkFloors lc = v.chunk(View.nodeX(gapTo), View.nodeZ(gapTo));
+            int li = lc == null ? -1 : v.index(gapTo);
+            boolean onLanding = li >= 0 && Math.abs(p.getY() - lc.h(li)) < 0.6
+                && Math.hypot(p.getX() - View.nodeX(gapTo) - 0.5, p.getZ() - View.nodeZ(gapTo) - 0.5) < 1.2;
+            if (!gapLoose || !gapRecipe || onLanding) return false;
+        }
+        String at = String.format(java.util.Locale.ROOT, "%d %d to %d %d", View.nodeX(gapFrom), View.nodeZ(gapFrom), View.nodeX(gapTo),
+            View.nodeZ(gapTo));
+        if (!gapLoose) {
+            fellGaps.add(new long[]{gapFrom, gapTo});
+            blocked.add(Loose.strictEdge(gapFrom, gapTo));
+            movesBlocked++;
+            replanFor("a gap jump fell short: as a checked jump (" + at + ")", mc);
+            return true;
+        }
+        // a loose jump, checked in the copy, that fell short live twice: blocked with its family (once may be the
+        // game's own jitter; the same jump from the same floor again and again found the same fall: leg 18's loop)
+        if (looseFalls.merge(Loose.edge(gapFrom, gapTo), 1, Integer::sum) < LOOSE_FALLS) return false;
+        View v = WalkTable.snapshot();
+        for (long e : Loose.family(v, gapFrom, gapTo)) blocked.add(e);
+        movesBlocked++;
+        replanFor("a loose jump missed twice: planning round it (" + at + ")", mc);
+        return true;
+    }
+
+    private static boolean gapLoose = false, gapRecipe = false;
+    /** The gaps that fell short live this walk (take-off, landing), for layer 2's approach to their loose versions. */
+    private static final java.util.List<long[]> fellGaps = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Whether a loose move from `from` to `to` takes the place of a gap that fell short this walk: its take-off and its
+     *  landing each within a column of the gap's (the loose search may offer the jump from the floor beside). */
+    static boolean gapFell(long from, long to) {
+        for (long[] g : fellGaps)
+            if (Math.abs(View.nodeX(g[0]) - View.nodeX(from)) <= 1 && Math.abs(View.nodeZ(g[0]) - View.nodeZ(from)) <= 1
+                && Math.abs(View.nodeX(g[1]) - View.nodeX(to)) <= 1 && Math.abs(View.nodeZ(g[1]) - View.nodeZ(to)) <= 1) return true;
+        return false;
+    }
+    /** Live falls of each loose move this walk (Loose.edge). */
+    private static final java.util.Map<Long, Integer> looseFalls = new java.util.HashMap<>();
+    static final int LOOSE_FALLS = 2;
+
+    /** The take-off and landing floors of the plan's move of kind mv landing at (x, y, z) (its column, within 0.6 of
+     *  its height), or null. */
+    private static long[] moveNodes(Planner.Plan pl, int mv, double x, double y, double z) {
+        if (pl == null || pl.direct) return null;
+        PathSearch.Result res = pl.result;
+        int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
+        for (int i = 1; i < res.path.length; i++)
+            if (res.moves[i] == mv && View.nodeX(res.path[i]) == bx && View.nodeZ(res.path[i]) == bz && Math.abs(res.pathY[i] - y) < 0.6)
+                return new long[]{res.path[i - 1], res.path[i]};
+        return null;
+    }
+
+    /** How far from a gap move's take-off a jump counts as that move's (blocks): the run-up's last steps. */
+    static final double GAP_NEAR = 2.5;
 
     /** Take a new plan as the route (the first one starts the walk). */
     private static void adoptPlan(LocalPlayer p, Planner.Plan np, String why) {
@@ -661,6 +808,19 @@ public final class Walk {
         if (Math.hypot(x + 0.5 - p.getX(), z + 0.5 - p.getZ()) > RETRACE_REACH) return false;
         Planner.Plan dp = Planner.direct(view, start, x, z, h, costs(), margin(), canSprint(p));
         if (dp == null) return false;
+        // the route's loose move the walk was on: made live, it left the walk off the table's floors, so it is blocked
+        // with its family and the plan from the floor gone back to takes another way. Unblocked, that plan was the same
+        // route and the same jump: RW's far walk from leg 0's start (cleg1, f48) hopped from the pool's sand into the
+        // pocket between the fence at x -26 and the water five times, going back each time, then Stuck
+        Route r = plan == null || plan.direct ? null : plan.route;
+        if (r != null && seg > 0 && seg < r.n && r.move[seg] == Route.LOOSE) {
+            long from = view.nodeAt((int) Math.floor(r.x[seg - 1]), r.y[seg - 1], (int) Math.floor(r.z[seg - 1]));
+            long to = view.nodeAt((int) Math.floor(r.x[seg]), r.y[seg], (int) Math.floor(r.z[seg]));
+            if (from != View.NONE && to != View.NONE && from != to) {
+                for (long e : Loose.family(view, from, to)) blocked.add(e);
+                movesBlocked++;
+            }
+        }
         // a search from here (its start, the fence's top, isn't where the player is): its plan would come in and
         // replace the way back (B0w_22: a loose plan from the pocket's fence top took over half way back and jumped in
         // again)
@@ -674,6 +834,7 @@ public final class Walk {
         hopOnSince = -1;
         hopTaken = false;
         hops++;
+        hopsBlind++;
         retraces++;
         Layer2.newTry();
         adoptDirect(dp);
@@ -691,7 +852,7 @@ public final class Walk {
      *  the range of walking without a route): walk without a route to a floor past here instead (Hop.pick), Parkour on.
      *  True when one is taken. */
     private static boolean startHop(LocalPlayer p, int[] d) {
-        if (!Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour || hopsOff || hops >= HOP_MAX
+        if (!Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour || hopsOff || hopsBlind >= HOP_MAX
             || hopFails >= HOP_FAILS) return false;
         View view = WalkTable.snapshot();
         long start = startNode(view, p);
@@ -713,6 +874,7 @@ public final class Walk {
         hopOnSince = -1;
         hopTaken = false;
         hops++;
+        hopsBlind++;
         Layer2.newTry();   // a new try from here: layer 2's jump search may search again from the floor it stands on
         adoptDirect(dp);
         stuckReplans = 0;
@@ -751,6 +913,12 @@ public final class Walk {
                 long step = stepFloor(v, p, bx, bz);
                 if (step != View.NONE) return step;
             }
+            // no floor near the feet in the player's column, none a step down beside it: the supporting block's column
+            // (its floor over the feet: a fence's top, its post beside the sand the player stands on) is the start, so
+            // the walk goes back to where it last stood (retrace) and doesn't wait for a start that never comes ("Reading
+            // the terrain" 200 ticks, then Stuck: RW's walk log 2026-10-16 04:04 at -1.7 56 -42.3, on the sand at a
+            // fence's foot by the first gap, the column there empty from 52 to 58)
+            if (n == View.NONE && sup != View.NONE) return sup;
         }
         if (n != View.NONE) return n;
         double best = Double.MAX_VALUE;
@@ -783,7 +951,7 @@ public final class Walk {
      * search from a moving start, "yea hfiel as todo").
      */
     static double[] nextHopFrom(int lx, int lz, double x, double y, double z) {
-        if (hop == null || plan == null || !plan.direct || hopTaken || hopsOff || hops + 1 >= HOP_MAX
+        if (hop == null || plan == null || !plan.direct || hopTaken || hopsOff || hopsBlind + 1 >= HOP_MAX
             || !Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour) return null;
         // the jump being played lands on the hop's floor, block (lx, lz) (else it isn't across yet)
         if (lx != hop[0] || lz != hop[1] || Math.abs(y - hopY) >= 0.6) return null;
@@ -834,6 +1002,7 @@ public final class Walk {
         hopOnSince = -1;
         hopTaken = false;
         hops++;
+        hopsBlind++;
         hopsChained++;
         adoptDirect(dp);
         stuckReplans = 0;
@@ -865,6 +1034,106 @@ public final class Walk {
 
     /** Hops taken by a chained jump this walk (tests). */
     public static int hopsChained = 0;
+
+    /** The walk log (RW 2026-10-16: "add a log and see where it went", then "why dont you just make the lgo evey
+     *  thci"), always on, "Kine walk:" lines in latest.log: every Go with the destination, every change of the walk's
+     *  state or message, every new plan with the latest replan's reason, and while a walk runs one line every tick
+     *  (place, motion, ground and water, the keys the walk sent, the view's yaw, the follower's state, the walk's state
+     *  and message); a landing more than FALL_LOGGED blocks under the airtime's top is marked with the walk's memories. */
+    private static State loggedState = State.IDLE;
+    private static String loggedMessage = "";
+    private static long loggedPlan = -1;
+    /** The keys adjustInput returned this tick, for the walk log. */
+    private static Input sentKeys = null;
+    private static final double FALL_LOGGED = 3.0;
+    private static double airTop = Double.NaN;
+
+    private static Input sent(Input in) {
+        sentKeys = in;
+        return in;
+    }
+
+    private static void walkLog(LocalPlayer p) {
+        String at = p == null ? "-" : String.format(java.util.Locale.ROOT, "%.2f %.2f %.2f", p.getX(), p.getY(), p.getZ());
+        if (state != loggedState || !message.equals(loggedMessage)) {
+            ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk: t=%d %s \"%s\" at %s",
+                tick, state, message, at));
+            loggedState = state;
+            loggedMessage = message;
+        }
+        Planner.Plan pl = plan;
+        long id = pl == null ? -1 : pl.id;
+        if (id != loggedPlan) {
+            if (pl != null) {
+                PathSearch.Result r = pl.result;
+                int n = r == null || r.path == null ? 0 : r.path.length;
+                String end = n == 0 ? "-" : String.format(java.util.Locale.ROOT, "%d %.1f %d",
+                    View.nodeX(r.path[n - 1]), r.pathY == null ? Double.NaN : r.pathY[n - 1], View.nodeZ(r.path[n - 1]));
+                ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                    "Kine walk: t=%d plan %d %s nodes=%d end=%s reason=\"%s\" lastReplan=\"%s\" at %s",
+                    tick, pl.id, pl.direct ? "direct" : "route", n, end, r == null ? "" : r.reason,
+                    replanWhy.isEmpty() ? "-" : replanWhy.get(replanWhy.size() - 1), at));
+            }
+            loggedPlan = id;
+        }
+        if (p == null || !active()) {
+            airTop = Double.NaN;
+            return;
+        }
+        var v = p.getDeltaMovement();
+        Input k = sentKeys;
+        String keys = k == null ? "-" : (k.forward() ? "W" : "") + (k.left() ? "A" : "") + (k.backward() ? "S" : "")
+            + (k.right() ? "D" : "") + (k.jump() ? "J" : "") + (k.shift() ? "Sh" : "") + (k.sprint() ? "Sp" : "");
+        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+            "Kine walk: t=%d pos %.3f %.3f %.3f v=%.3f %.3f %.3f ground=%b water=%b keys=%s view=%.1f %s %s \"%s\"",
+            tick, p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround(), p.isInWater(), keys.isEmpty() ? "none" : keys,
+            p.getYRot(), steeringState(), state, message));
+        if (!p.onGround() && !p.isInWater()) {
+            airTop = Double.isNaN(airTop) ? p.getY() : Math.max(airTop, p.getY());
+            return;
+        }
+        if (!Double.isNaN(airTop) && airTop - p.getY() > FALL_LOGGED)
+            ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                "Kine walk fall: t=%d dropped %.2f (from %.2f to %.2f) at %s water=%b; %s",
+                tick, airTop - p.getY(), airTop, p.getY(), at, p.isInWater(), memories()));
+        airTop = Double.NaN;
+    }
+
+    /** The stall log's tick (STALL_LOG): the player still within half a block of where it was STALL_TICKS ago. */
+    private static void stallLog(LocalPlayer p) {
+        if (!STALL_LOG) return;
+        double dx = p.getX() - stallX, dy = p.getY() - stallY, dz = p.getZ() - stallZ;
+        if (dx * dx + dy * dy + dz * dz > 0.25) {
+            if (stallLogged > 0)
+                ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk stall over: t=%d after %d ticks, at %.2f %.2f %.2f, %s",
+                    tick, tick - stallSince, stallX, stallY, stallZ, message));
+            stallX = p.getX(); stallY = p.getY(); stallZ = p.getZ();
+            stallSince = tick;
+            stallLogged = 0;
+            return;
+        }
+        int still = tick - stallSince;
+        if (still < STALL_TICKS * (stallLogged + 1)) return;
+        stallLogged++;
+        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk stall: t=%d still %d ticks at %.2f %.2f %.2f ground=%b %s",
+            tick, still, p.getX(), p.getY(), p.getZ(), p.onGround(), memories()));
+    }
+
+    /** The walk's state and per-walk memories (the ones a fresh Go clears), for the stall log. */
+    public static String memories() {
+        Planner.Job j = job;
+        Planner.Job lj = j == null ? null : j.loose;
+        String js = j == null ? "none" : !j.done ? "running" : j.failure != null ? (j.exhausted ? "exhausted" : "failed") : "done";
+        String ls = lj == null ? "none" : lj.done ? (lj.failure != null ? "failed" : "done") : lj.latest.get() == null ? "running" : "checking";
+        String ps = plan == null ? "none" : (plan.direct ? "direct" : plan.result.nearest ? "nearest" : plan.route.viaExit ? "edge" : "route")
+            + "#" + plan.id + " seg " + seg + "/" + plan.route.n;
+        String last = replanWhy.isEmpty() ? "-" : replanWhy.get(replanWhy.size() - 1);
+        return String.format(java.util.Locale.ROOT,
+            "state=%s msg=\"%s\" plan=%s job=%s stale=%b loose=%s lastReplan=\"%s\" sincePlan=%d hop=%s hopY=%.1f hopTaken=%b hopsOff=%b hopFails=%d hopsTried=%d hops=%d retraces=%d lastStand=%s stuck=%d noWay=%b blocked=%d settle=%d door=%b neoDropped=%d l2: %s",
+            state, message, ps, js, jobStale, ls, last, tick - lastPlanTick, hop == null ? "none" : hop[0] + "," + hop[1], hopY, hopTaken,
+            hopsOff, hopFails, hopsTried.size(), hops, retraces, lastStand == View.NONE ? "none" : View.nodeX(lastStand) + "," + View.nodeZ(lastStand),
+            stuckReplans, noWaySeen, blocked.size(), settleWaits, DoorOpener.active(), NeoTemplates.dropped.size(), Layer2.memories());
+    }
 
     /** How far under the feet a start's floor may be before a floor within a step down beside it is taken instead. */
     static final double STEP_START = 1.1;
@@ -977,11 +1246,11 @@ public final class Walk {
                 return handBackKeys(keys);
             }
             // stand while the first plan is made (in water: up to the air, Afloat)
-            if (state == State.PLANNING || !steering) return underGait(p, Afloat.during(p));
-            if (layer2) return underGait(p, WorldSnapshot.input(Layer2.keys(p)));
+            if (state == State.PLANNING || !steering) return sent(underGait(p, Afloat.during(p)));
+            if (layer2) return sent(underGait(p, WorldSnapshot.input(Layer2.keys(p))));
             int k = wantKeys ? Moves.keys(wantYaw, p.getYRot(), wantSprint ? Moves.SPRINT : Moves.WALK) : 0;
             if (wantJump) k |= MoveState.JUMP;
-            return underGait(p, WorldSnapshot.input(k));
+            return sent(underGait(p, WorldSnapshot.input(k)));
         } finally {
             measure(t0);
         }
@@ -1017,6 +1286,7 @@ public final class Walk {
         WalkTable.tick(mc);
         GridRequests.serve(mc);
         LocalPlayer p = mc.player;
+        walkLog(p);
         if (handBack && (p == null || !ai.rrw.kine.combat.KillAura.turned())) handBack = false;
         if (previewJob != null) {
             Planner.Plan pp = previewJob.latest.get();
@@ -1027,6 +1297,7 @@ public final class Walk {
             }
         }
         if (p == null || !active()) { measure(t0); return; }
+        stallLog(p);
         int[] d = destination();
         if (d == null) { cancel(); measure(t0); return; }
         AlphaFloor.update(mc, p, tick);
@@ -1059,8 +1330,10 @@ public final class Walk {
                 // memo keeps the moves already checked)
                 farRouteTick = tick;
                 replanFor(FAR_ROUTE_WHY, mc);
-            } else
+            } else {
                 adoptPlan(p, lp, lp.looseMoves == 0 ? "Walking" : "Walking, with " + lp.looseMoves + " nearly possible jumps checked in the movement copy");
+                planKeep = jobKeep;
+            }
         } else if (lj != null && (!lj.done || lp != null && (lj.failure == null || lp.checkedTo == Integer.MAX_VALUE))) {
             // the loose search runs with nothing yet, or its plan is being walked: the strict job's own isn't taken
             if (plan == null) message = "No way by the proven moves: searching nearly possible jumps";
@@ -1090,6 +1363,7 @@ public final class Walk {
                 hopTaken = false;
                 if (firstPlan == null || firstPlan.id == np.id) firstPlan = np;
                 plan = np;
+                planKeep = jobKeep;
                 planId = np.id;
                 planPass = np.pass;
                 seg = startSegment(p, plan.route);
@@ -1206,6 +1480,8 @@ public final class Walk {
             return;
         }
 
+        if (watchGap(p, r, mc)) { measure(t0); return; }
+
         // progress, stuck and off-route checks; replans
         double left = remaining(p, r);
         // a jump search running, or its jump playing: no stuck time while it does (Layer2.busy)
@@ -1266,7 +1542,11 @@ public final class Walk {
         if (tick - bestLeftTick > 60 && idle && !looseRuns) {
             // standing still where the last plan was made, on the same terrain, its search not cut short: a replan would
             // search the same again (deterministic) and layer 2 has had its time; on to what comes after the replans
-            if (hop == null && standing(p) && Layer2.stillTicks() >= 60 && sameAsLastPlan(p)) stuckReplans = Math.max(stuckReplans, 3);
+            // hanging still on a ladder counts as standing (the Kine Parkour course's #37 ladder_to_ladder, f48 G2c: the
+            // walk hung at the first ladder's top, the floor nearest a goal it had no way on to, through three replans of
+            // 3 s before the hop to the second ladder: 13 s)
+            if (hop == null && (standing(p) || p.onClimbable()) && Layer2.stillTicks() >= 60 && sameAsLastPlan(p))
+                stuckReplans = Math.max(stuckReplans, 3);
             if (++stuckReplans > (hop != null ? HOP_STUCK : 3)) {
                 if (hop != null) {
                     hop = null;
@@ -1291,6 +1571,14 @@ public final class Walk {
             bestLeftTick = tick;
             progressed = 0;
             replanFor(why, mc);
+        } else if (idle && !plan.direct && !plan.result.found && plan.id != underKeptPlan && underKept(p, r)) {
+            // the route (to the floor nearest the goal, or a search cut short) goes on under the height kept, down a drop
+            // off the level into the sea: planned while the goal was past the loaded table (keepAbove NaN then), and
+            // layer 2 keeps the height now: it stood at the drop for good, the follower taking no drops (the Parkour
+            // Spiral, checkpoint 2 to 4 with the strict search out of time, R2s_33: the drop from 68 to the sea at 51; RW's
+            // walk log 2026-10-16 03:14 and 03:00, "it runs almost to the edge of the water"). Planned again, with it
+            underKeptPlan = plan.id;
+            replanFor(UNDER_KEPT, mc);
         } else if (idle && !plan.direct && offRoute(p, r) > (Settings.walkLayer2 && Layer2.field() != null ? Field.RADIUS - 1.0 : 2.5)) {
             replanFor("off the route", mc);
         } else if (idle && (r.viaExit || plan.result.partial) && left < 24 && tick - lastPlanTick > 20) {
@@ -1340,6 +1628,26 @@ public final class Walk {
         etaDist = eta.distanceLeft(p.getX(), p.getZ());
     }
 
+    /** The plan already planned again for going under the height kept (at most once a plan). */
+    private static long underKeptPlan = -1;
+    /** The height kept (keepAbove) the current job was planned with, and the plan walked: NaN, none (the goal past the
+     *  loaded table then, or no goal above). */
+    private static double jobKeep = Double.NaN, planKeep = Double.NaN;
+    static final String UNDER_KEPT = "the route goes under the height kept: planning again with it";
+
+    /** Whether the route, planned with no height kept, goes on from the waypoint walked toward under the height the walk
+     *  keeps now (keepAbove). Only such a route: one planned with a height kept goes under the height the walk keeps
+     *  now only by what the walk has climbed since, and planning again for that, 2 s into a walk up a small rise, left
+     *  a small strict search exhausted under it and the walk went to its nearest floor, into a pocket by the lava
+     *  course, and gave up there (RW's playtest of a64c041, 2026-10-16 03:51); layer 2 keeps the height as it walks. */
+    private static boolean underKept(LocalPlayer p, Route r) {
+        if (!Double.isNaN(planKeep)) return false;
+        double ka = keepAbove(p.getY());
+        if (Double.isNaN(ka)) return false;
+        for (int k = Math.max(1, seg); k < r.n; k++) if (r.y[k] < ka - 1e-4) return true;
+        return false;
+    }
+
     /** Replans that only refresh the route toward a far goal (no replay): the reasons below. */
     static final String EVERY_5S = "every 5 s toward a far goal", NEAR_EDGE = "near the loaded edge", NEAR_END = "near a partial route's end",
         PAST_UNKNOWN = "every 5 s while the line to the goal crosses ground not loaded",
@@ -1347,6 +1655,10 @@ public final class Walk {
         AT_NEAREST = "at the floor nearest a goal with no way onto it: once more";
 
     private static void replanFor(String why, Minecraft mc) {
+        // a search still running with nothing yet (replan would refuse it): not counted, and the routine replans' clock
+        // starts again, so they ask in their time and not every tick (R2s_33: 1705 refused "every 5 s toward a far
+        // goal" replans in a walk of 3000 ticks while the loose search ran)
+        if (jobBusy()) { lastPlanTick = tick; return; }
         replayNext = !(why.equals(EVERY_5S) || why.equals(NEAR_EDGE) || why.equals(NEAR_END) || why.equals(PAST_UNKNOWN)
             || why.equals(WITHOUT_ROUTE) || why.equals(AT_NEAREST));
         replans++;
@@ -1471,6 +1783,12 @@ public final class Walk {
                 wantSprint = false;
                 if (ty > py + 0.4) wantJump = true;
             }
+            case Route.GAP, Route.LOOSE -> {
+                // the follower has no way to make a jump (parkour is layer 2's): on the ground it stands. It walked on
+                // toward the landing instead, off the take-off: RW's far walk cleg1 (f52), layer 2's runs all unsafe at
+                // a loose take-off over the lava field, the follower handed the tick walked into the lava (dead)
+                if (p.onGround()) { wantKeys = false; wantSprint = false; }
+            }
             default -> {}
         }
         double ax = aimX - px, az = aimZ - pz;
@@ -1584,12 +1902,25 @@ public final class Walk {
      * playtest, 2026-10-15: "it jumped into the water rather than doing the course"). Pricing climbs dearer instead would
      * still leave it a close call there (the start 58.7 blocks and 10 up from the goal, the sea 18 under it).
      */
+    /** How far (blocks, straight) a goal may be to be near: the kept height and the loose search are only toward a near
+     *  goal. It was the loaded table's reach, which moves with the render distance: at RW's 32 the Kine Parkour course's
+     *  target, 489 blocks on, came inside it at #68 mid-course, the kept height switched on there (the pad a block under
+     *  #68's landing left out of the hops), and the walk stopped at #69 (RW 2026-10-16 00:18, 03:28); at 5 it never did. */
+    static final double NEAR_GOAL = 160.0;
+
+    /** Whether the destination is near (NEAR_GOAL) and in the loaded table. */
+    static boolean nearGoal(int[] d) {
+        if (d == null || !WalkTable.known(d[0], d[1])) return false;
+        LocalPlayer p = Minecraft.getInstance().player;
+        return p == null || Math.hypot(d[0] + 0.5 - p.getX(), d[1] + 0.5 - p.getZ()) <= NEAR_GOAL;
+    }
+
     static double keepAbove(double y) {
         if (Double.isNaN(walkY) || Double.isNaN(peakY)) return Double.NaN;
         // only toward a goal in the loaded area: toward one past it (the Kine Parkour course's target) the hops' and the
         // nearest floor's way on goes down drops as often as up, and the course's own machinery is as it was
         int[] d = destination();
-        if (d == null || !WalkTable.known(d[0], d[1])) return Double.NaN;
+        if (d == null || !nearGoal(d)) return Double.NaN;
         double lim = peakY - KEEP_DROP;
         // fallen under it (off a jump, into a pool): a block under where it is, so there is a way back up to look for
         if (y < lim) lim = y - KEEP_DROP;

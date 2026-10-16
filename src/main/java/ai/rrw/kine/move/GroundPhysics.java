@@ -997,6 +997,57 @@ public final class GroundPhysics {
         return false;
     }
 
+    /**
+     * Whether standing with the box moved by (dx, dz) would leave the player over lava or another hurting block with
+     * nothing to stand on before it: no collision under the moved box within 0.1, and a HAZARD block in its columns
+     * from the feet down to `depth` under them, above any collision there. For layer 2's run ends: a run ending on the
+     * ground still moving slides that far on when it lets go (RunModel.estimate).
+     */
+    public boolean slidesIntoHazard(MoveState s, double dx, double dz, double depth) {
+        makeBox(s, box);
+        double[] b = {box[0] + 1.0E-7 + dx, box[1] - 0.1, box[2] + 1.0E-7 + dz, box[3] - 1.0E-7 + dx, box[1], box[5] - 1.0E-7 + dz};
+        grid.collect(b, cols2, s.y, false);
+        if (cols2.n != 0) return false;   // still stands on something there
+        int xa = GameMath.floor(b[0]), xb = GameMath.floor(b[3]), za = GameMath.floor(b[2]), zb = GameMath.floor(b[5]);
+        int top = GameMath.floor(box[1] - 1.0E-5), bottom = GameMath.floor(box[1] - depth);
+        for (int y = top; y >= bottom; y--) {
+            boolean any = false, hurt = false;
+            for (int x = xa; x <= xb; x++)
+                for (int z = za; z <= zb; z++) {
+                    BlockInfo bi = grid.get(x, y, z);
+                    if (bi.is(BlockInfo.HAZARD)) hurt = true;
+                    else if (!bi.shape.empty) any = true;
+                }
+            if (hurt) return true;
+            if (any) return false;   // comes down on something first
+        }
+        return false;
+    }
+
+    /**
+     * Whether a player standing at s stands on the edge of what holds it over lava or another hurting block: the box
+     * narrowed by `margin` on every side has nothing under its feet within 0.1, and a HAZARD block lies in the box's
+     * columns within `depth` under the feet above any collision there. For layer 2's landings (RunModel.marks): one on
+     * a slab's edge over the Parkour Spiral's lava field held a tick and slid off (RW's far walk cleg1, f61).
+     */
+    public boolean edgeOverHazard(MoveState s, double margin, double depth) {
+        makeBox(s, box);
+        double[] b = {box[0] + margin, box[1] - 0.1, box[2] + margin, box[3] - margin, box[1] - 1.0E-7, box[5] - margin};
+        grid.collect(b, cols2, s.y, false);
+        if (cols2.n != 0) return false;
+        int xa = GameMath.floor(box[0] + 1.0E-7), xb = GameMath.floor(box[3] - 1.0E-7);
+        int za = GameMath.floor(box[2] + 1.0E-7), zb = GameMath.floor(box[5] - 1.0E-7);
+        int top = GameMath.floor(box[1] - 0.5), bottom = GameMath.floor(box[1] - depth);
+        for (int x = xa; x <= xb; x++)
+            for (int z = za; z <= zb; z++)
+                for (int y = top; y >= bottom; y--) {
+                    BlockInfo bi = grid.get(x, y, z);
+                    if (bi.is(BlockInfo.HAZARD)) return true;
+                    if (!bi.shape.empty) break;
+                }
+        return false;
+    }
+
     /** EntityDimensions.makeBoundingBox at the state's position and pose. */
     void makeBox(MoveState s, double[] b) {
         float w = body.width / 2.0F, h = s.swimPose || s.glidePose ? body.swimHeight : s.crouchPose ? body.crouchHeight : body.height;

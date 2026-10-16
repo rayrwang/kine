@@ -129,7 +129,10 @@ public final class McKinds {
         Block b = st.getBlock();
         if (b instanceof DoorBlock || b instanceof TrapDoorBlock || b instanceof FenceGateBlock) flags |= Kind.DOOR;
         if (b instanceof DoorBlock && st.is(BlockTags.WOODEN_DOORS) && !st.getValue(DoorBlock.OPEN)) flags |= Kind.CLOSED_DOOR;
-        if (b.getSpeedFactor() < 1.0F) flags |= Kind.SLOW;
+        // slime too: its stepOn takes 60 % of the speed a tick off a player on it who isn't sneaking (SlimeBlock), so a
+        // run-up on it gets nowhere (the Parkour Spiral's leg 35: a gap jump planned from a slime patch at a pit's edge,
+        // the walk jumping in place on it until stuck)
+        if (b.getSpeedFactor() < 1.0F || st.is(Blocks.SLIME_BLOCK)) flags |= Kind.SLOW;
         // what is drawn above the collision: a snow layer is drawn a layer higher than you stand (one layer: no
         // collision at all), soul sand and mud a full block; plants have no collision and stay out, so the rails go
         // under grass and flowers, which really are drawn over them

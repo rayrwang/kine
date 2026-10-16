@@ -38,6 +38,8 @@ public final class Planner {
 
     /** The loose search's time a search; the loose job's whole time (its searches and checks); its searches at most. */
     static final long LOOSE_SEARCH_NANOS = 1_000_000_000L, LOOSE_JOB_NANOS = 90_000_000_000L;
+    /** The most a loose search's time grows to when it runs out of time before its floors do (doubling from 1 s). */
+    static final long LOOSE_SEARCH_MAX = 8_000_000_000L;
     static final int LOOSE_SEARCHES = 400;   // with the quick checks most searches end in a fraction of a second
 
     /** The weights of the passes, quick to cheapest. With the estimate at the sprint-jump speed, w = 1.27 makes it
@@ -152,11 +154,60 @@ public final class Planner {
      * version when asked, whether the walk sprints.
      */
     public record LooseContext(java.util.Set<Long> blocked, LooseCheck.Memo memo, LooseCheck.Grids grids,
-                               ai.rrw.kine.move.Body body, long terrain, boolean sprint) {}
+                               ai.rrw.kine.move.Body body, long terrain, boolean sprint, boolean first) {
+        public LooseContext(java.util.Set<Long> blocked, LooseCheck.Memo memo, LooseCheck.Grids grids, ai.rrw.kine.move.Body body,
+                            long terrain, boolean sprint) {
+            this(blocked, memo, grids, body, terrain, sprint, false);
+        }
+    }
 
     /** What a doubtful loose move (its quick check found no way) costs the search more (ticks): enough that a way round
      *  it with a few more jumps or a longer walk is tried first (LooseCheck.checkRoute). */
     static final double DOUBT = 40.0;
+
+    /**
+     * Doubt rounds in one loose job (a route whose next loose move failed its quick check: priced up, searched again)
+     * before the doubtful moves get the full check at once instead (LooseCheck.checkRoute's priced: all). With pricing
+     * alone, a leg with many nearly possible jumps had its job price one family after another, a new doubtful one on each
+     * route, until the job's 90 s were up: the Parkour Spiral's legs 13, 15, 23, 28, 32 and 38 timed out so, 100 to 300
+     * doubt rounds each (d29a, d29b).
+     */
+    static final int DOUBT_ROUNDS = 8;
+
+    /**
+     * Failed full checks onto one landing's floor, from take-offs of other families, after which no loose move onto it
+     * is offered any more (Loose.landing among the blocked moves). The loose graph offers a jump onto a floor from every
+     * edge in reach: on the Parkour Spiral's leg 13 the checks went through 63 take-offs round (-21,42) onto the same
+     * ladder's top, one family after another, until the job's time was up (bench, 90 s).
+     */
+    static final int LANDING_FAILS = 6;
+
+    /** Failed full checks between two 4 by 4 areas (at the take-off's and the landing's heights), after which no loose
+     *  move between them is offered (Loose.area). Legs 23 and 28 took 114 and 220 s offline: their failed checks ran from
+     *  a ledge's columns to a field of snow layers' or a row's columns below, every pair its own family (its eight
+     *  neighbours only), 124 and 201 full checks. */
+    static final int AREA_FAILS = 2;
+
+    /** A loose move's full check failed: its landing's and its areas' counts, the landing blocked for loose moves at
+     *  LANDING_FAILS and the two areas' moves at AREA_FAILS. */
+    static void landingFailed(View view, LooseCheck.Memo memo, java.util.Set<Long> blocked, long to) {
+        long k = Loose.landingKey(view, to);
+        int n = memo.landingFails.merge(k, 1, Integer::sum);
+        if (n >= LANDING_FAILS) blocked.add(k);
+    }
+
+    static void areaFailed(View view, LooseCheck.Memo memo, java.util.Set<Long> blocked, long from, long to) {
+        long k = Loose.area(view, from, to);
+        if (k == 0L) return;
+        if (memo.areaFails.merge(k, 1, Integer::sum) >= AREA_FAILS) blocked.add(k);
+    }
+
+    /** Every move priced (contains is always true): from DOUBT_ROUNDS on, a doubtful move gets the full check. */
+    static final java.util.Set<Long> EVERY = new java.util.AbstractSet<>() {
+        @Override public boolean contains(Object o) { return true; }
+        @Override public java.util.Iterator<Long> iterator() { return java.util.Collections.emptyIterator(); }
+        @Override public int size() { return 0; }
+    };
 
     /** The doubtful moves' extra costs now (from the memo's doubtful keys: their moves, started standing). */
     private static it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap penaltiesNow(java.util.Set<Long> doubtfulEdges) {
@@ -261,8 +312,12 @@ public final class Planner {
             // only toward a goal in the loaded area: toward one past it (the Kine Parkour course's target, 900 blocks on)
             // the walk crosses what layer 1 can't with hops, as before; with the loose search there, the walk waited
             // on checks of the course's jumps and stood (stuck at #30 in cS1, at #18 in RW's playtest, 2026-10-15)
+            // and at once, whatever the strict pass shows short of the goal, for a walk that was on a loose route
+            // (loose.first: the strict search had no way there before; its first pass cut short, walked, took the walk
+            // off along a partial route: RW's walk logs 2026-10-16 03:14 and 03:56, "off the route" after a loose jump)
             if (pass == 0 && loose != null && job.loose == null && !job.cancelled && view.known(gx, gz)
-                && noWayOn(r, view, start, gx, gz, goalY, costs))
+                && Math.hypot(gx - View.nodeX(start), gz - View.nodeZ(start)) <= Walk.NEAR_GOAL
+                && (noWayOn(r, view, start, gx, gz, goalY, costs) || loose.first() && !r.found))
                 job.loose = loose(job, view.copy(), start, gx, gz, goalY, costs, margin, canSprint, glides, loose);
             if (r.exhausted && !r.nearest) { job.failure = r.reason; job.exhausted = true; return; }
             if (!r.found && !r.partial && !r.nearest) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
@@ -339,13 +394,33 @@ public final class Planner {
         java.util.function.BooleanSupplier stop = () -> job.cancelled || parent.cancelled || System.nanoTime() - t0 > LOOSE_JOB_NANOS;
         double bound = Loose.costBound(costs, start, gx, gz, goalY, view);
         java.util.Set<Long> doubtfulEdges = ctx.memo().priced;
+        int doubts = 0;
+        // the most way made by a route's checked start (its loose moves before the first one without a way, or doubtful):
+        // published as a partial plan if the job ends without a whole checked route (prefix)
+        PathSearch.Result prefixOf = null;
+        int prefixEnd = -1;
+        double prefixGain = 0.0, startNear = nearness(view, start, gx, gz, goalY, costs);
+        java.util.function.BooleanSupplier timeUp = () -> System.nanoTime() - t0 > LOOSE_JOB_NANOS;
+        long searchNanos = LOOSE_SEARCH_NANOS;
         for (int it = 0; it < LOOSE_SEARCHES; it++) {
-            if (stop.getAsBoolean()) { job.failure = "loose search let go"; return; }
+            if (stop.getAsBoolean()) {
+                job.failure = "loose search let go";
+                if (timeUp.getAsBoolean() && !job.cancelled && !parent.cancelled) publishPrefix(job, view, prefixOf, prefixEnd, gx, gz, costs, margin, canSprint, glides);
+                return;
+            }
             PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(true).glides(glides).loose(true).goalY(goalY)
                 .blocked(blockedNow(ctx)).penalties(penaltiesNow(doubtfulEdges)).doors(Graph.doorsOn);
-            PathSearch.Result r = search.run(start, gx, gz, 2.0, System.nanoTime() + LOOSE_SEARCH_NANOS, 2_000_000, true);
+            PathSearch.Result r = search.run(start, gx, gz, 2.0, System.nanoTime() + searchNanos, 2_000_000, true);
             job.passes = it + 1;
             looseSearches++;
+            // out of time, not out of floors: the search again with twice the time, up to LOOSE_SEARCH_MAX, while the
+            // job has time. One second a search gave up the Parkour Spiral's leg 32 at 6 points of fall damage allowed
+            // (live, dev71: 8704 floors in the second on the loaded machine; the bench finds its way in 40 s of checks)
+            if (!r.found && !r.exhausted && searchNanos < LOOSE_SEARCH_MAX && !timeUp.getAsBoolean()) {
+                searchNanos = Math.min(LOOSE_SEARCH_MAX, searchNanos * 2);
+                looseLog(job, it, r, "out of time: searching again with " + searchNanos / 1_000_000 + " ms");
+                continue;
+            }
             if (!r.found) {
                 job.failure = r.exhausted ? "no way even with nearly possible jumps" : "the loose search ran out of time";
                 parent.looseWhy = job.failure;
@@ -369,8 +444,12 @@ public final class Planner {
             // 05524e3 stood near that fence too). The walk waits for it ("searching nearly possible jumps").
             if (n == 0) { job.latest.set(p); return; }
             LooseCheck.RouteVerdict v = LooseCheck.checkRoute(r, ctx.grids(), ctx.body(), ctx.memo(), ctx.terrain(), ctx.sprint(), stop,
-                i -> p.checkedTo = i, doubtfulEdges);
+                i -> p.checkedTo = i, doubts >= DOUBT_ROUNDS ? EVERY : doubtfulEdges);
             int fail = v.index();
+            if (fail > 1) {
+                double gain = startNear - nearness(view, r.path[fail - 1], gx, gz, goalY, costs);
+                if (gain > prefixGain && gain >= costs.estimate(PREFIX_GAIN, 0.0)) { prefixGain = gain; prefixOf = r; prefixEnd = fail - 1; }
+            }
             looseLog(job, it, r, v.isDoubtful() ? v.doubtful().length + " doubtful" : fail == -1 ? "every loose move has a way"
                 : fail < 0 ? "let go" : "no way " + View.nodeX(r.path[fail - 1]) + "," + r.pathY[fail - 1] + ","
                 + View.nodeZ(r.path[fail - 1]) + " -> " + View.nodeX(r.path[fail]) + "," + r.pathY[fail] + "," + View.nodeZ(r.path[fail]));
@@ -378,18 +457,86 @@ public final class Planner {
                 // priced up with its family (Loose.family): the neighbouring columns' copies of a jump that failed its
                 // quick check would come back one by one otherwise; one the route still takes gets the full check
                 looseChecksFailed++;
+                doubts++;
                 for (long e : v.doubtful()) doubtfulEdges.add(e);
                 for (long e : Loose.family(view, r.path[fail - 1], r.path[fail])) doubtfulEdges.add(e);
                 continue;
             }
             if (fail == -1) { p.checkedTo = Integer.MAX_VALUE; looseRoutesChecked++; job.latest.set(p); return; }
-            if (fail < 0) { job.failure = "loose search let go"; return; }
+            if (fail < 0) {
+                job.failure = "loose search let go";
+                if (timeUp.getAsBoolean() && !job.cancelled && !parent.cancelled) publishPrefix(job, view, prefixOf, prefixEnd, gx, gz, costs, margin, canSprint, glides);
+                return;
+            }
             looseChecksFailed++;
             for (long e : Loose.family(view, r.path[fail - 1], r.path[fail])) ctx.blocked().add(e);
+            landingFailed(view, ctx.memo(), ctx.blocked(), r.path[fail]);
+            areaFailed(view, ctx.memo(), ctx.blocked(), r.path[fail - 1], r.path[fail]);
         }
         job.failure = "the loose search's tries ran out";
         parent.looseWhy = job.failure;
         looseLog(job, LOOSE_SEARCHES, null, job.failure);
+        publishPrefix(job, view, prefixOf, prefixEnd, gx, gz, costs, margin, canSprint, glides);
+    }
+
+    /**
+     * The loose job ran out of time or tries with no whole route checked: the checked start of the route that made the
+     * most way (to the take-off of its first loose move without a way, all its loose moves before that checked), as a
+     * partial plan, if it makes a real step toward the goal (PREFIX_GAIN). The walk goes there and plans on from there,
+     * a smaller search: a goal several checkpoints on round the Parkour Spiral (RW's own Go targets: leg 0's start to
+     * 22 77 39) was past one loose job's 90 s from the start, and the walk went to the floor nearest the goal instead
+     * (the sea under it, the gate's cleg1 and cgap); in RW's game the strict search's partial route had carried the
+     * walk on first, and the loose job from there found the way (2026-10-16 03:00).
+     */
+    /** The floors the proven moves (gaps too) must reach from a checked start's end for it to be published. */
+    static final int POCKET = 200;
+
+    /** How many floors the proven moves (gaps too) reach from n, counting to at most cap. */
+    static int reachCount(View view, Costs costs, long n, int cap) {
+        Graph g = new Graph(view, costs);
+        g.gaps = true;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet seen = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        java.util.ArrayDeque<Long> q = new java.util.ArrayDeque<>();
+        seen.add(n);
+        q.add(n);
+        while (!q.isEmpty() && seen.size() < cap) {
+            long m = q.poll();
+            g.expand(m);
+            for (int i = 0; i < g.n; i++) {
+                long t = g.to[i];
+                if (t == Long.MIN_VALUE || g.move[i] == Graph.EXIT) continue;
+                if (seen.add(t)) q.add(t);
+            }
+        }
+        return seen.size();
+    }
+
+    /** How much nearer the goal (blocks of the estimate) a checked start must end to be published. */
+    static final double PREFIX_GAIN = 8.0;
+
+    private static void publishPrefix(Job job, View view, PathSearch.Result r, int end, int gx, int gz, Costs costs,
+                                      double margin, boolean canSprint, boolean glides) {
+        if (r == null || end < 1) return;
+        // not into a pocket: from the checked start's end the proven moves reach at least POCKET floors (a checked start
+        // that ended in a pocket by the Parkour Spiral's lava course, the take-off of a jump that had no way, took the
+        // walk there, and it went round in it: C44's cleg1)
+        if (reachCount(view, costs, r.path[end], POCKET) < POCKET) return;
+        PathSearch.Result p = new PathSearch.Result();
+        p.found = false;
+        p.partial = true;
+        p.path = java.util.Arrays.copyOf(r.path, end + 1);
+        p.moves = java.util.Arrays.copyOf(r.moves, end + 1);
+        p.pathY = java.util.Arrays.copyOf(r.pathY, end + 1);
+        p.cost = r.cost;
+        p.totalCost = Double.NaN;
+        p.reason = "the checked start of a loose way";
+        Plan plan = makePlan(view, p, 0, job.id, gx, gz, costs, margin, canSprint, true, glides);
+        int n = 0;
+        for (int i = 1; i < p.moves.length; i++) if (p.moves[i] == Graph.LOOSE) n++;
+        plan.looseMoves = n;
+        plan.checkedTo = Integer.MAX_VALUE;
+        job.latest.set(plan);
+        looseLog(job, -1, p, "published its checked start (" + (end + 1) + " steps, " + n + " loose)");
     }
 
     /** One loose search's outcome in the log (KINE_SEARCH_LOG set, as layer 2's jump searches: lockstep tests). */

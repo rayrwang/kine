@@ -111,7 +111,8 @@ public final class View {
     }
 
     /** The kind of block at (x, y, z) where the table really knows it: inside a floor's window, a hazard's height, a
-     *  floor's free space or open sky; null where block() would only assume a solid block (between a floor's free space,
+     *  floor's free space, open sky or a run of tall blocks (Palette.SOLID for one covering its cell's top, else the
+     *  block); null where block() would only assume a solid block (between a floor's free space,
      *  capped at ChunkFloors.MAX_CLEAR, and whatever is above: on a tower a level's air more than 24 over the one below). */
     public Kind blockKnown(int x, int y, int z) {
         ChunkFloors c = chunk(x, z);
@@ -124,6 +125,10 @@ public final class View {
             int w = y - c.fb[i];
             if (w >= 0 && w < ChunkFloors.WINDOW) return k;
         }
+        // inside a run of tall blocks (ColumnScan.walls): a wall's inside under its top floor, SOLID for a block covering
+        // its cell's top (as block() assumed), else the block itself (a fence barring a window)
+        for (int i = c.wallStart[col]; i < c.wallStart[col + 1]; i += 3)
+            if (y >= c.wall[i] && y <= c.wall[i + 1]) return c.wall[i + 2] == ColumnScan.WALL_RUN ? k : Palette.get(c.wall[i + 2]);
         return null;
     }
 

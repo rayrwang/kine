@@ -154,7 +154,11 @@ final class RunModel implements Model<RunWorld> {
     /** A pace jump at the gait setting's Sprint: as five seconds, so walking on is always better where it can be. */
     static final double PACE = 100.0;
 
+    /** No sprint-jump gait in the beam (Layer2: lava under the ground near the player); free actions keep theirs. */
+    boolean noSprintJumps = false;
+
     @Override public boolean allowed(int a) {
+        if (noSprintJumps && a != STOP && !isFree(a) && gait(a) == SPRINT_JUMP) return false;
         if (cap >= ai.rrw.kine.Settings.GAIT_SPRINT || a == STOP || isFree(a)) return true;
         int g = gait(a);
         return g != SPRINT && g != SPRINT_JUMP && g != SPRINT_SNEAK;
@@ -340,6 +344,9 @@ final class RunModel implements Model<RunWorld> {
             && fall > Costs.fallLimit(maxFall, s.landedFallFactor)) c += UNSAFE;
         if ((s.onGround || s.inWater) && s.y < keepAbove - 1e-3) c += UNSAFE;
         if ((s.touched & BlockInfo.HAZARD) != 0) c += UNSAFE;
+        // a landing on the edge of what holds it over lava (within EDGE_MARGIN): live it comes down a hundredth off the
+        // copy's and slides off (RW's far walk cleg1, f61: layer 2 hopping the slabs over the Parkour Spiral's lava field)
+        if (air0 && s.onGround && !s.inWater && phys.edgeOverHazard(s, EDGE_MARGIN, 6.0)) c += UNSAFE;
         if ((s.touched & BlockInfo.UNCOPIED) != 0) c += UNCOPIED;
         if (s.wouldGlide) c += UNSAFE;
         s.touched = 0;
@@ -454,8 +461,19 @@ final class RunModel implements Model<RunWorld> {
             double on = carriedOn(w, keys);
             return keys == 0 ? on : Math.min(on, carriedOn(w, 0));
         }
-        return settled(w.s, 0.0);
+        // on the ground still moving: letting go it slides on about SLIDE times its speed (ground friction 0.546 a
+        // tick); a slide off into lava is UNSAFE. A run ending so had layer 2 land on a loose take-off's edge going on
+        // at 0.25 a tick over the Parkour Spiral's lava field and slide off (RW's far walk cleg1, f54: dead, twice)
+        double v2 = s.vx * s.vx + s.vz * s.vz;
+        if (s.onGround && !s.inWater && v2 > SLIDE_CHECK2 && phys.slidesIntoHazard(s, s.vx * SLIDE, s.vz * SLIDE, 6.0))
+            return settled(s, UNSAFE);
+        return settled(s, 0.0);
     }
+
+    /** A run's end on the ground: the slide's length over the speed, and the least speed (squared) looked at. */
+    static final double SLIDE = 2.2, SLIDE_CHECK2 = 0.02 * 0.02;
+    /** How far the box must reach over what it lands on, every way, where lava lies under the edge (blocks). */
+    static final double EDGE_MARGIN = 0.1;
 
     /** The time left once a run in the air (or swinging on a ladder) comes down, carried on with these keys. */
     private double carriedOn(RunWorld w, int keys) {

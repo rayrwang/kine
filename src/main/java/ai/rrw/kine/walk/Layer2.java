@@ -150,6 +150,7 @@ public final class Layer2 {
         recipeJob = null;
         searchGen++;
         recipeTryKey = Long.MIN_VALUE;
+        recipeRetries = 0;
         holdPlan = null;
         groundY = Double.NaN;
         lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
@@ -183,6 +184,11 @@ public final class Layer2 {
     public static void newTry() {
         recipeTryKey = Long.MIN_VALUE;
         lastRecipeTry = tick - 1000;
+        // no search for the new try yet: kept from the last hop's, the "found none" gave the next hop up at once, before
+        // its own search ran (the Kine Parkour course's #72 mm_loop_bwmm, f61 G2: three hops given up in three ticks,
+        // the walk ended there)
+        hopJumpNone = false;
+        routeJumpNone = false;
         recipe = null;
         if (recipeJob != null) recipeJob.cancel(false);
         recipeJob = null;
@@ -244,6 +250,32 @@ public final class Layer2 {
     /** The free search's memory toward the jump ahead (RunModel.FreeMemory): a new one for each landing. */
     private static volatile RunModel.FreeMemory freeMemory = null;
     private static long recipeTryKey = Long.MIN_VALUE;
+    /** Where and when the take-off hold last held the player; it holds on while the player slides on from there on the
+     *  ground, at most HOLD_SLIDE blocks and HOLD_SLIDE_TICKS ticks. */
+    private static double holdX = Double.NaN, holdZ = Double.NaN;
+    private static int holdTick = Integer.MIN_VALUE / 2;
+    static final double HOLD_SLIDE = 2.0;
+    static final int HOLD_SLIDE_TICKS = 20;
+    /** How far round (blocks, square) and down from the feet layer 2 looks for lava before sprint-jumping. */
+    static final int HOP_HAZARD_R = 3, HOP_HAZARD_DOWN = 12;
+
+    /** Whether a hurting block (lava, fire, magma, cactus...) lies in the grid within r columns of (x, z), from the feet
+     *  down to `down` under them. */
+    static boolean hazardBelow(BlockGrid g, double x, double y, double z, int r, int down) {
+        int bx = (int) Math.floor(x), by = (int) Math.floor(y), bz = (int) Math.floor(z);
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++)
+                for (int yy = by; yy >= by - down; yy--)
+                    if (g.inside(bx + dx, yy, bz + dz) && g.get(bx + dx, yy, bz + dz).is(ai.rrw.kine.move.BlockInfo.HAZARD)) return true;
+        return false;
+    }
+
+    /** Standing at a loose jump's take-off (steer), still moving (MOVING2): the stop holds the sneak key too. */
+    private static boolean holdSneak = false;
+    /** Moving at all on the ground (squared, a tick): the game sets a speed under 0.003 to none. The take-off hold's
+     *  sneak and a stop after sneaking hold the sneak key until then (letting go below 0.03 a tick let a player at an edge
+     *  drift off: f56). */
+    static final double MOVING2 = 1e-7;
     /** Whether the field being built or in use counts sprinting (the gait and food when it was asked for). */
     private static boolean fieldSprint = true;
     public static int recipesFound = 0, recipesPlayed = 0, recipesDropped = 0, recipesFromSpots = 0;
@@ -302,6 +334,18 @@ public final class Layer2 {
         return (j != null && !j.isDone()) || recipe != null;
     }
 
+    /** Layer 2's state and per-walk memories, for the stall log (Walk.stallLog). */
+    static String memories() {
+        return String.format(java.util.Locale.ROOT, "busy=%b recipe=%b still=%d hopNone=%b routeNone=%b failedSearches=%d spotsEmpty=%d skipped=%d check=%b why=%s",
+            busy(), recipe != null, stillTicks, hopJumpNone, routeJumpNone, failedSearches.size(), spotsEmpty.size(), searchesSkipped,
+            waitingForCheck(), lastWhy.isEmpty() ? "-" : lastWhy);
+    }
+
+    /** Where the player's still streak began, for stillTicks; and the squared horizontal move from there under which no
+     *  way is made (0.05). */
+    private static double stillX = Double.NaN, stillZ = Double.NaN;
+    static final double NO_WAY2 = 0.0025;
+
     /** Still enough to start a searched recipe from (squared horizontal speed). */
     static final double REST2 = 1e-12;
 
@@ -358,6 +402,13 @@ public final class Layer2 {
         // a free action's keys come from its movement heading (its view may be 45 degrees off it: a strafe)
         float h = RunModel.isFree(action) && !Float.isNaN(heading) ? heading : yaw;
         int k = RunModel.keys(action, h, p.getYRot(), p.isInWater(), p.onGround(), p.isFallFlying(), last);
+        if (action == RunModel.STOP && holdSneak) k |= MoveState.SHIFT;
+        // a stop right after sneaking keeps the sneak while the player still moves: let go at an edge, the last of the
+        // speed carries it off (RW's far walk cleg1, f56: layer 2 sneaked along a ledge over the lava field, stopped,
+        // and the stop's keys up let it drift 0.03 over the edge, dead)
+        var mv = p.getDeltaMovement();
+        if (action == RunModel.STOP && (last & MoveState.SHIFT) != 0 && p.onGround() && mv.x * mv.x + mv.z * mv.z > MOVING2)
+            k |= MoveState.SHIFT;
         lastPressed = k;
         lastPressedTick = tick;
         return k;
@@ -380,21 +431,53 @@ public final class Layer2 {
     /** The start of a tick (Walk.steer): take the plan made from the end of the last tick. Whether it steers. */
     static boolean steer(LocalPlayer p) {
         controlling = false;
+        holdSneak = false;
         if (!Settings.walkLayer2) return false;
         if (playRecipe(p)) return true;
-        if (recipeJob == null && p.onGround() && looseTakeOffAt(holdPlan, p.getX(), p.getY(), p.getZ()) > 0
-            && !holdSearched(p)) {
+        boolean atTakeOff = recipeJob == null && p.onGround() && looseTakeOffAt(holdPlan, p.getX(), p.getY(), p.getZ()) > 0
+            && !holdSearched(p);
+        if (atTakeOff) { holdX = p.getX(); holdZ = p.getZ(); holdTick = tick; }
+        // the hold kept while it still slides on past the take-off on the ground: RW's far walk cleg1 (f52) landed on the
+        // take-off at (-23,59,-29) going on at 0.24 a tick, slid onto the next block (out of HOLD_NEAR), and layer 2's
+        // run, its every way unsafe, handed over to the follower, which walked on into the lava
+        var sv0 = p.getDeltaMovement();
+        boolean sliding = !atTakeOff && recipeJob == null && p.onGround() && tick - holdTick <= HOLD_SLIDE_TICKS
+            && Math.hypot(p.getX() - holdX, p.getZ() - holdZ) <= HOLD_SLIDE && sv0.x * sv0.x + sv0.z * sv0.z > RunModel.STILL2;
+        if (atTakeOff || sliding) {
             // on a loose jump's take-off: stand, so the jump search runs from rest (maybeSearchRouteGap). Layer 2's own
             // runs can't make such a jump and kept stepping about at its edge, never still, so no search came, and the
             // walk fell back off the level and went round again (the Parkour Spiral's leg 1: the bounce off the slime
             // at (-21..-20,58,-41..-40) from the ledge at (-16,63.5,-37), RW's playtest of 81fd819 and L1_11)
             action = RunModel.STOP;
+            // sneaking while it still slides: the game's edge back-off keeps a player coming in fast on the take-off.
+            // With the keys let go alone, a jump onto a one-slab take-off over lava landed on its edge going on (-0.2 a
+            // tick) and slid off into the lava (RW's far walk cgap, f48 g1n: the slab at (-13,61,-26), dead). Let go
+            // once nearly still, so the jump search runs standing: searched crouching, both jumps it found at the 03:14
+            // case's take-off (-3,75,45) were dropped before their first tick and the walk was Stuck there (f50)
+            var hv = p.getDeltaMovement();
+            holdSneak = hv.x * hv.x + hv.z * hv.z > MOVING2;
             yaw = KillAura.lastSentYaw(p);
             heading = Float.NaN;
             safe = true;
             controlling = true;
             controlledTicks++;
             lastWhy = "at a loose jump's take-off";
+            return true;
+        }
+        var sv = p.getDeltaMovement();
+        if (recipe == null && recipeJob == null && p.onGround() && stillTicks >= STALL_TICKS
+            && sv.x * sv.x + sv.z * sv.z > RunModel.STILL2 && Settings.walkParkour) {
+            // pressing on and making no way (an edge the sneak holds the player at, a wall): keys up, so the player comes
+            // to rest and the jump search can run from rest (its jump is played from where it searched from); searched
+            // from a press, the jump didn't land from where the player then stopped and was dropped (the Parkour Spiral's
+            // leg 24, L24_44)
+            action = RunModel.STOP;
+            yaw = KillAura.lastSentYaw(p);
+            heading = Float.NaN;
+            safe = true;
+            controlling = true;
+            controlledTicks++;
+            lastWhy = "pressing on without way: stopping";
             return true;
         }
         if (recipeJob != null && !recipeJob.isDone() && p.onGround()) {
@@ -489,6 +572,11 @@ public final class Layer2 {
             // triple neo: a thin neo_chained template fitted first, dropped, and no search followed on that block)
             java.util.regex.Matcher m = TEMPLATE_HOW.matcher(r.how == null ? "" : r.how);
             if (m.find()) { NeoTemplates.dropped.add(m.group(1) + " " + m.group(2)); recipeTryKey = Long.MIN_VALUE; }
+            // a searched jump that doesn't land from where the player now is (it came to rest elsewhere than the search's
+            // start): the floor may be searched again from here, once (the Parkour Spiral's leg 24, f42: dropped, no new
+            // search, Stuck); three times when dropped before its first tick (nothing played: the search's start and the
+            // player's differ by a creep; leg 24, f48: dropped twice at its take-off, then Stuck 14 s into the leg)
+            else if (recipeRetries++ < (recipeT == 0 ? DROP_RETRIES : 1)) recipeTryKey = Long.MIN_VALUE;
             return false;
         }
         action = RunModel.STOP;
@@ -509,7 +597,7 @@ public final class Layer2 {
         // a jump the graph has no move for is parkour: only with Parkour on
         if (!Settings.walkParkour || recipe != null || recipeJob != null || f.joined == null || !p.onGround()) return;
         if (f.joinedAt(p.getX(), p.getY(), p.getZ())) return;
-        if (!readyToSearch(p)) return;
+        if (!readyToSearch(p, 0)) return;
         int[] cand = f.joinedNear(p.getX(), p.getY(), p.getZ(), RECIPE_REACH, 4, true);
         if (cand.length == 0) return;
         int[][] land = new int[cand.length][];
@@ -538,8 +626,8 @@ public final class Layer2 {
         // a loose move not yet checked in the copy (the loose job checks the route's in order, ahead of the walk): wait
         int li = looseIndex(plan, gap[0], gap[1], gap[2]);
         if (li > 0 && plan.checkedTo < li) { waitingCheck = true; return; }
-        if (!readyToSearch(p)) return;
         int[][] land = {{(int) Math.floor(gap[0]), (int) Math.round(gap[1]) - 1, (int) Math.floor(gap[2])}};
+        if (!readyToSearch(p, ((long) land[0][0] << 40) ^ ((long) land[0][2] << 16) ^ land[0][1] ^ 0x51ED)) return;
         routedLanding = plan.direct ? null : gap.clone();
         // a loose move: its spots on the take-off's block, as its check had them (the walk may stand on the block beside
         // it: on the Parkour Spiral checked moves then found no way live, and were blocked, 2026-10-15's d6b)
@@ -563,7 +651,10 @@ public final class Layer2 {
             double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
             double lx = View.nodeX(r.path[i]) + 0.5, lz = View.nodeZ(r.path[i]) + 0.5;
             if (Math.hypot(tx - x, tz - z) > 1.5 || Math.abs(r.pathY[i - 1] - y) > 0.6) continue;
-            if (Math.hypot(lx - x, lz - z) > reach + 1.0) return null;
+            // a loose move is as long as its check in the copy found it (a bounce off slime lands up to 13 off): no
+            // reach for it. With one, the Parkour Spiral's leg 4 (f61) stood 1.3 off its bounce's take-off, the landing
+            // 10 away, no search came, and the walk was Stuck
+            if (r.moves[i] != Graph.LOOSE && Math.hypot(lx - x, lz - z) > reach + 1.0) return null;
             return new double[]{lx, r.pathY[i], lz};
         }
         return null;
@@ -585,6 +676,58 @@ public final class Layer2 {
 
     /** The path index of the plan's loose move whose take-off the player stands on (within HOLD_NEAR of its block's
      *  middle, at its height), or -1. */
+    /** The no-hop rules, off (KINE_NO_HOPS=1 turns them on, to measure). Measured on the 03:14 case (dev70ab, RW's
+     *  settings, 3 tries a side, 2026-10-16 09:40): off 3 of 3 arrived (553 to 568 ticks), on 2 of 3 (586, 946, a
+     *  time-out): the beam without its sprint-jump missed the gap at (-41,21) and the walk ended on a chorus stem. */
+    static final boolean NO_HOPS = "1".equals(System.getenv("KINE_NO_HOPS"));
+
+    /** How far ahead (blocks, to its take-off) a GAP of the route keeps layer 2's sprint-jump over lava. */
+    static final double GAP_AHEAD = 5.0;
+
+    /** Whether the next jump of the plan on from where the player is, is a GAP whose take-off lies within `near`. */
+    static boolean gapAhead(Planner.Plan plan, double x, double y, double z, double near) {
+        if (plan == null || plan.direct) return false;
+        PathSearch.Result r = plan.result;
+        int from = Field.nearestIndex(r.path, r.pathY, x, y, z) + 1;
+        for (int i = Math.max(1, from); i < r.path.length; i++) {
+            if (r.moves[i] == Graph.LOOSE) return false;
+            if (r.moves[i] != Graph.GAP) continue;
+            double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
+            return Math.hypot(tx - x, tz - z) <= near;
+        }
+        return false;
+    }
+
+    /** How near a loose jump's take-off (blocks) layer 2 stops sprint-jumping, so it comes onto it on the ground. */
+    static final double LOOSE_APPROACH = 3.5;
+    /** The length (blocks, centre to centre) from which a loose move counts as a long jump for LOOSE_APPROACH. */
+    static final double LOOSE_LONG = 3.0;
+
+    /** Whether a loose move of the plan takes off within `near` blocks of (x, z) at about height y. */
+    static boolean looseTakeOffNear(Planner.Plan plan, double x, double y, double z, double near) {
+        return looseTakeOffNear(plan, x, y, z, near, false);
+    }
+
+    /** As above; fellGaps: only a loose move in place of a gap that fell short (Walk.gapFell). */
+    static boolean looseTakeOffNear(Planner.Plan plan, double x, double y, double z, double near, boolean fellGaps) {
+        if (plan == null || plan.direct) return false;
+        PathSearch.Result r = plan.result;
+        // the next jump on from where the player is, only (a gap before it is layer 2's to sprint-jump: held off near a
+        // loose take-off beyond it, the 03:14 case's gap at (-41,21) fell short twice, f68)
+        int from = Field.nearestIndex(r.path, r.pathY, x, y, z) + 1;
+        for (int i = Math.max(1, from); i < r.path.length; i++) {
+            if (r.moves[i] == Graph.GAP) return false;
+            if (r.moves[i] != Graph.LOOSE) continue;
+            double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
+            // a long jump only (a gap): a short loose step (onto a chorus flower beside a stem the table has no floor
+            // for) layer 2's runs make as well as the jump search, and held for it the 03:14 case looped (f67)
+            if (Math.hypot(View.nodeX(r.path[i]) + 0.5 - tx, View.nodeZ(r.path[i]) + 0.5 - tz) < LOOSE_LONG) return false;
+            if (fellGaps && !Walk.gapFell(r.path[i - 1], r.path[i])) return false;
+            return Math.hypot(tx - x, tz - z) <= near && Math.abs(r.pathY[i - 1] - y) < 1.3;
+        }
+        return false;
+    }
+
     static int looseTakeOffAt(Planner.Plan plan, double x, double y, double z) {
         if (plan == null || plan.direct) return -1;
         PathSearch.Result r = plan.result;
@@ -687,11 +830,14 @@ public final class Layer2 {
      * the gap (the course's ladder_4b, 215 ticks in full3_c1's walk 2).
      */
     static double[] jumpAhead(Planner.Plan plan, Field f, double x, double y, double z, double reach) {
-        double[] a = f.jumpAhead(x, y, z, reach);
+        // a GAP's landing only: a loose move is made by the jump search from rest at its take-off (steer's hold). Free
+        // jumps aimed at a loose landing had layer 2 sprint-jump onto the take-off and on: RW's far walk cleg1 (f54)
+        // landed on a loose take-off's edge going on at 0.25 a tick by such a jump, and slid off into the lava, twice
+        double[] a = f.jumpAheadGap(x, y, z, reach);
         if (a != null || plan == null || plan.direct) return a;
         PathSearch.Result r = plan.result;
         for (int i = 1; i < r.path.length; i++) {
-            if (!Graph.jumpMove(r.moves[i])) continue;
+            if (r.moves[i] != Graph.GAP) continue;
             double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
             double lx = View.nodeX(r.path[i]) + 0.5, lz = View.nodeZ(r.path[i]) + 0.5;
             if (Math.hypot(tx - x, tz - z) > 1.5 || Math.abs(r.pathY[i - 1] - y) > 0.6) continue;
@@ -702,17 +848,31 @@ public final class Layer2 {
     }
 
     /** From a standing start only (the walk stands while it searches: steer), a second after a dropped jump, once per
-     *  floor stood on; marks the floor tried. */
-    private static boolean readyToSearch(LocalPlayer p) {
+     *  floor stood on and landing aimed at (target: a key of it, 0 for none); marks the floor tried. Once per floor
+     *  alone, a search there for one route's jump held back the search for the next route's: on the Parkour Spiral's
+     *  leg 2 a replan's route went on from the floor the last route's loose jump had been searched from, and layer 2
+     *  stood 13 s until Stuck; a fresh Go (Layer2.reset) let the search run and the walk went on (RW's walk log
+     *  2026-10-16 03:14). */
+    private static boolean readyToSearch(LocalPlayer p, long target) {
         var dv = p.getDeltaMovement();
-        if (dv.x * dv.x + dv.z * dv.z > RunModel.STILL2) return false;
+        // from rest only (pressing on without way, steer lets go of the keys first), standing up (not crouched: the
+        // take-off hold's sneak, see steer)
+        if (dv.x * dv.x + dv.z * dv.z > RunModel.STILL2 || p.isCrouching()) return false;
         if (tick - lastRecipeTry < 20) return false;
         long key = ((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY();
-        if (key == recipeTryKey) return false;
+        if (key == recipeTryKey && target == recipeTryTarget) return false;
         recipeTryKey = key;
+        recipeTryTarget = target;
         lastRecipeTry = tick;
         return true;
     }
+
+    /** The landing the last jump search aimed at (readyToSearch's key of it); searches again after a dropped jump on
+     *  the floor (playRecipe), reset with the floor. */
+    private static long recipeTryTarget = 0;
+    private static int recipeRetries = 0;
+    /** Searches again from the same floor after jumps dropped before their first tick. */
+    static final int DROP_RETRIES = 3;
 
     /**
      * The jump search on its own thread: from where the walk stands to each landing in turn (the first that has a way);
@@ -985,7 +1145,10 @@ public final class Layer2 {
         // when the walk comes back to it (the Parkour Spiral's leg 1, r10: a jump made, a fall back onto its take-off
         // later, and the walk stood there without a search until stuck)
         if (p.onGround() && recipeTryKey != Long.MIN_VALUE && recipe == null && recipeJob == null
-            && (((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY()) != recipeTryKey) recipeTryKey = Long.MIN_VALUE;
+            && (((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY()) != recipeTryKey) {
+            recipeTryKey = Long.MIN_VALUE;
+            recipeRetries = 0;
+        }
         // the field: built once a route's plan comes in, and again as the player gets half way along its corridor
         if (fieldJob != null && fieldJob.isDone()) {
             try {
@@ -1029,6 +1192,11 @@ public final class Layer2 {
             double hd = Math.hypot(rt.x[k] - p.getX(), rt.z[k] - p.getZ());
             if (hd <= GRID_R + 8) down = Math.max(down, (int) Math.ceil(p.getY() - rt.y[k]) + 3);
             if (rt.move[k] == Route.GLIDE && hd <= 32) gr = Math.max(gr, (int) Math.ceil(hd) + 8);
+            // a loose move longer than a jump reaches is a bounce: its pad can lie down to Graph.BOUNCE_DEPTH under the
+            // take-off, off the route's own points
+            if (rt.move[k] == Route.LOOSE && k > 0 && hd <= GRID_R + 8
+                && Math.hypot(rt.x[k] - rt.x[k - 1], rt.z[k] - rt.z[k - 1]) > Loose.MAX_REACH)
+                down = Math.max(down, (int) Math.ceil(p.getY() - rt.y[k - 1] + Graph.BOUNCE_DEPTH) + 2);
         }
         down = Math.min(down, GRID_MAX_DOWN);
         gr = Math.min(gr, GRID_MAX_R);
@@ -1049,7 +1217,18 @@ public final class Layer2 {
         }
 
         var dv = p.getDeltaMovement();
-        stillTicks = p.onGround() && dv.x * dv.x + dv.z * dv.z <= RunModel.STILL2 ? stillTicks + 1 : 0;
+        // still: no speed, or no way made (pressing on against an edge the sneak holds the player at, or a wall: the
+        // speed the keys give stays, the position doesn't change). By the speed alone, layer 2 pressing on at an edge with
+        // the sneak held was never still, so no jump search came and the walk stood there until stuck (the Parkour
+        // Spiral's pool edge by the fence, L1w_18; RW's walk log 2026-10-16 04:04 at the first gap, -1.7 56 -42.3)
+        // (no way: within 0.05 of where the streak began, so a slow creep up to a take-off, 0.015 a tick, isn't still:
+        // a search from there started before the player stopped, and its jump, from where it stopped, was dropped: the
+        // Parkour Spiral's leg 24, f42)
+        double mx = p.getX() - stillX, mz = p.getZ() - stillZ;
+        boolean noWay = mx * mx + mz * mz < NO_WAY2;
+        boolean still = p.onGround() && (dv.x * dv.x + dv.z * dv.z <= RunModel.STILL2 || noWay);
+        stillTicks = still ? stillTicks + 1 : 0;
+        if (!still || stillTicks == 1) { stillX = p.getX(); stillZ = p.getZ(); }
         maybeChain(p, grid, WorldSnapshot.body(p));
         searchGoal = new RunSim.Goal(dest[0], dest[1], destY, stand, p.getXRot(), Walk.costs().safeFall, Settings.walkParkour,
             Settings.walkFreeJumps);
@@ -1091,12 +1270,33 @@ public final class Layer2 {
         }
         RunModel.FreeMemory freeMem = mem;
         int gait = Walk.gait();
+        // lava (or another hurting block) under the ground round the player: no sprint-jumping on the way (the free
+        // jumps toward a gap's landing and the jump search's jumps stay). Bunny hops there came down on slab edges and
+        // short of ledges: RW's far walk cleg1 over the Parkour Spiral's lava field (f54, f61) and leg 33 by the farm's
+        // lava pits (f61: a hop along a ledge at 183 came down 0.3 short of the stone beyond and fell 9 into the lava)
+        // (not in water: there the sprint-jump gait is the swim up)
+        // (a GAP of the route within reach ahead: the beam's sprint-jump makes it, so not then: left out over lava, the
+        // 03:14 case's gap at (-41,21) fell short live twice, f68)
+        boolean overLava = g != null && !s.inWater && hazardBelow(g, s.x, s.y, s.z, HOP_HAZARD_R, HOP_HAZARD_DOWN)
+            && !gapAhead(plan, s.x, s.y, s.z, GAP_AHEAD);
+        // nor on the last blocks up to a loose jump's take-off: a hop there flies over it, the take-off hold never has
+        // the player on the ground there, and layer 2's run makes the loose jump on the go (the Parkour Spiral's leg 18,
+        // t65a: the 4-gap at 123, taken as a loose jump after it fell short as a GAP, fell short four more times so; no
+        // jump search from rest at its take-off came)
+        // and, on by default, on the approach to a loose jump that took the place of a gap which fell short live
+        // (Walk.watchGap): the fast way (the beam's own sprint-jump) failed there, so the careful one, the hold and the
+        // jump search from rest at the take-off, gets its chance (the Parkour Spiral's leg 18: the 4-gap at 123 fell short
+        // as a GAP, and its loose versions, made on the go too, fell short again)
+        boolean approach = !s.inWater && p.onGround() && looseTakeOffAt(plan, s.x, s.y, s.z) < 0
+            && looseTakeOffNear(plan, s.x, s.y, s.z, LOOSE_APPROACH, !NO_HOPS);
+        boolean noHops = NO_HOPS && overLava || approach;
         job = WORKER.submit(() -> {
             long r0 = System.nanoTime();
             RunModel model = new RunModel(new GroundPhysics(g, body), f, dest[0], dest[1], viewPitch, maxFall);
             model.parkour = parkour;
             model.goalY = goalY;
             model.cap = gait;
+            model.noSprintJumps = noHops;
             model.stand = stand && model.arrived(s);   // settling once on the hop's floor (RunModel.stand)
             if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
             model.freeMemory = freeMem;

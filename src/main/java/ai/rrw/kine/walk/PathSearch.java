@@ -208,6 +208,14 @@ public final class PathSearch {
     /** Floors under this aren't searched (the start is): the kept height's second search, see run. */
     private double floorMin = Double.NaN;
 
+    /** Whether floor node n is in water: a swim floor (the water's top) or ground with the feet in water (wading: the
+     *  Parkour Spiral's shallow sea, sand at 50 under water at 51, a GROUND floor flagged WADE). */
+    private boolean swim(long n) {
+        ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
+        int i = v.index(n);
+        return c != null && i >= 0 && (c.type(i) == ChunkFloors.SWIM || (c.flags(i) & ChunkFloors.WADE) != 0);
+    }
+
     /** Whether a way goes under height y past its start. */
     static boolean dips(Result r, double y) {
         for (int i = 1; i < r.pathY.length; i++) if (r.pathY[i] < y - 1e-4) return true;
@@ -290,6 +298,11 @@ public final class PathSearch {
             // or more is the nearer (the course's start beside its pad, a block lower: RW 2026-10-14, flower_pot_jump)
             boolean better;
             if (id != s && fy[id] < keepAbove - 1e-4) better = false;   // below the height the walk keeps (NaN: never)
+            // nor the water's top while a height is kept: the sea under a goal up a tower is never the place to wait
+            // (from the Parkour Spiral's start island, 52, the sea at 51 is within the kept height's step down; a walk
+            // to a goal four checkpoints on, its loose search out of time, went to the floor nearest the goal, the sea
+            // under it, and stood there: R1n_33, the gate's cleg1 and cgap, RW's own Go targets)
+            else if (id != s && !Double.isNaN(keepAbove) && swim(key)) better = false;
             else if (bestId < 0 || near < bestH - tieH) better = true;
             else if (near >= bestH + tieH) better = false;
             else if (nearerY(fy[id], fy[bestId])) better = true;

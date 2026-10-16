@@ -81,6 +81,20 @@ public final class Costs {
     }
     /** Added for each hazard (lava, fire, cactus and the like) in the eight columns around a floor at body height. */
     public double hazardNear = 2.0;
+    /** What a half heart of fall damage costs (ticks): a fall the "Fall damage allowed" setting lets through is taken
+     *  only where the way needs it, not as a short cut. Without it, at 2 allowed (RW's settings from 2026-10-16 04:03, for
+     *  the Parkour Spiral's leg 13 and its hay drop), the Kine Parkour course's first route dropped off the course to
+     *  the ground below for a shorter way and the walk stopped at #6 (the gate, q39_g2a and CB400_40). */
+    public double damageTicks = 400.0;
+    /** The half hearts of fall damage these costs allow (withFallDamage), 0 for none. */
+    public int damageAllowed = 0;
+
+    /** The damage cost of a fall of `drop` blocks onto a floor that takes `factor` of the damage (half hearts: the fall
+     *  less 3, rounded down, by the factor). */
+    double damageCost(double drop, float factor) {
+        double hp = Math.max(0.0, Math.floor(drop - 3.0 + 1e-6)) * (factor < 0f ? 1f : factor);
+        return hp > 0.0 ? hp * damageTicks : 0.0;
+    }
 
     public static final Costs BARITONE = new Costs();
 
@@ -170,6 +184,7 @@ public final class Costs {
             Costs c = base.copy();
             c.maxFall = base.maxFall + hp;
             c.safeFall = base.safeFall + hp;
+            c.damageAllowed = hp;
             return c;
         });
     }
@@ -180,6 +195,8 @@ public final class Costs {
         t.hazardNear = hazardNear;
         t.waterPenalty = waterPenalty;
         t.glideWear = glideWear;
+        t.damageTicks = damageTicks;
+        t.damageAllowed = damageAllowed;
         return t;
     }
 
@@ -190,7 +207,7 @@ public final class Costs {
         t.walk = walk; t.noSprint = noSprint; t.noSprintFactor = noSprintFactor; t.sprint = sprint; t.water = water;
         t.wade = wade; t.ladderUp = ladderUp; t.ladderDown = ladderDown; t.slowFactor = slowFactor;
         t.jumpPenalty = jumpPenalty; t.gapPenalty = gapPenalty; t.fallHidden = fallHidden; t.turn = turn;
-        t.glideStart = glideStart; t.glidePerBlock = glidePerBlock; t.glideWear = 0.0;
+        t.glideStart = glideStart; t.glidePerBlock = glidePerBlock; t.glideWear = 0.0; t.damageTicks = 0.0;
         t.walkOffFraction = walkOffFraction; t.jumpOne = jumpOne; t.fastest = fastest; t.fastestClimb = fastestClimb;
         t.maxFall = maxFall;
         t.safeFall = safeFall;

@@ -199,11 +199,21 @@ public final class Field {
      * route, standing on a floor not joined to the goal, the best joined floor within reach. Null when none.
      */
     double[] jumpAhead(double x, double y, double z, double reach) {
-        return jumpAhead(x, y, z, reach, false);
+        return jumpAhead(x, y, z, reach, false, true);
     }
 
     /** As above; jumps: a jump up (JUMP) counts as a jump ahead too (the jump search before a move layer 2 stalled at). */
     double[] jumpAhead(double x, double y, double z, double reach, boolean jumps) {
+        return jumpAhead(x, y, z, reach, jumps, true);
+    }
+
+    /** The landing of the next GAP within reach, not a loose move's: for layer 2's free jumps (Layer2.jumpAhead). */
+    double[] jumpAheadGap(double x, double y, double z, double reach) {
+        return jumpAhead(x, y, z, reach, false, false);
+    }
+
+    /** As above; loose: a LOOSE move's landing counts too. */
+    double[] jumpAhead(double x, double y, double z, double reach, boolean jumps, boolean loose) {
         int i = nodeAt(x, y, z);
         if (i < 0) return null;
         if (joined != null && !joined[i]) {
@@ -215,7 +225,7 @@ public final class Field {
             int nx = next[j];
             if (nx < 0) return null;
             if (Math.hypot(px[nx] - x, pz[nx] - z) > reach + 6) return null;
-            if (Graph.jumpMove(nextMove[j]) || jumps && nextMove[j] == Graph.JUMP)
+            if (nextMove[j] == Graph.GAP || loose && nextMove[j] == Graph.LOOSE || jumps && nextMove[j] == Graph.JUMP)
                 return Math.hypot(px[j] - x, pz[j] - z) <= reach ? new double[]{px[nx], py[nx], pz[nx]} : null;
             j = nx;
         }
@@ -361,8 +371,9 @@ public final class Field {
             routeArc = new double[route.gn];
             for (int k = 1; k < route.gn; k++)
                 routeArc[k] = routeArc[k - 1] + Math.hypot(route.gx[k] - route.gx[k - 1], route.gz[k] - route.gz[k - 1]);
-            sFrom = routeArc[nearestSample(route, View.nodeX(path[from]) + 0.5, View.nodeZ(path[from]) + 0.5)];
-            sTo = routeArc[nearestSample(route, View.nodeX(path[to]) + 0.5, View.nodeZ(path[to]) + 0.5)];
+            int kFrom = nearestSample(route, View.nodeX(path[from]) + 0.5, nodeHeight(path[from]), View.nodeZ(path[from]) + 0.5, 0);
+            sFrom = routeArc[kFrom];
+            sTo = routeArc[nearestSample(route, View.nodeX(path[to]) + 0.5, nodeHeight(path[to]), View.nodeZ(path[to]) + 0.5, kFrom)];
             int lastX = Integer.MIN_VALUE, lastZ = Integer.MIN_VALUE;
             for (int k = 0; k < route.gn; k++) {
                 if (routeArc[k] < sFrom - 1 || routeArc[k] > sTo + 1) continue;
@@ -576,14 +587,31 @@ public final class Field {
     static final double TAIL_LENGTH = 8.0;
 
     /** The route's ground sample nearest (x, z). */
-    private static int nearestSample(Route r, double x, double z) {
-        int best = 0;
+    /** The route's sample nearest (x, y, z), from sample k0 on: by the horizontal distance and, with y given, four times
+     *  the square of how far the heights differ past a block. Horizontally alone, a route that passes over itself put
+     *  the window's end on its earlier pass: on the Parkour Spiral's leg 38 the route crosses a pool's gold pillars (tops
+     *  at 194) and later the glass pads 6 over them (200); a window ending at a pad was sourced at the pillar under it,
+     *  so the pillars the walk was crossing read as the window's end, and layer 2 jumped back and forth between two of
+     *  them for the whole leg (f48 g3b, 41 jumps). */
+    private static int nearestSample(Route r, double x, double y, double z, int k0) {
+        int best = Math.min(Math.max(0, k0), r.gn - 1);
         double bestD = Double.MAX_VALUE;
-        for (int k = 0; k < r.gn; k++) {
+        for (int k = Math.max(0, k0); k < r.gn; k++) {
             double d = (r.gx[k] - x) * (r.gx[k] - x) + (r.gz[k] - z) * (r.gz[k] - z);
+            if (!Double.isNaN(y)) {
+                double dv = Math.max(0.0, Math.abs(r.gy[k] - y) - 1.0);
+                d += 4.0 * dv * dv;
+            }
             if (d < bestD) { bestD = d; best = k; }
         }
         return best;
+    }
+
+    /** The height of floor node n, NaN if the table hasn't it. */
+    private double nodeHeight(long n) {
+        ChunkFloors ch = v.chunk(View.nodeX(n), View.nodeZ(n));
+        int i = ch == null ? -1 : v.index(n);
+        return i < 0 ? Double.NaN : ch.h(i);
     }
 
     /** The cheapest move's cost from floor a to floor b (a straight walk's if there is no move). */

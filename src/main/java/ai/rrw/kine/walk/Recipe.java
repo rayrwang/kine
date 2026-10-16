@@ -190,12 +190,13 @@ public final class Recipe {
                                 boolean landed = s.onGround && !(s.vy > 0.0);
                                 if (jumped && after > 2 && (landed || phys.onClimbable(s))) {
                                     // scaffolding: standing on its top only (inside it the player sinks)
-                                    won = onCol && s.y > ly + 0.4 && s.y < ly + 1.6 && !hurts(s) && (landed || !scaffold);
+                                    won = onCol && s.y > ly + 0.4 && s.y < ly + 1.6 && !hurts(s) && (landed || !scaffold)
+                                        && (!landed || landsWithMargin(phys, s));
                                     // climbing, a floor inside the column on the way up is no landing
                                     if (won || landed && !climbing) { t++; break; }
                                 }
                                 if (climbing && !onCol && !phys.onClimbable(s)) break;   // out of the column
-                                if (s.y < start.y - 6) break;
+                                if (s.y < start.y - 6 && !overBounce(phys, s, start.y)) break;
                                 // off the floor it stands on before the jump (offFloor: the course's join pad beside
                                 // #67's start, fence_column_neo's fence arm)
                                 if (!jumped && offFloor(start, s)) break;
@@ -239,6 +240,26 @@ public final class Recipe {
         return ticks > 0;
     }
 
+    /** Whether a try falling past the jump search's usual 6 under its start goes on: slime or a bed is the first thing
+     *  under the player's box (a bounce off a pad far below, Graph.BOUNCE_DEPTH: the Parkour Spiral's leg 22, a drop
+     *  from treetops at 143 onto slime at 135), and the try is no more than BOUNCE_DEPTH and 2 under its start. */
+    static boolean overBounce(GroundPhysics phys, MoveState s, double startY) {
+        if (s.y < startY - Graph.BOUNCE_DEPTH - 2.0) return false;
+        ai.rrw.kine.move.BlockGrid g = phys.grid();
+        int top = GameMath.floor(s.y);
+        for (double cx : new double[]{s.x - 0.3, s.x + 0.3})
+            for (double cz : new double[]{s.z - 0.3, s.z + 0.3}) {
+                int bx = GameMath.floor(cx), bz = GameMath.floor(cz);
+                for (int y = top; y >= top - 12; y--) {
+                    ai.rrw.kine.move.BlockInfo b = g.get(bx, y, bz);
+                    if (b == null || b.shape.empty) continue;
+                    if (b.is(ai.rrw.kine.move.BlockInfo.SLIME) || b.is(ai.rrw.kine.move.BlockInfo.BED)) return true;
+                    break;
+                }
+            }
+        return false;
+    }
+
     /** Whether the step just taken touched a block that hurts (magma, a berry bush, cactus) or one whose movement the
      *  copy leaves out (a cobweb, honey, a current: MoveState.touched, cleared before the step; scaffolding is copied
      *  since 2026-10-15): the copy's
@@ -260,6 +281,23 @@ public final class Recipe {
         int sx = start.hasSupport ? start.supX : GameMath.floor(start.x), sy = start.hasSupport ? start.supY : GameMath.floor(start.y - 1e-3),
             sz = start.hasSupport ? start.supZ : GameMath.floor(start.z);
         return !(s.hasSupport && s.supX == sx && s.supY == sy && s.supZ == sz);
+    }
+
+    /** How far the player's box must reach over what it lands on, every way (blocks). A landing the copy made with the
+     *  box over a post's edge by less was missed live by a hundredth: the Kine Parkour course's #19 pane_p2p, onto a
+     *  glass pane's post, landed 0.37 off its middle (0.3625 the most that still stands on it) and slid off at once
+     *  (#20 slab_jumps not reached: f48 G2, f42 G4's third walk). */
+    static final double LAND_MARGIN = 0.04;
+    private static final ThreadLocal<ai.rrw.kine.move.BlockGrid.Colliders> LAND_COLS =
+        ThreadLocal.withInitial(ai.rrw.kine.move.BlockGrid.Colliders::new);
+
+    /** Whether the box, LAND_MARGIN narrower on every side, still has something under its feet to stand on. */
+    static boolean landsWithMargin(GroundPhysics phys, MoveState s) {
+        double w = phys.body().width / 2.0 - LAND_MARGIN;
+        double[] b = {s.x - w, s.y - 0.05, s.z - w, s.x + w, s.y - 1e-7, s.z + w};
+        ai.rrw.kine.move.BlockGrid.Colliders c = LAND_COLS.get();
+        phys.grid().collect(b, c, s.y, false);
+        return c.n > 0;
     }
 
     /** The game's safe fall (Costs.maxFall): a landing's fall past it hurts, unless the block takes it all (slime). */

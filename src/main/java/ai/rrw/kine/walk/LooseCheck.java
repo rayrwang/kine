@@ -66,6 +66,10 @@ final class LooseCheck {
          *  search after a replan starts where the last left off (the Parkour Spiral's leg 8 live: each replan's loose
          *  job went through the same fifteen doubts again). */
         final Set<Long> priced = ConcurrentHashMap.newKeySet();
+        /** Failed full checks by their landing's floor (Planner.landingFailed). */
+        final java.util.Map<Long, Integer> landingFails = new ConcurrentHashMap<>();
+        /** Failed full checks by their take-off's and landing's 4 by 4 areas (Planner.landingFailed). */
+        final java.util.Map<Long, Integer> areaFails = new ConcurrentHashMap<>();
 
         static long key(long edge, long chainedFrom, long terrain) {
             return edge * 31 + chainedFrom * 0x9E3779B97F4A7C15L + terrain * 0xC2B2AE3D27D4EB4FL;
@@ -76,12 +80,16 @@ final class LooseCheck {
             failed.clear();
             doubtful.clear();
             priced.clear();
+            // the failure counts too: kept from one walk to the next, one failed check in the next walk blocked a
+            // landing or a pair of areas at once (the walk's blocked set is new each walk, the counts were not)
+            landingFails.clear();
+            areaFails.clear();
         }
     }
 
     /** The blocks round a take-off a check reads: as layer 2's copy round the player (Layer2.GRID_R, GRID_DOWN), up to
-     *  the landing's height and reach. */
-    static final int GRID_R = 14, GRID_DOWN = 10, GRID_UP = 8;
+     *  the landing's height and reach, and down to a bounce's pad (Graph.BOUNCE_DEPTH; was 10). */
+    static final int GRID_R = 14, GRID_DOWN = (int) Graph.BOUNCE_DEPTH + 2, GRID_UP = 8;
 
     /** The grid's reach round a take-off: GRID_R, or the landing's distance and 3 more (a bounce off two slime pads lands
      *  up to three bounce reaches away). */

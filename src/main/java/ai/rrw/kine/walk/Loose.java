@@ -135,12 +135,23 @@ final class Loose {
         double hor = Math.hypot(gx - View.nodeX(start), gz - View.nodeZ(start));
         double climb = Double.isNaN(goalY) || Float.isNaN(h) ? 0.0 : Math.max(0.0, goalY - h);
         double est = c.estimate(hor, climb);
-        return Math.max(4.0 * est, est + 600.0);
+        // and the damage the walk may take on the way, priced as Costs.damageCost does: without it the Parkour Spiral's
+        // leg 13, whose way drops 9 onto hay for 1 HP (Fall damage allowed 2), was over the bound by its damage's price
+        // alone (L24_44, after 942e4a0)
+        return Math.max(4.0 * est, est + 600.0) + c.damageAllowed * c.damageTicks;
     }
 
     /** How far a bounce off slime is offered: from the take-off to the slime, and from the slime to the landing (blocks,
      *  centre to centre): about a level jump's reach each way. */
     static final double BOUNCE_REACH = 6.2;
+
+    /** How far a bounce's slime may lie from its take-off (centre to centre, blocks): BOUNCE_REACH for a fall of up to 4
+     *  onto it, a quarter block more for each block deeper (a longer fall carries further), at most 7.2: the Parkour
+     *  Spiral's leg 33 drops from the farm's birch tree (feet 186) onto the slime by the carrots (top 178), 6.4 away, and
+     *  bounces 5 up onto its checkpoint's terracotta (helper B). */
+    static double bounceReach(double drop) {
+        return Math.min(7.2, BOUNCE_REACH + Math.max(0.0, drop - 4.0) * 0.25);
+    }
 
     /** A bounce's cost (ticks): the run over both stretches, the base, and the risk at an ease of 0.05 (rarely more than a
      *  narrow way lands: a bounce's height and heading are set by the fall onto the slime). */
@@ -149,6 +160,38 @@ final class Loose {
     }
 
     /** A move's key, from floor `from` to floor `to` (View nodes): for the blocked moves and the checks' memory. */
+    /** The key that, among the blocked moves, stands for every loose move from the 4 by 4 area round floor `from` (at its
+     *  height, to the block) to the one round floor `to` (Planner.areaFailed). Null-safe: NaN heights give 0. */
+    static long area(View v, long from, long to) {
+        float fh = height(v, from), th = height(v, to);
+        if (Float.isNaN(fh) || Float.isNaN(th)) return 0L;
+        long a = ((long) (View.nodeX(from) >> 2) * 73856093L) ^ ((long) (View.nodeZ(from) >> 2) * 19349663L) ^ ((long) Math.floor(fh) * 83492791L);
+        long b = ((long) (View.nodeX(to) >> 2) * 73856093L) ^ ((long) (View.nodeZ(to) >> 2) * 19349663L) ^ ((long) Math.floor(th) * 83492791L);
+        return edge(a, b) ^ 0xA4EAL;
+    }
+
+    /** The key that, among the blocked moves, stands for every loose move onto floor `to` (Planner.landingFailed). */
+    static long landing(long to) {
+        return edge(0x5EEDL, to) ^ 0x7A4DL;
+    }
+
+    /** The key a landing's failed checks count under (Planner.landingFailed) and its block (Graph.add): the floor's
+     *  own (landing), or for a ladder's or vine's rung the column's, one for all its rungs. The Parkour Spiral's leg
+     *  13: a ladder shaft walled in but for a closed iron door, its six rungs (99 to 104) six landings, 36 failed checks
+     *  before all were blocked. */
+    static long landingKey(View v, long to) {
+        ChunkFloors c = v.chunk(View.nodeX(to), View.nodeZ(to));
+        int i = c == null ? -1 : v.index(to);
+        if (i < 0 || c.type(i) != ChunkFloors.CLIMB) return landing(to);
+        return landing(View.node(View.nodeX(to), View.nodeZ(to), 0)) ^ 0x1ADDE5L;
+    }
+
+    /** The key that blocks only the proven (GAP) move from one floor to another, not a loose move between them (Walk's
+     *  gap that fell short live: offered again as a loose jump, checked in the copy and made from rest). */
+    static long strictEdge(long from, long to) {
+        return edge(from, to) ^ 0x3C6EF372FE94F82BL;
+    }
+
     static long edge(long from, long to) {
         return from * 0x9E3779B97F4A7C15L ^ Long.rotateLeft(to, 29) * 0xC2B2AE3D27D4EB4FL ^ 0x165667B19E3779F9L;
     }

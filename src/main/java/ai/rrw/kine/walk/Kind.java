@@ -30,7 +30,7 @@ public final class Kind {
     public static final int AVOID = 32;
     /** A door, trapdoor or fence gate (closed ones are walls through their collision shape). */
     public static final int DOOR = 64;
-    /** Slows walking: speed factor below 1 (soul sand, honey). */
+    /** Slows walking: speed factor below 1 (soul sand, honey), or slime (its stepOn). */
     public static final int SLOW = 128;
     /** A closed door the walk can open by hand (a wooden door: DoorOpener); iron ones need redstone. */
     public static final int CLOSED_DOOR = 256;
@@ -103,6 +103,20 @@ public final class Kind {
     /** Something the player must not walk into: lava, a hazard, or a block to avoid. */
     public boolean blocksBody() {
         return (flags & (LAVA | HAZARD | AVOID)) != 0;
+    }
+
+    /** Whether this kind's boxes together span the cell from 0 to 1 along axis (0 x, 2 z), gaps under 0.01 closed. */
+    boolean spans(int axis) {
+        if (boxes == null || boxes.length == 0) return false;
+        double[][] iv = new double[boxes.length][];
+        for (int i = 0; i < boxes.length; i++) iv[i] = new double[]{boxes[i][axis], boxes[i][axis + 3]};
+        java.util.Arrays.sort(iv, (a, b) -> Double.compare(a[0], b[0]));
+        double reach = 0.0;
+        for (double[] r : iv) {
+            if (r[0] > reach + 0.01) return false;
+            reach = Math.max(reach, r[1]);
+        }
+        return reach >= 1.0 - 0.01;
     }
 
     /** The highest top of this kind's boxes that overlap the horizontal rectangle (block-local x0..x1, z0..z1) and lie at

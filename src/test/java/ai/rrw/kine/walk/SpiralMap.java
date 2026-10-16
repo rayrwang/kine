@@ -88,6 +88,21 @@ final class SpiralMap {
                 m.cells[idx(x, y, z)] = id;
             }
         }
+        String set = System.getenv("KINE_SPIRAL_SET");
+        if (set != null) {
+            // what-if edits of the map (bench tool): "x,y,z=state;..." (a state as the scan writes it, e.g. minecraft:air),
+            // for asking whether a leg has a way once a mechanism's blocks are where it puts them (a piston door open)
+            for (String part : set.split(";")) {
+                if (part.isBlank()) continue;
+                String[] kv = part.split("=", 2), p = kv[0].split(",");
+                int x = Integer.parseInt(p[0].trim()), y = Integer.parseInt(p[1].trim()), z = Integer.parseInt(p[2].trim());
+                try {
+                    m.cells[idx(x, y, z)] = Block.getId(BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, kv[1].trim(), false).blockState());
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("KINE_SPIRAL_SET: " + part, e);
+                }
+            }
+        }
         if (System.getenv("KINE_SPIRAL_SEA_LAVA") != null) {
             // the sea round the tower kills on this map (its datapack's drown rule): for exploring, lava instead, so the
             // searches don't count on swimming round to another level
@@ -111,6 +126,37 @@ final class SpiralMap {
         return CLIMBABLE.contains(BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath());
     }
 
+    /** Water as the live game has it (KINE_SPIRAL_WATER, a bench option): offline the game's tags aren't bound, so
+     *  McKinds (FluidTags.WATER) and WorldSnapshot (the fluid by FluidTags) took every water block for air: no
+     *  Kind.WATER in the table (a lake's floor was its bed, with no swimming floor on top) and no fluid in the copy. With
+     *  it, a block whose fluid is water (by the fluid's type, which needs no tags) gets the table's water flag and the
+     *  copy's fluid, its height and current, as WalkTable and WorldSnapshot.blocks have them live. */
+    static final boolean WATER = System.getenv("KINE_SPIRAL_WATER") != null;
+    private static final java.util.Map<Integer, Integer> WATER_KINDS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static boolean water(BlockState st) {
+        var fs = st.getFluidState();
+        return !fs.isEmpty() && fs.getType().isSame(net.minecraft.world.level.material.Fluids.WATER);
+    }
+
+    /** The copy's block info of a water block with its fluid, as WorldSnapshot.info has it where the tags are bound. */
+    static BlockInfo withWater(BlockInfo bi, BlockState st) {
+        if (bi.fluid != BlockInfo.NO_FLUID) return bi;
+        var fs = st.getFluidState();
+        return new BlockInfo(bi.shape, bi.friction, bi.speedFactor, bi.jumpFactor, bi.flags | BlockInfo.FLUID | (fs.isSource() ? 0 : BlockInfo.CURRENT),
+            BlockInfo.WATER_FLUID, fs.getOwnHeight(), bi.fallFactor, bi.bounce);
+    }
+
+    /** The table kind of water block st (McKinds' kind id `id`) with the water flag and the fluid in its info. */
+    static int waterKind(int id, BlockState st) {
+        return WATER_KINDS.computeIfAbsent(id, i -> {
+            Kind k = Palette.get(i);
+            if (k.is(Kind.WATER)) return i;
+            return Palette.add(k.name + "[water offline]", withWater(k.info, st), java.util.Arrays.asList(k.boxes), k.flags | Kind.WATER,
+                k.drawnTop).id;
+        });
+    }
+
     /** The walk table's chunks for the whole box, as WalkTable builds them. */
     View view() {
         Long2ObjectOpenHashMap<ChunkFloors> chunks = new Long2ObjectOpenHashMap<>();
@@ -126,6 +172,7 @@ final class SpiralMap {
                             BlockState st = state(x, y, z);
                             out[y - Y0] = st.isAir() ? Palette.AIR.id : climbable(st) ? McKinds.climbableId(st)
                                 : st.hasOffsetFunction() ? McKinds.idAt(st, x, y, z) : McKinds.id(st);
+                            if (WATER && water(st)) out[y - Y0] = waterKind(out[y - Y0], st);
                         }
                     }
                 }));
@@ -145,6 +192,13 @@ final class SpiralMap {
                     BlockInfo bi = WorldSnapshot.info(st, st.getCollisionShape(EmptyBlockGetter.INSTANCE, new BlockPos(x, y, z),
                         CollisionContext.empty()));
                     if (WorldSnapshot.trapdoorLadder(st, state(x, y - 1, z)) || climbable(st)) bi = WorldSnapshot.climbable(bi);
+                    if (WATER && water(st)) bi = withWater(bi, st);
+                    // under 26.2's rules (KINE_RULES=26.2) on the development release's game classes, whose
+                    // Block.getBounceRestitution doesn't exist (the epoch code gives 0): 26.2's values, slime 1, beds 0.75
+                    if (ai.rrw.kine.compat.Rules.BOUNCE_RESTITUTION && bi.bounce == 0.0F
+                        && (bi.is(BlockInfo.SLIME) || bi.is(BlockInfo.BED)))
+                        bi = new BlockInfo(bi.shape, bi.friction, bi.speedFactor, bi.jumpFactor, bi.flags, bi.fluid, bi.fluidHeight,
+                            bi.fallFactor, bi.is(BlockInfo.SLIME) ? 1.0F : 0.75F);
                     g.set(x, y, z, bi);
                 }
         return g;

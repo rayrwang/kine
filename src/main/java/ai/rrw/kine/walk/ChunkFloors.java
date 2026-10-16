@@ -54,6 +54,10 @@ public final class ChunkFloors {
     final int[] window;          // WINDOW per floor: kind ids from fb up
     final int[] hazStart;        // hazard heights of column c are haz[hazStart[c] .. hazStart[c + 1] - 1]
     final int[] haz;
+    /** Runs of tall blocks of column c (ColumnScan.walls: lowest and highest block of each run and its kind id) are
+     *  wall[wallStart[c] .. wallStart[c + 1] - 1], in triples. */
+    final int[] wallStart;
+    final int[] wall;
     /** Per column: the height from which it is open to the sky (no collision above), or +infinity when that isn't
      *  known. The free space over a floor is measured only MAX_CLEAR up; above that the table knew nothing, and a column
      *  was taken as solid there (a gap over a chasm deeper than 24 wasn't a gap, and the air round a player more than 24
@@ -71,7 +75,8 @@ public final class ChunkFloors {
      *  table before the entry is published. */
     long[] columnStamps;
 
-    private ChunkFloors(int cx, int cz, long stamp, int[] start, List<Floor> fl, int[] hazStart, int[] haz) {
+    private ChunkFloors(int cx, int cz, long stamp, int[] start, List<Floor> fl, int[] hazStart, int[] haz, int[] wallStart,
+                        int[] wall) {
         this.cx = cx; this.cz = cz; this.stamp = stamp;
         this.start = start;
         int n = fl.size();
@@ -87,6 +92,8 @@ public final class ChunkFloors {
         }
         this.hazStart = hazStart;
         this.haz = haz;
+        this.wallStart = wallStart;
+        this.wall = wall;
         open = new boolean[n];
         openFrom = new float[256];
         for (int c = 0; c < 256; c++) {
@@ -170,12 +177,16 @@ public final class ChunkFloors {
         int ha = a.hazStart[c + 1] - a.hazStart[c], hb = b.hazStart[c + 1] - b.hazStart[c];
         if (ha != hb) return false;
         for (int i = 0; i < ha; i++) if (a.haz[a.hazStart[c] + i] != b.haz[b.hazStart[c] + i]) return false;
+        int wa = a.wallStart[c + 1] - a.wallStart[c], wb = b.wallStart[c + 1] - b.wallStart[c];
+        if (wa != wb) return false;
+        for (int i = 0; i < wa; i++) if (a.wall[a.wallStart[c] + i] != b.wall[b.wallStart[c] + i]) return false;
         return true;
     }
 
     /** Approximate memory use, bytes. */
     public long bytes() {
         return 64L + start.length * 4L + type.length * (2L + 2 + 16 + 4 + 4L * WINDOW) + hazStart.length * 4L + haz.length * 4L
+            + wallStart.length * 4L + wall.length * 4L
             + 256L * 4;
     }
 
@@ -193,18 +204,24 @@ public final class ChunkFloors {
         private final int[] hazStart = new int[257];
         private final List<Floor> floors = new ArrayList<>();
         private int[] haz = new int[16];
-        private int nHaz = 0, column = 0;
+        private final int[] wallStart = new int[257];
+        private int[] wall = new int[64];
+        private int nHaz = 0, nWall = 0, column = 0;
 
         Builder(int cx, int cz) { this.cx = cx; this.cz = cz; }
 
-        /** The next column's floors (in height order) and hazard heights. */
-        void column(List<Floor> fl, int[] hazY, int nHazY) {
+        /** The next column's floors (in height order), hazard heights and tall-block runs (triples). */
+        void column(List<Floor> fl, int[] hazY, int nHazY, int[] walls, int nWalls) {
             start[column] = floors.size();
             hazStart[column] = nHaz;
+            wallStart[column] = nWall;
             floors.addAll(fl);
             if (nHaz + nHazY > haz.length) haz = java.util.Arrays.copyOf(haz, Math.max(haz.length * 2, nHaz + nHazY));
             System.arraycopy(hazY, 0, haz, nHaz, nHazY);
             nHaz += nHazY;
+            if (nWall + nWalls > wall.length) wall = java.util.Arrays.copyOf(wall, Math.max(wall.length * 2, nWall + nWalls));
+            System.arraycopy(walls, 0, wall, nWall, nWalls);
+            nWall += nWalls;
             column++;
         }
 
@@ -212,7 +229,9 @@ public final class ChunkFloors {
             if (column != 256) throw new IllegalStateException("columns: " + column);
             start[256] = floors.size();
             hazStart[256] = nHaz;
-            return new ChunkFloors(cx, cz, stamp, start, floors, hazStart, java.util.Arrays.copyOf(haz, nHaz));
+            wallStart[256] = nWall;
+            return new ChunkFloors(cx, cz, stamp, start, floors, hazStart, java.util.Arrays.copyOf(haz, nHaz), wallStart,
+                java.util.Arrays.copyOf(wall, nWall));
         }
     }
 }

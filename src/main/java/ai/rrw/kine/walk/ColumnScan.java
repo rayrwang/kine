@@ -33,13 +33,14 @@ public final class ColumnScan {
         ChunkFloors.Builder b = new ChunkFloors.Builder(cx, cz);
         List<ChunkFloors.Floor> fl = new ArrayList<>();
         int[] haz = new int[height];
+        int[] walls = new int[3 * height + 3];
         for (int lz = 0; lz < 16; lz++)
             for (int lx = 0; lx < 16; lx++) {
                 // column order must be x + 16 z: the builder takes columns 0, 1, 2 ... in that order
                 src.column(lx, lz, ids);
                 fl.clear();
                 int nHaz = column(ids, minY, fl, haz);
-                b.column(fl, haz, nHaz);
+                b.column(fl, haz, nHaz, walls, walls(ids, minY, walls));
             }
         return b.build(STAMPS.incrementAndGet());
     }
@@ -118,6 +119,44 @@ public final class ColumnScan {
         out.sort((a, b) -> Float.compare(a.h, b.h));
         return nHaz;
     }
+
+    /** A block a jump can't pass through: its collision covers the whole cell across and is more than half a block
+     *  tall (a full block, glass, leaves; not slabs, stairs, fences, walls or panes: Graph.wallCell's rule). */
+    static boolean wallKind(Kind k) {
+        return !Float.isNaN(k.cellBottom) && k.topFull && k.cellTop - k.cellBottom > 0.5F;
+    }
+
+    /** A block the flight line looks at (Graph.wallCell): a collision more than half a block tall, a wall's block or a
+     *  thin one (a fence, a pane, a door), which blocks the way when it spans the cell across it. */
+    static boolean tallKind(Kind k) {
+        return !Float.isNaN(k.cellBottom) && k.cellTop - k.cellBottom > 0.5F && !k.blocksBody();
+    }
+
+    /** The column's runs of tall blocks (tallKind), bottom up, as triples (lowest block, highest block, kind id: one
+     *  kind a run) into `out`; returns how many ints. The flight line (Graph.flightOpen) reads them: a wall's inside
+     *  under its top floor lies outside every floor's window, and was taken for open (the Parkour Spiral's leg 28: 143
+     *  of 161 failed loose checks crossed a wall the table didn't know, the house wall at x -8 from 154 up to 158,
+     *  its windows barred by fences joined across). */
+    static int walls(int[] ids, int minY, int[] out) {
+        int n = 0, lo = Integer.MIN_VALUE, id = WALL_RUN;
+        for (int yi = 0; yi < ids.length; yi++) {
+            Kind k = Palette.get(ids[yi]);
+            boolean w = tallKind(k);
+            // one run for a stack of blocks covering their cells' tops, whatever they are (WALL_RUN: grass turning to
+            // dirt inside a wall is no change of the column, TableTest), one a kind for thin ones
+            int key = !w ? 0 : wallKind(k) ? WALL_RUN : ids[yi];
+            if (lo != Integer.MIN_VALUE && (!w || key != id)) {
+                out[n++] = lo; out[n++] = minY + yi - 1; out[n++] = id;
+                lo = Integer.MIN_VALUE;
+            }
+            if (w && lo == Integer.MIN_VALUE) { lo = minY + yi; id = key; }
+        }
+        if (lo != Integer.MIN_VALUE) { out[n++] = lo; out[n++] = minY + ids.length - 1; out[n++] = id; }
+        return n;
+    }
+
+    /** The kind id a run of blocks covering their cells' tops is stored with (View.blockKnown: Palette.SOLID). */
+    static final int WALL_RUN = -1;
 
     /** Whether a GROUND floor already found has its feet in block y. */
     private static boolean feetAt(List<ChunkFloors.Floor> out, int y) {

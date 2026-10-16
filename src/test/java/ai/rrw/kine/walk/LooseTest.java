@@ -67,7 +67,41 @@ public class LooseTest {
             "a harder jump costs more than its run");
     }
 
-    static final Kind CLOSED_DOOR_WEST = Palette.add("closed_door_west", java.util.List.of(TestWorld.box(0, 0, 0, 0.1875, 1, 1)),
+    /** No loose drop through a ceiling: from a closed room's roof onto its floor two blocks in, nothing (the flight line
+     *  alone let it through); with a hole in the roof between them, the drop by the hole is offered. */
+    @Test
+    void noLooseDropThroughACeiling() {
+        TestWorld w = blocks(-8, -8, 23, 23);
+        w.fill(-1, 8, -1, 7, 8, 7, STONE);       // the room's floor: feet 9
+        w.fill(-1, 9, -1, 7, 10, -1, STONE);     // its walls, two high
+        w.fill(-1, 9, 7, 7, 10, 7, STONE);
+        w.fill(-1, 9, -1, -1, 10, 7, STONE);
+        w.fill(7, 9, -1, 7, 10, 7, STONE);
+        w.fill(-1, 11, -1, 7, 11, 7, STONE);     // the roof: feet 12, the room's ceiling at 11
+        boolean was = Graph.DESCENT_CHECK;
+        try {
+            for (boolean hole : new boolean[]{false, true}) {
+                if (hole) w.set(3, 11, 0, Palette.AIR);
+                View v = w.view();
+                long from = v.nodeAt(3, 12, -1), to = v.nodeAt(3, 9, 1);
+                assertNotEquals(View.NONE, from);
+                assertNotEquals(View.NONE, to);
+                for (boolean check : new boolean[]{false, true}) {
+                    Graph.DESCENT_CHECK = check;
+                    Graph g = new Graph(v, Costs.LAYER2);
+                    g.loose = true;
+                    g.expand(from);
+                    boolean offered = false;
+                    for (int k = 0; k < g.n; k++) offered |= g.to[k] == to && g.move[k] == Graph.LOOSE;
+                    assertEquals(hole || !check, offered, (hole ? "a hole in the roof" : "a closed roof") + ", descent check " + check);
+                }
+            }
+        } finally {
+            Graph.DESCENT_CHECK = was;
+        }
+    }
+
+    static final Kind CLOSED_DOOR_WEST =Palette.add("closed_door_west", java.util.List.of(TestWorld.box(0, 0, 0, 0.1875, 1, 1)),
         0.6F, 1.0F, Kind.DOOR | Kind.CLOSED_DOOR);
 
     /** A corridor shut by a closed wooden door: with doors on, a way through it by an OPEN move (the walk opens it);
