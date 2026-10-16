@@ -153,6 +153,7 @@ public final class Layer2 {
         recipeRetries = 0;
         holdPlan = null;
         groundY = Double.NaN;
+        offFieldReset = true;   // the worker clears it before its next search
         lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
         spotsEmpty.clear();
         failedSearches.clear();
@@ -218,6 +219,18 @@ public final class Layer2 {
         return Recipe.fallEndsSafely(new GroundPhysics(g, WorldSnapshot.body(p)), WorldSnapshot.state(p), maxFall);
     }
 
+    /** Whether the player, keys up, stays on the ground at its height a few ticks by the copy (RunModel.staysPut); true
+     *  with no blocks yet. */
+    static boolean staysPut(LocalPlayer p) {
+        BlockGrid g = grid;
+        if (g == null) return true;
+        try {
+            return RunModel.staysPut(new GroundPhysics(g, WorldSnapshot.body(p)), WorldSnapshot.state(p));
+        } catch (RuntimeException ex) {
+            return true;
+        }
+    }
+
     /** Whether a copy-found jump is being played (it still lands, by the copy from the state each tick). */
     public static boolean playingRecipe() {
         return recipe != null;
@@ -247,9 +260,78 @@ public final class Layer2 {
     private static Future<Recipe> recipeJob = null;
     /** The height the player last stood at (on the ground, in water or on a ladder): the gap check's take-off. */
     private static double groundY = Double.NaN;
+    /** The off-field floor's memory for layer 2's searches (RunModel.OffField; used on the worker only). */
+    private static final RunModel.OffField OFF_FIELD_MEMORY = new RunModel.OffField();
+    private static volatile boolean offFieldReset = false;
     /** The free search's memory toward the jump ahead (RunModel.FreeMemory): a new one for each landing. */
     private static volatile RunModel.FreeMemory freeMemory = null;
     private static long recipeTryKey = Long.MIN_VALUE;
+    /** The copy against the game, tick by tick (KINE_COPY_TRACE=1, a measuring tool, off by default): each tick the
+     *  copy's step from the state now with the keys pressed and the player's own yaw (what the game moves by: the
+     *  rotation sent lags it a tick, measured on the Parkour Spiral's leg 18, 2026-10-16: with the view's yaw the copy
+     *  matched the game to the 1e-4 on most ticks, with the sent yaw it was 0.003 to 0.08 off) is kept, and the next
+     *  tick's state compared with it; a difference over COPY_TRACE_MIN is logged with the keys and who steered. For
+     *  finding where the copy and the game part on the jumps that come down short live. Measured so: sneaking forward
+     *  against a wall on the ground about 0.007 a tick, walking on without the sprint key about 0.03. The state is taken
+     *  at the tick's start (traceTickStart), as the walk takes it: read in adjustInput (KeyboardInput.tick's end) the
+     *  game's keyPresses already hold this tick's keyboard, so the copy's last keys were the keyboard's (none), not the
+     *  keys pressed last tick, and every tick after a sneak or a jump came out wrong (0.0178 in the air, 0.09 on the
+     *  ground, trclc). */
+    static final boolean COPY_TRACE = "1".equals(System.getenv("KINE_COPY_TRACE"));
+    static final double COPY_TRACE_MIN = 0.005;
+    private static MoveState tracePredicted = null;
+    private static long traceTick = Long.MIN_VALUE, traceCount = 0;
+    private static int traceKeys = 0;
+    private static float traceYaw = 0f;
+    private static boolean traceFood = true;
+    /** The player's state at this tick's start (Walk.onTickStart), for copyTrace. */
+    private static MoveState traceStart = null;
+    private static long traceStartCount = Long.MIN_VALUE;
+
+    /** At the tick's start (before the player's tick): the state the trace's step goes from, and the check of last
+     *  tick's step against it. */
+    public static void traceTickStart(LocalPlayer p) {
+        if (!COPY_TRACE) return;
+        traceCount++;
+        if (p == null || !Walk.active()) { traceStart = null; tracePredicted = null; return; }
+        MoveState now = WorldSnapshot.state(p);
+        MoveState was = tracePredicted;
+        if (was != null && traceTick == traceCount - 1) {
+            double dx = now.x - was.x, dy = now.y - was.y, dz = now.z - was.z;
+            if (Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz))) > COPY_TRACE_MIN)
+                Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                    "Kine copy trace: tick %d copy %.4f %.4f %.4f og=%b sprint=%b hc=%b/%b game %.4f %.4f %.4f og=%b sprint=%b hc=%b/%b diff %.4f %.4f %.4f keys %d yaw %.2f food=%b/%b crouch=%b/%b water=%b/%b why=%s",
+                    tick, was.x, was.y, was.z, was.onGround, was.sprinting, was.horizontalCollision, was.minorHorizontalCollision,
+                    now.x, now.y, now.z, now.onGround, now.sprinting, now.horizontalCollision, now.minorHorizontalCollision, dx, dy, dz,
+                    traceKeys, traceYaw, traceFood, WorldSnapshot.body(p).enoughFood, was.crouchPose, now.crouchPose, was.inWater, now.inWater,
+                    lastWhy));
+        }
+        tracePredicted = null;
+        traceStart = now;
+        traceStartCount = traceCount;
+    }
+
+    /** VanillaActions.adjustInput's final keys for this tick (after fall prevention): see COPY_TRACE. */
+    public static void copyTrace(LocalPlayer p, ai.rrw.kine.compat.Input keys) {
+        if (!COPY_TRACE || p == null || !Walk.active()) { tracePredicted = null; return; }
+        BlockGrid g = grid;
+        MoveState now = traceStart;
+        if (g == null || now == null || traceStartCount != traceCount) { tracePredicted = null; return; }
+        MoveState next = now.copy();
+        int k = WorldSnapshot.keys(keys);
+        float yaw = p.getYRot(), pitch = KillAura.lastSentPitch(p);
+        try {
+            new GroundPhysics(g, WorldSnapshot.body(p)).step(next, k, yaw, pitch);
+            tracePredicted = next;
+        } catch (RuntimeException ex) {
+            tracePredicted = null;
+        }
+        traceTick = traceCount;
+        traceKeys = k;
+        traceYaw = yaw;
+        traceFood = WorldSnapshot.body(p).enoughFood;
+    }
+
     /** Where and when the take-off hold last held the player; it holds on while the player slides on from there on the
      *  ground, at most HOLD_SLIDE blocks and HOLD_SLIDE_TICKS ticks. */
     private static double holdX = Double.NaN, holdZ = Double.NaN;
@@ -332,13 +414,6 @@ public final class Layer2 {
     public static boolean busy() {
         Future<Recipe> j = recipeJob;
         return (j != null && !j.isDone()) || recipe != null;
-    }
-
-    /** Layer 2's state and per-walk memories, for the stall log (Walk.stallLog). */
-    static String memories() {
-        return String.format(java.util.Locale.ROOT, "busy=%b recipe=%b still=%d hopNone=%b routeNone=%b failedSearches=%d spotsEmpty=%d skipped=%d check=%b why=%s",
-            busy(), recipe != null, stillTicks, hopJumpNone, routeJumpNone, failedSearches.size(), spotsEmpty.size(), searchesSkipped,
-            waitingForCheck(), lastWhy.isEmpty() ? "-" : lastWhy);
     }
 
     /** Where the player's still streak began, for stillTicks; and the squared horizontal move from there under which no
@@ -680,6 +755,35 @@ public final class Layer2 {
      *  settings, 3 tries a side, 2026-10-16 09:40): off 3 of 3 arrived (553 to 568 ticks), on 2 of 3 (586, 946, a
      *  time-out): the beam without its sprint-jump missed the gap at (-41,21) and the walk ended on a chorus stem. */
     static final boolean NO_HOPS = "1".equals(System.getenv("KINE_NO_HOPS"));
+    /** Layer 2's run decisions, one line a search (KINE_RUN_LOG=1, a measuring tool, off by default): the state, the
+     *  plan chosen by segment with where each ends in the copy, its score and end estimate, and the last plan's (shifted)
+     *  score beside it. For seeing why a run jumps a gap it then misses. */
+    static final boolean RUN_LOG = "1".equals(System.getenv("KINE_RUN_LOG"));
+
+    private static void runLog(RunModel model, RunWorld root, RecedingSearch.Result r, RecedingSearch.Effort e, int at,
+                               int[] previous, int shift, long seed, RecedingSearch<RunWorld> rs) {
+        StringBuilder sb = new StringBuilder();
+        MoveState s0 = root.s;
+        sb.append(String.format(java.util.Locale.ROOT, "Kine run: tick %d at %.3f %.3f %.3f v %.3f %.3f %.3f og=%b spr=%b field %.1f score %.1f plan",
+            at, s0.x, s0.y, s0.z, s0.vx, s0.vy, s0.vz, s0.onGround, s0.sprinting, model.field.at(s0.x, s0.y, s0.z), r.score()));
+        RunWorld w = root.copy();
+        int[] plan = r.plan();
+        for (int i = 0; i < plan.length; i++) {
+            model.step(w, plan[i], i % e.hold, new java.util.SplittableRandom(i));
+            if (i % e.hold == e.hold - 1 || i == plan.length - 1)
+                sb.append(String.format(java.util.Locale.ROOT, " [%s %.2f,%.2f,%.2f%s]", RunModel.name(plan[i]), w.s.x, w.s.y, w.s.z,
+                    w.s.onGround ? " G" : ""));
+        }
+        sb.append(String.format(java.util.Locale.ROOT, " est %.1f arrived %b", model.estimate(w), w.arrived));
+        if (previous != null && previous.length > shift) {
+            int h = e.horizon();
+            int[] pp = new int[h];
+            for (int i = 0; i < h; i++) pp[i] = previous[Math.min(i + shift, previous.length - 1)];
+            sb.append(String.format(java.util.Locale.ROOT, " last %.1f", rs.score(root, pp, e, seed)));
+        }
+        if (!Double.isNaN(model.targetX)) sb.append(String.format(java.util.Locale.ROOT, " target %.1f,%.1f,%.1f", model.targetX, model.targetY, model.targetZ));
+        Kine.LOGGER.info(sb.toString());
+    }
 
     /** How far ahead (blocks, to its take-off) a GAP of the route keeps layer 2's sprint-jump over lava. */
     static final double GAP_AHEAD = 5.0;
@@ -1023,7 +1127,75 @@ public final class Layer2 {
         // every joined floor nearer the goal within reach (RW's triple's landing, right past the wall, was not among the
         // search's four). (Tried before the spots, de95110, the course's unbroken walks fell from 87 to 78 and 19:
         // templates took jumps the spots make; after them, as before.)
-        return templates(f, g, body, s, sent, land, bx, by, bz);
+        Recipe t = templates(f, g, body, s, sent, land, bx, by, bz);
+        if (t != null || stop.getAsBoolean()) return t;
+        return besideFloors(s, sent, sentPitch, g, body, f, goal, land, bx, bz, stop, spotPool, empty, sprint);
+    }
+
+    /**
+     * Last, when nothing else has a way: from the floors beside the block stood on, up to a step up or down from the
+     * feet (the centre of each, walked to): the search and layer 2's run from there. The spots and run-ups above are on the
+     * block stood on and on floors at its height behind it; the course's neo_fence_f2f (#90) is made from the block beside
+     * a fence post, and a walk that came to rest on the post's top, half a block up, searched from the post only, found
+     * nothing and stopped (c88a walk 2; walk 1, on the block, made it).
+     */
+    private static Recipe besideFloors(MoveState s, float sent, float sentPitch, BlockGrid g, Body body, Field f, RunSim.Goal goal,
+                                       int[][] land, int bx, int bz, java.util.function.BooleanSupplier stop,
+                                       ExecutorService spotPool, java.util.Set<Long> empty, boolean sprint) throws InterruptedException {
+        java.util.List<java.util.concurrent.Callable<Recipe>> jobs = new java.util.ArrayList<>();
+        java.util.List<Long> keys = new java.util.ArrayList<>();
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                int cx = bx + dx, cz = bz + dz;
+                double top = Double.NaN;
+                for (int y = (int) Math.floor(s.y - 1.6); y <= (int) Math.floor(s.y); y++) {
+                    if (!g.inside(cx, y, cz)) continue;
+                    ai.rrw.kine.move.BlockInfo b = g.get(cx, y, cz);
+                    if (b.shape.empty || (b.flags & (ai.rrw.kine.move.BlockInfo.HAZARD | ai.rrw.kine.move.BlockInfo.SPECIAL)) != 0) continue;
+                    double h = y + b.shape.top();
+                    if (Math.abs(h - s.y) > Recipe.STEP_TO_SPOT) continue;
+                    // room for the player over it (1.8 up)
+                    boolean room = true;
+                    for (int yy = Math.max(y + 1, (int) Math.floor(h + 1e-6)); yy <= (int) Math.floor(h + 1.8) && room; yy++)
+                        room = g.inside(cx, yy, cz) && g.get(cx, yy, cz).shape.empty;
+                    if (room) top = h;
+                }
+                if (Double.isNaN(top)) continue;
+                double sy = top;
+                // the centre; on a floor a step up or down (where layer 2's own runs don't stand to search) its
+                // standing spots too (the take-off of #90 from the block beside the post: 0.16 and 0.31 off its centre)
+                double[][] at = Math.abs(sy - s.y) < 0.01 ? new double[][]{{cx + 0.5, cz + 0.5}}
+                    : Recipe.spots(cx, cz, Double.NaN, Double.NaN, land[0][0] + 0.5, land[0][2] + 0.5);
+                for (double[] sp : at) {
+                double sx = sp[0], sz = sp[1];
+                long k = spotKey(sx, sy, sz, land[0]);
+                if (empty != null && empty.contains(k)) continue;
+                keys.add(k);
+                jobs.add(() -> {
+                    if (stop.getAsBoolean()) return null;
+                    GroundPhysics ph = new GroundPhysics(g, body);
+                    Recipe a = Recipe.approach(ph, s, sent, sx, sz, Recipe.STEP_TO_SPOT);
+                    if (a == null) return null;
+                    MoveState m = Recipe.after(ph, s, a);
+                    if (Math.abs(m.y - sy) > 0.01) return null;   // came to rest on that floor
+                    float view = a.yaw[a.ticks - 1];
+                    Recipe j = searchLands(ph, m, view, land, null, 1, sprint);
+                    if (j == null && goal != null) j = RunSim.run(f, g, body, goal, m, view, sentPitch, land);
+                    return j == null ? null : Recipe.concat(a, j);
+                });
+                }
+            }
+        if (jobs.isEmpty()) return null;
+        java.util.List<Future<Recipe>> fs = spotPool.invokeAll(jobs);
+        Recipe found = null;
+        for (int i = 0; i < fs.size(); i++) {
+            Recipe r;
+            try { r = fs.get(i).get(); } catch (Exception ex) { r = null; }
+            if (r == null) { if (empty != null && !stop.getAsBoolean()) empty.add(keys.get(i)); }
+            else if (found == null) found = r;
+        }
+        return found;
     }
 
     private static Recipe templates(Field f, BlockGrid g, Body body, MoveState s, float sent, int[][] land, int bx, int by, int bz) {
@@ -1176,10 +1348,11 @@ public final class Layer2 {
             Costs costs = Walk.costs();
             boolean glides = Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
             boolean gaps = Settings.walkParkour;
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet blockedNow = Walk.blockedNow();
             fieldJob = plan.direct
                 ? WORKER.submit(() -> Field.direct(v, costs, canSprint, gaps, glides, plan.id, path, dest[0], dest[1], destY))
                 : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.result, plan.route, px, py, pz,
-                    dest[0], dest[1], destY, reached));
+                    dest[0], dest[1], destY, reached, blockedNow));
         }
         Field f = field;
         if (f == null) return;
@@ -1301,8 +1474,8 @@ public final class Layer2 {
             if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
             model.freeMemory = freeMem;
             model.now = at;
-            double here = f.at(s.x, s.y, s.z);
-            if (!Double.isNaN(here)) model.offFieldFloor = here + RunModel.OFF_FIELD;
+            if (offFieldReset) { offFieldReset = false; OFF_FIELD_MEMORY.reset(); }
+            model.offFieldFloor = OFF_FIELD_MEMORY.floor(f, s.x, s.y, s.z);   // (on the worker: the field is read there only)
             if (body.glide) model.gaits = RunModel.GLIDE_GAITS;
             RecedingSearch<RunWorld> rs = new RecedingSearch<>(model);
             Layer2View.Recorder rec = display ? new Layer2View.Recorder(e.hold) : null;
@@ -1320,6 +1493,7 @@ public final class Layer2 {
             }
             Layer2View.Frame frame = rec != null ? rec.frame(model, root, r) : null;
             boolean unsafe = r.plan() == null || r.score() - model.estimate(root) >= RunModel.UNSAFE / 2;
+            if (RUN_LOG && r.plan() != null) runLog(model, root, r, e, at, previous, shift, seed, rs);
             return new Out(r, a, y, f, at, nanos, frame, unsafe, hd);
         });
     }

@@ -81,13 +81,6 @@ public final class Walk {
      *  job is the last search, from another place. In PLANNING it is not taken: its plan was made before a fall or a
      *  hop across, and its verdict (no way onto the goal) is not this place's. */
     private static boolean jobStale = false;
-    /** KINE_STALL_LOG (or KINE_SEARCH_LOG) set: a log line when an active walk has not moved half a block in STALL_TICKS
-     *  ticks, and every STALL_TICKS after, with the walk's state and per-walk memories (which one holds a stuck walk;
-     *  a fresh Go clears them all), and one when it moves on. */
-    static final boolean STALL_LOG = System.getenv("KINE_STALL_LOG") != null || Layer2.SEARCH_LOG;
-    static final int STALL_TICKS = 100;
-    private static double stallX = 0, stallY = 0, stallZ = 0;
-    private static int stallSince = 0, stallLogged = 0;
     private static Planner.Plan plan = null;        // the route being walked
     private static long planId = -1;
     private static int planPass = -1;
@@ -101,6 +94,13 @@ public final class Walk {
      *  move whose check in the movement copy failed, or any move the walk stood before while the jump search found no
      *  way over it), left out of every search after; and what the checks found. */
     private static final java.util.Set<Long> blocked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The blocked moves now, as a set another thread can read (layer 2's field leaves them out as the plan does). */
+    static it.unimi.dsi.fastutil.longs.LongOpenHashSet blockedNow() {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet s = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocked.size());
+        for (Long e : blocked) s.add(e.longValue());
+        return s;
+    }
     private static final LooseCheck.Memo looseMemo = new LooseCheck.Memo();
     /** The last loose plan looked at. */
     private static long seenLooseId = -1;
@@ -411,19 +411,12 @@ public final class Walk {
         jobStale = false;
         jobKeep = Double.NaN;
         planKeep = Double.NaN;
-        stallX = mc.player.getX(); stallY = mc.player.getY(); stallZ = mc.player.getZ();
-        stallSince = tick;
-        stallLogged = 0;
         state = State.PLANNING;
         message = "Planning";
         plan = null;
         planId = -1;
         seenId = -1;
         AlphaFloor.reset();
-        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
-            "Kine walk: t=%d go to %d %s %d from %.2f %.2f %.2f gait=%d parkour=%b margin=%.2f",
-            tick, d[0], Double.isNaN(walkY) ? "any" : String.format(java.util.Locale.ROOT, "%.1f", walkY), d[1],
-            mc.player.getX(), mc.player.getY(), mc.player.getZ(), gait(), parkour(), margin()));
         lastGait = -1;
         seg = 1;
         handBack = false;
@@ -1035,106 +1028,6 @@ public final class Walk {
     /** Hops taken by a chained jump this walk (tests). */
     public static int hopsChained = 0;
 
-    /** The walk log (RW 2026-10-16: "add a log and see where it went", then "why dont you just make the lgo evey
-     *  thci"), always on, "Kine walk:" lines in latest.log: every Go with the destination, every change of the walk's
-     *  state or message, every new plan with the latest replan's reason, and while a walk runs one line every tick
-     *  (place, motion, ground and water, the keys the walk sent, the view's yaw, the follower's state, the walk's state
-     *  and message); a landing more than FALL_LOGGED blocks under the airtime's top is marked with the walk's memories. */
-    private static State loggedState = State.IDLE;
-    private static String loggedMessage = "";
-    private static long loggedPlan = -1;
-    /** The keys adjustInput returned this tick, for the walk log. */
-    private static Input sentKeys = null;
-    private static final double FALL_LOGGED = 3.0;
-    private static double airTop = Double.NaN;
-
-    private static Input sent(Input in) {
-        sentKeys = in;
-        return in;
-    }
-
-    private static void walkLog(LocalPlayer p) {
-        String at = p == null ? "-" : String.format(java.util.Locale.ROOT, "%.2f %.2f %.2f", p.getX(), p.getY(), p.getZ());
-        if (state != loggedState || !message.equals(loggedMessage)) {
-            ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk: t=%d %s \"%s\" at %s",
-                tick, state, message, at));
-            loggedState = state;
-            loggedMessage = message;
-        }
-        Planner.Plan pl = plan;
-        long id = pl == null ? -1 : pl.id;
-        if (id != loggedPlan) {
-            if (pl != null) {
-                PathSearch.Result r = pl.result;
-                int n = r == null || r.path == null ? 0 : r.path.length;
-                String end = n == 0 ? "-" : String.format(java.util.Locale.ROOT, "%d %.1f %d",
-                    View.nodeX(r.path[n - 1]), r.pathY == null ? Double.NaN : r.pathY[n - 1], View.nodeZ(r.path[n - 1]));
-                ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
-                    "Kine walk: t=%d plan %d %s nodes=%d end=%s reason=\"%s\" lastReplan=\"%s\" at %s",
-                    tick, pl.id, pl.direct ? "direct" : "route", n, end, r == null ? "" : r.reason,
-                    replanWhy.isEmpty() ? "-" : replanWhy.get(replanWhy.size() - 1), at));
-            }
-            loggedPlan = id;
-        }
-        if (p == null || !active()) {
-            airTop = Double.NaN;
-            return;
-        }
-        var v = p.getDeltaMovement();
-        Input k = sentKeys;
-        String keys = k == null ? "-" : (k.forward() ? "W" : "") + (k.left() ? "A" : "") + (k.backward() ? "S" : "")
-            + (k.right() ? "D" : "") + (k.jump() ? "J" : "") + (k.shift() ? "Sh" : "") + (k.sprint() ? "Sp" : "");
-        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
-            "Kine walk: t=%d pos %.3f %.3f %.3f v=%.3f %.3f %.3f ground=%b water=%b keys=%s view=%.1f %s %s \"%s\"",
-            tick, p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround(), p.isInWater(), keys.isEmpty() ? "none" : keys,
-            p.getYRot(), steeringState(), state, message));
-        if (!p.onGround() && !p.isInWater()) {
-            airTop = Double.isNaN(airTop) ? p.getY() : Math.max(airTop, p.getY());
-            return;
-        }
-        if (!Double.isNaN(airTop) && airTop - p.getY() > FALL_LOGGED)
-            ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
-                "Kine walk fall: t=%d dropped %.2f (from %.2f to %.2f) at %s water=%b; %s",
-                tick, airTop - p.getY(), airTop, p.getY(), at, p.isInWater(), memories()));
-        airTop = Double.NaN;
-    }
-
-    /** The stall log's tick (STALL_LOG): the player still within half a block of where it was STALL_TICKS ago. */
-    private static void stallLog(LocalPlayer p) {
-        if (!STALL_LOG) return;
-        double dx = p.getX() - stallX, dy = p.getY() - stallY, dz = p.getZ() - stallZ;
-        if (dx * dx + dy * dy + dz * dz > 0.25) {
-            if (stallLogged > 0)
-                ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk stall over: t=%d after %d ticks, at %.2f %.2f %.2f, %s",
-                    tick, tick - stallSince, stallX, stallY, stallZ, message));
-            stallX = p.getX(); stallY = p.getY(); stallZ = p.getZ();
-            stallSince = tick;
-            stallLogged = 0;
-            return;
-        }
-        int still = tick - stallSince;
-        if (still < STALL_TICKS * (stallLogged + 1)) return;
-        stallLogged++;
-        ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk stall: t=%d still %d ticks at %.2f %.2f %.2f ground=%b %s",
-            tick, still, p.getX(), p.getY(), p.getZ(), p.onGround(), memories()));
-    }
-
-    /** The walk's state and per-walk memories (the ones a fresh Go clears), for the stall log. */
-    public static String memories() {
-        Planner.Job j = job;
-        Planner.Job lj = j == null ? null : j.loose;
-        String js = j == null ? "none" : !j.done ? "running" : j.failure != null ? (j.exhausted ? "exhausted" : "failed") : "done";
-        String ls = lj == null ? "none" : lj.done ? (lj.failure != null ? "failed" : "done") : lj.latest.get() == null ? "running" : "checking";
-        String ps = plan == null ? "none" : (plan.direct ? "direct" : plan.result.nearest ? "nearest" : plan.route.viaExit ? "edge" : "route")
-            + "#" + plan.id + " seg " + seg + "/" + plan.route.n;
-        String last = replanWhy.isEmpty() ? "-" : replanWhy.get(replanWhy.size() - 1);
-        return String.format(java.util.Locale.ROOT,
-            "state=%s msg=\"%s\" plan=%s job=%s stale=%b loose=%s lastReplan=\"%s\" sincePlan=%d hop=%s hopY=%.1f hopTaken=%b hopsOff=%b hopFails=%d hopsTried=%d hops=%d retraces=%d lastStand=%s stuck=%d noWay=%b blocked=%d settle=%d door=%b neoDropped=%d l2: %s",
-            state, message, ps, js, jobStale, ls, last, tick - lastPlanTick, hop == null ? "none" : hop[0] + "," + hop[1], hopY, hopTaken,
-            hopsOff, hopFails, hopsTried.size(), hops, retraces, lastStand == View.NONE ? "none" : View.nodeX(lastStand) + "," + View.nodeZ(lastStand),
-            stuckReplans, noWaySeen, blocked.size(), settleWaits, DoorOpener.active(), NeoTemplates.dropped.size(), Layer2.memories());
-    }
-
     /** How far under the feet a start's floor may be before a floor within a step down beside it is taken instead. */
     static final double STEP_START = 1.1;
 
@@ -1189,6 +1082,7 @@ public final class Walk {
         steering = false;
         layer2 = false;
         LocalPlayer p = mc.player;
+        Layer2.traceTickStart(p);   // the copy trace's state (KINE_COPY_TRACE=1 only)
         if (p != null && active()) {
             if (Compat.screen(mc) == null && yourMovement(mc)) {
                 stop("you took over");
@@ -1246,11 +1140,11 @@ public final class Walk {
                 return handBackKeys(keys);
             }
             // stand while the first plan is made (in water: up to the air, Afloat)
-            if (state == State.PLANNING || !steering) return sent(underGait(p, Afloat.during(p)));
-            if (layer2) return sent(underGait(p, WorldSnapshot.input(Layer2.keys(p))));
+            if (state == State.PLANNING || !steering) return underGait(p, Afloat.during(p));
+            if (layer2) return underGait(p, WorldSnapshot.input(Layer2.keys(p)));
             int k = wantKeys ? Moves.keys(wantYaw, p.getYRot(), wantSprint ? Moves.SPRINT : Moves.WALK) : 0;
             if (wantJump) k |= MoveState.JUMP;
-            return sent(underGait(p, WorldSnapshot.input(k)));
+            return underGait(p, WorldSnapshot.input(k));
         } finally {
             measure(t0);
         }
@@ -1286,7 +1180,6 @@ public final class Walk {
         WalkTable.tick(mc);
         GridRequests.serve(mc);
         LocalPlayer p = mc.player;
-        walkLog(p);
         if (handBack && (p == null || !ai.rrw.kine.combat.KillAura.turned())) handBack = false;
         if (previewJob != null) {
             Planner.Plan pp = previewJob.latest.get();
@@ -1297,7 +1190,6 @@ public final class Walk {
             }
         }
         if (p == null || !active()) { measure(t0); return; }
-        stallLog(p);
         int[] d = destination();
         if (d == null) { cancel(); measure(t0); return; }
         AlphaFloor.update(mc, p, tick);
@@ -1429,10 +1321,12 @@ public final class Walk {
                 return;
             } else if ((p.onGround() || holdingClimb(p)) && Math.abs(p.getY() - hopY) < 0.6
                        && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75
-                       && (standing(p) || holdingClimb(p) || tick - hopOnTick(tick) > SETTLE_TICKS)) {
+                       && (standing(p) && Layer2.staysPut(p) || holdingClimb(p) || tick - hopOnTick(tick) > SETTLE_TICKS)) {
                 // on a ladder or a vine the walk never stands: it is across once on it in the hop's column (it waited
                 // 30 ticks there and slid off: the course's ladder_diagonal, RW 2026-10-14; the plan up the climb then
                 // takes over, layer 2 keeping hold till it comes, hopTaken below)
+                // (standing: still, and the copy says it stays there keys up: on a thin post's far edge it was still
+                // enough and slid off the next tick, RunModel.staysPut)
                 // on the hop's floor, and stood still there (or long enough on it): the next jump starts from a
                 // standing start, as a walk started there would (arriving with the run's speed, on a small floor the
                 // walk slid off it before the next jump, and layer 2's copy-found jump searches only from standing)
@@ -1488,7 +1382,7 @@ public final class Walk {
         boolean l2busy = Layer2.busy() || waitingForCheck() || DoorOpener.active();
         if (l2busy) bestLeftTick = tick;
         if (!l2busy && plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
-            && nearestCheckedId != plan.id && (standing(p) || p.isInWater() || p.onClimbable())) {
+            && nearestCheckedId != plan.id && (standing(p) && Layer2.staysPut(p) || p.isInWater() || p.onClimbable())) {
             // at the floor nearest a goal with no way onto it: one more search on the table as it is now (ground loaded
             // since may open a way); if it finds none nearer, the walk ends here (the exhausted replan, below)
             nearestCheckedId = plan.id;
@@ -1609,6 +1503,15 @@ public final class Walk {
         }
         if (state == State.WALKING) {
             if (hop != null && plan.direct) Layer2.endTick(mc, plan, hop, hopY, true);
+            else if (plan.result.nearest && !plan.direct && plan.result.path.length > 0) {
+                // a route only to the floor nearest a goal it has no way onto: layer 2 makes for that floor and comes
+                // to rest on it, as on a hop's floor (the walk goes on from there once standing on it, above). Made
+                // for the far goal, the runs had nothing to gain by standing on the floor: on the course's
+                // up_1p25_max_height (#54), a 1x1 block a step up, they stepped on and off it for 100 to 225 ticks
+                // (dev77 and dev88 alike, c52a/c52b) and once until the walk gave up (f88 G4 walk 2)
+                long end = plan.result.path[plan.result.path.length - 1];
+                Layer2.endTick(mc, plan, new int[]{View.nodeX(end), View.nodeZ(end)}, plan.result.pathY[plan.result.path.length - 1], true);
+            }
             else Layer2.endTick(mc, plan, d, walkY);
             tickEta(mc, p);
         }
@@ -1824,6 +1727,11 @@ public final class Walk {
         if (r.n < 2 || !p.onGround() || p.isInWater() || p.onClimbable()) return false;
         int m = r.move[1];
         if (m == Route.WALK || m == Route.DROP || m == Route.WADE) return false;
+        // (not once on the jump's own landing: a route of two points, a floor and the jump a step up onto the block
+        // beside it, keeps its place at 1 until arrival, and on the landing the player was a step over the start and
+        // within reach, so it was walked back down onto the start and jumped up again, over and over: the course's
+        // up_1p25_max_height, #54, 70 to 225 ticks of it, c52a-d)
+        if (Math.abs(p.getY() - r.y[1]) < 0.3 && Math.hypot(r.x[1] - p.getX(), r.z[1] - p.getZ()) < 0.8) return false;
         return p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ()) < 1.5;
     }
 

@@ -144,6 +144,9 @@ final class NeoTemplates {
      *  rest a few hundredths off the spot, the sneak's smallest step being some 0.06). */
     static final float[] AIR_OFFSETS = {0f, 1f, -1f, 2.5f, -2.5f, 5f, -5f};
     static final int[] JUMP_SHIFTS = {0, -1, 1};
+    /** The spots a little forward (and one back) of a template's own, along its start, tried when none of the
+     *  variations land from the walk to its own (blocks). */
+    static final double[] SPOT_SHIFTS = {0.01, 0.02, -0.01};
     /** Ticks a sequence may run past its own end to come down on the landing. */
     static final int RUN_ON = 6;
 
@@ -163,7 +166,13 @@ final class NeoTemplates {
     /** As above; climbOnly: only the templates that end held on a climbable. */
     static Recipe fit(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, boolean climbOnly) {
         for (Template t : all()) {
-            Recipe r = fitTemplate(phys, s, sent, bx, by, bz, l, t, climbOnly);
+            Recipe r = fitTemplate(phys, s, sent, bx, by, bz, l, t, climbOnly, false);
+            if (r != null) return r;
+        }
+        // then, every template again, from spots a little forward and back of its own (fitOne): only when none fits
+        // from its own spot, so a fit found before costs no more
+        for (Template t : all()) {
+            Recipe r = fitTemplate(phys, s, sent, bx, by, bz, l, t, climbOnly, true);
             if (r != null) return r;
         }
         return null;
@@ -178,6 +187,12 @@ final class NeoTemplates {
 
     /** One template from key block (bx, by, bz) onto l, every way it can lie; null if it doesn't fit or land. */
     static Recipe fitTemplate(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, Template t, boolean climbOnly) {
+        return fitTemplate(phys, s, sent, bx, by, bz, l, t, climbOnly, false);
+    }
+
+    /** As above; shifted: from the spots a little off the template's own (SPOT_SHIFTS) instead of from its own. */
+    static Recipe fitTemplate(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, Template t, boolean climbOnly,
+                              boolean shifted) {
         int dx = l[0] - bx, dz = l[2] - bz;
         if (STOP.get().getAsBoolean()) return null;
         {
@@ -194,7 +209,7 @@ final class NeoTemplates {
                     if (Math.round(o[0]) != dx || Math.round(o[1]) != dz) continue;
                     if (!dropped.isEmpty() && dropped.contains(t.id() + " r" + r + (m == 1 ? "m" : ""))) continue;
                     fitsTried++;
-                    Recipe found = fitOne(phys, s, sent, bx, by, bz, l, t, r, m == 1);
+                    Recipe found = fitOne(phys, s, sent, bx, by, bz, l, t, r, m == 1, shifted);
                     if (found != null) { fitsFound++; return found; }
                 }
         }
@@ -203,6 +218,12 @@ final class NeoTemplates {
 
     /** One template lying one way: the walk to its spot, the turn, the variations; the best that lands, or null. */
     static Recipe fitOne(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, Template t, int r, boolean m) {
+        return fitOne(phys, s, sent, bx, by, bz, l, t, r, m, false);
+    }
+
+    /** As above; shifted: only from the spots a little forward and back of its own (SPOT_SHIFTS). */
+    static Recipe fitOne(GroundPhysics phys, MoveState s, float sent, int bx, int by, int bz, int[] l, Template t, int r, boolean m,
+                         boolean shifted) {
         double[] sp = turn(t.sx() - 0.5, t.sz() - 0.5, r, m);
         double spx = bx + 0.5 + sp[0], spz = bz + 0.5 + sp[1];
         Recipe walk = null;
@@ -226,18 +247,47 @@ final class NeoTemplates {
         double lf = by + t.landingFeet() - l[1];
         Recipe best = null;
         double bestMargin = -1;
-        for (float da : AIR_OFFSETS)
-            for (int js : JUMP_SHIFTS)
-                for (float d : YAW_OFFSETS) {
-                    Recipe v = variation(phys, at, view, start + d, y, k, d, da, js, l, lf);
-                    if (v != null && v.margin > bestMargin + 1e-9) {
-                        bestMargin = v.margin;
-                        best = v;
-                        best.how = String.format(java.util.Locale.ROOT, "template %s r%d%s yaw %+.1f air %+.1f jump %+d", t.id(), r,
-                            m ? "m" : "", d, da, js);
+        if (!shifted) {
+            for (float da : AIR_OFFSETS)
+                for (int js : JUMP_SHIFTS)
+                    for (float d : YAW_OFFSETS) {
+                        Recipe v = variation(phys, at, view, start + d, y, k, d, da, js, l, lf);
+                        if (v != null && v.margin > bestMargin + 1e-9) {
+                            bestMargin = v.margin;
+                            best = v;
+                            best.how = String.format(java.util.Locale.ROOT, "template %s r%d%s yaw %+.1f air %+.1f jump %+d", t.id(), r,
+                                m ? "m" : "", d, da, js);
+                        }
                     }
-                }
-        if (best == null) best = track(phys, at, view, start, y, k, spx, spz, l, lf);
+            if (best == null) best = track(phys, at, view, start, y, k, spx, spz, l, lf);
+        } else if (walk != null) {
+            // the walk comes to rest a few thousandths either side of the spot, and some templates land only from one
+            // side of it (the course's up_4p0p4375_c45, #93, and trapdoor_jump, #94: from rest at the spot every start
+            // 5 mm or more back of it, toward the landing, missed, every one up to 20 mm forward landed; 3 of 7 places on
+            // the key block fit):
+            // walks to spots a little forward of it toward the landing, and one back, the variations from each
+            double fx = l[0] + 0.5 - spx, fz = l[2] + 0.5 - spz, fl = Math.hypot(fx, fz);
+            if (fl < 1e-6) { fx = 1; fz = 0; } else { fx /= fl; fz /= fl; }
+            for (double off : SPOT_SHIFTS) {
+                double tx = spx + fx * off, tz = spz + fz * off;
+                Recipe w2 = Math.hypot(tx - s.x, tz - s.z) > 1.0 ? Recipe.approachFar(phys, s, sent, tx, tz) : Recipe.approach(phys, s, sent, tx, tz);
+                if (w2 == null) continue;
+                MoveState at2 = Recipe.after(phys, s, w2);
+                float view2 = w2.yaw[w2.ticks - 1];
+                for (float da : AIR_OFFSETS)
+                    for (int js : JUMP_SHIFTS)
+                        for (float d : YAW_OFFSETS) {
+                            Recipe v = variation(phys, at2, view2, start + d, y, k, d, da, js, l, lf);
+                            if (v != null && v.margin > bestMargin + 1e-9) {
+                                bestMargin = v.margin;
+                                best = v;
+                                best.how = String.format(java.util.Locale.ROOT, "template %s r%d%s yaw %+.1f air %+.1f jump %+d (spot %+.3f)", t.id(), r,
+                                    m ? "m" : "", d, da, js, off);
+                            }
+                        }
+                if (best != null) { walk = w2; break; }
+            }
+        }
         if (best == null) return null;
         if (best.how.isEmpty() || best.how.startsWith("tracking"))
             best.how = String.format(java.util.Locale.ROOT, "template %s r%d%s %s", t.id(), r, m ? "m" : "", best.how);

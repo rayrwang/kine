@@ -303,6 +303,19 @@ public final class Field {
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
                               PathSearch.Result result, Route route, double x, double y, double z, int goalX, int goalZ,
                               double goalY, boolean reachedGoal) {
+        return build(v, c, canSprint, gaps, glides, planId, path, result, route, x, y, z, goalX, goalZ, goalY, reachedGoal, null);
+    }
+
+    /**
+     * As above, leaving out the walk's blocked moves (Walk.blockedNow: the moves layer 1's searches leave out, a gap
+     * jump that fell short among them). Without them the field still led to a move the plan had given up: on the Parkour
+     * Spiral's leg 18 a 4-block gap at 123 that fell short (blocked) stayed the field's way from its take-off, and layer
+     * 2's runs, headed by the field, jumped it again on every pass while the plan went by the 3-block gap beside it (tr18h,
+     * 2026-10-16: eight times round in 1600 ticks).
+     */
+    public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
+                              PathSearch.Result result, Route route, double x, double y, double z, int goalX, int goalZ,
+                              double goalY, boolean reachedGoal, it.unimi.dsi.fastutil.longs.LongSet blocked) {
         long t0 = System.nanoTime();
         int at = nearestIndex(path, result == null || result.path != path ? null : result.pathY, x, y, z);
         int from = at;
@@ -320,6 +333,7 @@ public final class Field {
         g.looseOf(result);
         g.doors = Graph.doorsOn;
         g.goalX = goalX; g.goalZ = goalZ;
+        g.blocked = blocked;
         f.make(g, path, route, from, to);
         f.buildNanos = System.nanoTime() - t0;
         return f;

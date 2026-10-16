@@ -133,41 +133,62 @@ public class NeoTemplatesTest {
             if (only != null && !java.util.Arrays.asList(only.split(",")).contains(id)) continue;
             JsonObject L = layout(id);
             if (L == null || !NeoTemplateGenTest.buildable(L)) { System.out.printf("template survey %s: not built%n", id); continue; }
-            TestWorld w = NeoTemplateGenTest.build(L);
-            // the key block: the layout's 0, 0, 0 where it has a block with room to stand above it
-            boolean key = false, above = false;
-            for (JsonElement el : L.getAsJsonArray("blocks")) {
-                JsonObject b = el.getAsJsonObject();
-                if (b.get("dx").getAsInt() != 0 || b.get("dz").getAsInt() != 0) continue;
-                int dy = b.get("dy").getAsInt();
-                if (dy == 0) key = true;
-                if (dy == 1 || dy == 2) above = true;
-            }
-            key &= !above;
-            JsonObject st = L.getAsJsonObject("start"), la = L.getAsJsonObject("landing");
-            int kx = key ? 0 : st.get("dx").getAsInt(), ky = FLOOR - 1 + (key ? 0 : st.get("dy").getAsInt()), kz = key ? 0 : st.get("dz").getAsInt();
-            // the landing as layer 2 gives it in play: the block under its feet rounded (a trapdoor's, a carpet's: the
-            // block below it)
-            double lfeet = FLOOR - 1 + la.get("dy").getAsInt() + StationDifficultyTest.collisionTop(L, la.get("dx").getAsInt(), la.get("dy").getAsInt(), la.get("dz").getAsInt());
-            int[] land = {la.get("dx").getAsInt(), (int) Math.round(lfeet) - 1, la.get("dz").getAsInt()};
-            double top = ky + StationDifficultyTest.collisionTop(L, kx, ky - FLOOR + 1, kz);
-            int found = 0, n = 0;
             StringBuilder hows = new StringBuilder();
             long t0 = System.nanoTime();
-            for (double[] at : new double[][]{{0.5, 0.5}, {0.3, 0.5}, {0.7, 0.5}, {0.5, 0.3}, {0.5, 0.7}, {0.7, 0.45}, {0.25, 0.75}}) {
-                Layer2Sim sim = new Layer2Sim(w);
-                MoveState s = Layer2Sim.standing(kx + at[0], top, kz + at[1]);
-                float view = Recipe.yawTo(s.x, s.z, land[0] + 0.5, land[2] + 0.5) + 40f;
-                Recipe rc = NeoTemplates.fit(sim.phys, s, view, kx, ky, kz, land);
-                n++;
-                if (rc == null) continue;
-                found++;
-                boolean replays = rc.stillLands(sim.phys, s, 0, land[0], land[1], land[2]);
-                if (hows.length() < 240) hows.append(" | ").append(replays ? "" : "(replay misses) ").append(rc.how);
-            }
-            System.out.printf(java.util.Locale.ROOT, "template survey %s: %d of %d places, %.0f ms%s%n", id, found, n,
+            int found = fits(L, hows);
+            System.out.printf(java.util.Locale.ROOT, "template survey %s: %d of %d places, %.0f ms%s%n", id, found, PLACES.length,
                 (System.nanoTime() - t0) / 1e6, hows);
         }
+    }
+
+    /** The places on the key block the survey stands at (fractions of the block). */
+    static final double[][] PLACES = {{0.5, 0.5}, {0.3, 0.5}, {0.7, 0.5}, {0.5, 0.3}, {0.5, 0.7}, {0.7, 0.45}, {0.25, 0.75}};
+
+    /** In layout L as the generator builds it, from how many of PLACES on its key block NeoTemplates.fit lands it (with
+     *  the whole resource); the ways found go in hows. */
+    static int fits(JsonObject L, StringBuilder hows) {
+        TestWorld w = NeoTemplateGenTest.build(L);
+        // the key block: the layout's 0, 0, 0 where it has a block with room to stand above it
+        boolean key = false, above = false;
+        for (JsonElement el : L.getAsJsonArray("blocks")) {
+            JsonObject b = el.getAsJsonObject();
+            if (b.get("dx").getAsInt() != 0 || b.get("dz").getAsInt() != 0) continue;
+            int dy = b.get("dy").getAsInt();
+            if (dy == 0) key = true;
+            if (dy == 1 || dy == 2) above = true;
+        }
+        key &= !above;
+        JsonObject st = L.getAsJsonObject("start"), la = L.getAsJsonObject("landing");
+        int kx = key ? 0 : st.get("dx").getAsInt(), ky = FLOOR - 1 + (key ? 0 : st.get("dy").getAsInt()), kz = key ? 0 : st.get("dz").getAsInt();
+        // the landing as layer 2 gives it in play: the block under its feet rounded (a trapdoor's, a carpet's: the
+        // block below it)
+        double lfeet = FLOOR - 1 + la.get("dy").getAsInt() + StationDifficultyTest.collisionTop(L, la.get("dx").getAsInt(), la.get("dy").getAsInt(), la.get("dz").getAsInt());
+        int[] land = {la.get("dx").getAsInt(), (int) Math.round(lfeet) - 1, la.get("dz").getAsInt()};
+        double top = ky + StationDifficultyTest.collisionTop(L, kx, ky - FLOOR + 1, kz);
+        int found = 0;
+        for (double[] at : PLACES) {
+            Layer2Sim sim = new Layer2Sim(w);
+            MoveState s = Layer2Sim.standing(kx + at[0], top, kz + at[1]);
+            float view = Recipe.yawTo(s.x, s.z, land[0] + 0.5, land[2] + 0.5) + 40f;
+            Recipe rc = NeoTemplates.fit(sim.phys, s, view, kx, ky, kz, land);
+            if (rc == null) continue;
+            found++;
+            boolean replays = rc.stillLands(sim.phys, s, 0, land[0], land[1], land[2]);
+            if (hows.length() < 240) hows.append(" | ").append(replays ? "" : "(replay misses) ").append(rc.how);
+        }
+        return found;
+    }
+
+    /** The course's up_4p0p4375_c45 (#93) fits from every place on its key block (2026-10-16: 3 of 7 before the second
+     *  pass from spots a little forward and back of the template's own; the walk then stood and stopped there). */
+    @Test
+    void up4p0p4375FitsFromEveryPlace() throws Exception {
+        JsonObject L = layout("up_4p0p4375_c45");
+        if (L == null || !NeoTemplateGenTest.buildable(L)) return;   // the catalogue is not on this machine
+        StringBuilder hows = new StringBuilder();
+        int found = fits(L, hows);
+        System.out.println("up_4p0p4375_c45: " + found + " of " + PLACES.length + hows);
+        assertEquals(PLACES.length, found, "fits from every place:" + hows);
     }
 
     /** KINE_TEMPLATE_RAW: each template of the listed ids played as stored from exactly its spot, its view at its start

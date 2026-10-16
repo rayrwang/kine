@@ -244,10 +244,34 @@ final class RunModel implements Model<RunWorld> {
             if (s.eyesInWater && s.waterBreathingTicks < 0) c += AIR_TICK;
         }
         if (arrived(s)) {
-            if (!stand || still(s)) w.arrived = true;
+            if (!stand || still(s) && staysPut(s)) w.arrived = true;
             else c -= 1.0 - SETTLE_COST;   // on the hop's floor, not yet still: a cheap tick
         }
         return c;
+    }
+
+    /** Ticks with the keys up that a state still under STILL2 must stay on the ground at its height to count as
+     *  standing on a floor (staysPut). */
+    static final int STAY_TICKS = 6;
+
+    /**
+     * Whether the player, keys up from s, stays on the ground at its height for STAY_TICKS ticks (by the copy). Slow
+     * enough to count as still (under 0.01 a tick) on the far edge of a thin post, it slid off the next tick: the
+     * Kine Parkour course's iron_bars_jump and chain_jump, landed at 0.37 from the bars' middle going on at 0.007, the
+     * walk counted the hop made and the player fell (f86 G2a at #36, f92 G4 walk 1 at #39).
+     */
+    boolean staysPut(MoveState s) {
+        return staysPut(phys, s);
+    }
+
+    static boolean staysPut(GroundPhysics phys, MoveState s) {
+        if (!s.onGround) return false;
+        MoveState q = s.copy();
+        for (int i = 0; i < STAY_TICKS; i++) {
+            phys.step(q, 0, 0f, 0f);
+            if (!q.onGround || Math.abs(q.y - s.y) > 0.01) return false;
+        }
+        return true;
     }
 
     /** In water the sprint-jump gait swims up: sprint with the pitch this far up, and no jump (a jump at the top
@@ -524,6 +548,32 @@ final class RunModel implements Model<RunWorld> {
      *  ed08088: leg 3 on the bottom level by the sweet berry bushes, leg 1 walked from leg 0's start). */
     double offFieldFloor = 0.0;
 
+    /**
+     * What sets offFieldFloor for each search (Layer2's, and the unit tests' Layer2Sim): the field's value where the run
+     * starts, or, where the field has no floor there (in the air over a gap, at a ledge's edge with the centre past it),
+     * its value where the player last was on one of the same field's floors. Without the second, every end off the field
+     * cost OFF_FIELD and the straight way to the goal, less than the field's values where the route on is long, so a run
+     * in the air over a gap gave the landing up for the floor or water under it: the Parkour Spiral's leg 18 (the 4-block
+     * gap at 123) and the pool gap at (-28,-39) on leg 1's far walks, the gate's most common fall (KINE_RUN_LOG, r18a and
+     * rcl1, 2026-10-16). Used from one thread at a time (layer 2's worker).
+     */
+    static final class OffField {
+        private double lastHere = Double.NaN;
+        private Field lastField = null;
+        /** Keep the last value (off only to measure the floor as it was before 2026-10-16: the start's value alone). */
+        boolean remember = true;
+
+        void reset() { lastHere = Double.NaN; lastField = null; }
+
+        /** The off-field floor for a run from (x, y, z) on field f; 0 with no value known. */
+        double floor(Field f, double x, double y, double z) {
+            double here = f.at(x, y, z);
+            if (!Double.isNaN(here)) { lastHere = here; lastField = f; }
+            else if (remember && f == lastField) here = lastHere;
+            return Double.isNaN(here) ? 0.0 : here + OFF_FIELD;
+        }
+    }
+
     /** With the eyes under water: the drowning a shortfall of air would bring, as cost (none while there's the air to
      *  reach air again with the reserve to spare). The air lasts until it reaches -20. */
     double airShort(MoveState s) {
@@ -632,7 +682,19 @@ final class RunModel implements Model<RunWorld> {
         // one budget for the whole replan: the beam gets what the plans above left (a quarter of it at least)
         RecedingSearch.Effort eb = e.copy();
         eb.budgetNanos = Math.max(e.budgetNanos / 4, e.budgetNanos - (System.nanoTime() - t0));
-        return rs.plan(root, best, 0, eb, seed);
+        RecedingSearch.Result r = rs.plan(root, best, 0, eb, seed);
+        // the beam's plan no worse than the whole plan it started from: a beam out of time before its last depth
+        // returns its best node there, scored at that depth (the rest carried on), and the whole plan's later
+        // segments were lost. In the air after a jump to a ladder (the Kine Parkour course's ladder_diagonal, #32),
+        // the last plan shifted reached the ladder (11.0) and the beam, out of time after one depth, gave a 4-tick
+        // node whose carry-on fell past it (1111): the run let go of the jump and fell to the floor below (g2r86 and
+        // g2r84 walk 2, KINE_RUN_LOG). Scored whole, the shorter plan is compared fairly.
+        if (best != null) {
+            double rs0 = r.plan() == null ? Double.POSITIVE_INFINITY
+                : r.stats().depthReached() < e.depth ? rs.score(root, r.plan(), eb, seed) : r.score();
+            if (rs0 > bestScore + 1e-9) return new RecedingSearch.Result(best, bestScore, r.stats());
+        }
+        return r;
     }
 
     /**

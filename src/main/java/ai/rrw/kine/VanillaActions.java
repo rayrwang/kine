@@ -72,6 +72,7 @@ public final class VanillaActions {
         keys = ai.rrw.kine.combat.AutoEat.adjustInput(p, keys);   // sneak as the eating starts, so no block is used
         keys = FallPrevention.adjustInput(p, keys);   // last, so a dodge never steps off a cliff
         if (InventoryClicks.isOpenTick()) keys = Input.EMPTY;   // the tick the inventory "opens" in: every key up
+        ai.rrw.kine.walk.Layer2.copyTrace(p, keys);   // the copy against the game (KINE_COPY_TRACE=1 only)
         return keys;
     }
 }

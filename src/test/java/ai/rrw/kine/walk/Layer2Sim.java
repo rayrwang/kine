@@ -130,6 +130,9 @@ final class Layer2Sim {
     }
 
     java.util.Set<Integer> debugTicks = new java.util.HashSet<>();
+    /** The off-field floor as Layer2 sets it (RunModel.OffField); off: none (0), as the sim ran before 2026-10-16. */
+    boolean offFieldFloor = true;
+    final RunModel.OffField offField = new RunModel.OffField();
 
     /** Every held action's score from this state, and the plan chosen. */
     void debug(int t, RunModel model, RecedingSearch<RunWorld> rs, RunWorld root, RecedingSearch.Result res) {
@@ -279,6 +282,7 @@ final class Layer2Sim {
                 continue;
             }
             RunModel model = new RunModel(phys, f, gx, gz, 0f, costs.maxFall);
+            if (offFieldFloor) model.offFieldFloor = offField.floor(f, s.x, s.y, s.z);   // as Layer2
             model.gaits = glides ? RunModel.GLIDE_GAITS : gaits;
             model.airAware = airAware;
             model.parkour = parkour;
