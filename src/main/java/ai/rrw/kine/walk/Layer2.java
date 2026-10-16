@@ -569,6 +569,15 @@ public final class Layer2 {
         return null;
     }
 
+    /** Whether layer 2's own runs have chosen to stand still for STAND_LONG ticks on the ground, with no recipe, jump
+     *  search, loose check or take-off hold to wait for (Walk then lets the follower walk a plain walk of the route). */
+    static boolean standingLong() {
+        return action == RunModel.STOP && stillTicks >= STAND_LONG && recipe == null && recipeJob == null && !waitingCheck
+            && lastWhy.isEmpty();
+    }
+
+    static final int STAND_LONG = 40;
+
     /** The plan layer 2 last walked (endTick), for the take-off hold in steer. */
     private static volatile Planner.Plan holdPlan = null;
     /** How near a loose jump's take-off (its block's middle, blocks) the walk stands for the jump search. */
@@ -994,10 +1003,10 @@ public final class Layer2 {
         }
         long[] path = plan.result.path;
         boolean stale = field == null || field.path != path || fieldSprint != Walk.canSprint(p)
-            || field.to < path.length - 1 && Field.nearestIndex(path, p.getX(), p.getZ()) > (field.from + field.to) / 2;
+            || field.to < path.length - 1 && Field.nearestIndex(path, plan.result.pathY, p.getX(), p.getY(), p.getZ()) > (field.from + field.to) / 2;
         if (stale && fieldJob == null && path.length > 0) {
             View v = WalkTable.snapshot();
-            double px = p.getX(), pz = p.getZ();
+            double px = p.getX(), py = p.getY(), pz = p.getZ();
             boolean canSprint = Walk.canSprint(p);
             fieldSprint = canSprint;
             boolean reached = plan.result.found && !plan.result.viaExit && !plan.result.partial;
@@ -1006,7 +1015,7 @@ public final class Layer2 {
             boolean gaps = Settings.walkParkour;
             fieldJob = plan.direct
                 ? WORKER.submit(() -> Field.direct(v, costs, canSprint, gaps, glides, plan.id, path, dest[0], dest[1], destY))
-                : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.result, plan.route, px, pz,
+                : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.result, plan.route, px, py, pz,
                     dest[0], dest[1], destY, reached));
         }
         Field f = field;
@@ -1092,6 +1101,8 @@ public final class Layer2 {
             if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
             model.freeMemory = freeMem;
             model.now = at;
+            double here = f.at(s.x, s.y, s.z);
+            if (!Double.isNaN(here)) model.offFieldFloor = here + RunModel.OFF_FIELD;
             if (body.glide) model.gaits = RunModel.GLIDE_GAITS;
             RecedingSearch<RunWorld> rs = new RecedingSearch<>(model);
             Layer2View.Recorder rec = display ? new Layer2View.Recorder(e.hold) : null;

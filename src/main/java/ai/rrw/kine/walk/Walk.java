@@ -1247,9 +1247,11 @@ public final class Walk {
             else steering = false;
             return;
         }
-        if (Settings.walkLayer2 && Layer2.steer(p)) {
+        if (Settings.walkLayer2 && Layer2.steer(p) && !(Layer2.standingLong() && seg < r.n && r.move[seg] == Route.WALK)) {
             // layer 2 moves along the route its own way: keep the place on the route for the progress check and for
-            // the follower should layer 2 hand it a tick
+            // the follower should layer 2 hand it a tick. Layer 2's runs standing still a while on a plain walk of the
+            // route (no search, recipe or check waited for): the follower walks it (the Parkour Spiral's leg 1, a slab
+            // beside a top slab half a block up: layer 2 stood there until stuck)
             int near = nearestSegment(p, r);
             if (near > seg) seg = near;
             wantYaw = Layer2.yaw();

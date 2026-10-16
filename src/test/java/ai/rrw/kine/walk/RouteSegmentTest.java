@@ -18,4 +18,17 @@ class RouteSegmentTest {
         assertEquals(5, Walk.nearestSegment(0.6, 99.0, 1.2, r), "on the route's last leg");
         assertEquals(1, Walk.nearestSegment(3.0, 91.2, 0.5, r), "mid-jump on the first leg");
     }
+
+    /** The field's place on the grid path (Field.nearestIndex) heeds height too: a path out at 90 and back over itself
+     *  at 99, the player under its later part. */
+    @Test
+    void theFieldsPlaceOnThePathKeepsToTheFloorStoodOn() {
+        int n = 22;
+        long[] path = new long[n];
+        float[] ys = new float[n];
+        for (int i = 0; i < 11; i++) { path[i] = View.node(i, 0, 0); ys[i] = 90; }
+        for (int i = 11; i < n; i++) { path[i] = View.node(21 - i, 0, 1); ys[i] = 99; }
+        assertEquals(2, Field.nearestIndex(path, ys, 2.5, 90.0, 0.5), "on the first stretch, under the last");
+        assertEquals(19, Field.nearestIndex(path, ys, 2.5, 99.0, 0.5), "on the last stretch");
+    }
 }

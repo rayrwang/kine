@@ -238,11 +238,29 @@ public final class Field {
 
     /** The path index nearest (x, z) horizontally, searched from `hint` within the path (the player's place on it). */
     public static int nearestIndex(long[] path, double x, double z) {
+        return nearestIndex(path, null, x, Double.NaN, z);
+    }
+
+    /**
+     * The path index nearest (x, y, z): by the horizontal distance and, with the path's heights (pathY) and y given,
+     * twice how far y is under or over the floor's height (a block under, a block and a half over in hand), as
+     * Walk.nearestSegment. Horizontally alone, a route that comes back over itself put the player at its later part
+     * when standing under it: the field's window then began past the stretch the walk had to go back along, and layer 2
+     * had no way back to score (RW's playtest of ed08088, legs 1 and 3: "it thinks its already farther along the path
+     * bc its near the farther point on the path, but only near, not actually on"; his guess, right).
+     */
+    public static int nearestIndex(long[] path, float[] pathY, double x, double y, double z) {
+        boolean heights = pathY != null && pathY.length == path.length && !Double.isNaN(y);
         int best = 0;
         double bestD = Double.MAX_VALUE;
         for (int i = 0; i < path.length; i++) {
             double dx = View.nodeX(path[i]) + 0.5 - x, dz = View.nodeZ(path[i]) + 0.5 - z;
             double d = dx * dx + dz * dz;
+            if (heights) {
+                double lo = pathY[i] - 1.0, hi = pathY[i] + 1.5;
+                double dv = y < lo ? lo - y : y > hi ? y - hi : 0.0;
+                d += 4.0 * dv * dv;
+            }
             if (d < bestD - 1e-9) { bestD = d; best = i; }
         }
         return best;
@@ -268,8 +286,15 @@ public final class Field {
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
                               PathSearch.Result result, Route route, double x, double z, int goalX, int goalZ, double goalY,
                               boolean reachedGoal) {
+        return build(v, c, canSprint, gaps, glides, planId, path, result, route, x, Double.NaN, z, goalX, goalZ, goalY, reachedGoal);
+    }
+
+    /** As above; y: the player's height, for its place on the path (nearestIndex with the path's heights). */
+    public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
+                              PathSearch.Result result, Route route, double x, double y, double z, int goalX, int goalZ,
+                              double goalY, boolean reachedGoal) {
         long t0 = System.nanoTime();
-        int at = nearestIndex(path, x, z);
+        int at = nearestIndex(path, result == null || result.path != path ? null : result.pathY, x, y, z);
         int from = at;
         double back = 0;
         while (from > 0 && back < BEHIND) { back += hdist(path[from - 1], path[from]); from--; }

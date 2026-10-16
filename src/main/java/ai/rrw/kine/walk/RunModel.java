@@ -495,9 +495,16 @@ final class RunModel implements Model<RunWorld> {
     private double settled(MoveState s, double extra) {
         if (airAware) extra += airShort(s) + (s.eyesInWater && s.waterBreathingTicks < 0 ? UNDER_END * ticksToAir(s) : 0.0);
         double v = field.at(s.x, s.y, s.z);
-        if (Double.isNaN(v)) return extra + OFF_FIELD + Math.hypot(goalX - s.x, goalZ - s.z) * field.rate;
+        if (Double.isNaN(v)) return extra + Math.max(OFF_FIELD + Math.hypot(goalX - s.x, goalZ - s.z) * field.rate, offFieldFloor);
         return extra + v;
     }
+
+    /** The least a state off the field costs (Layer2: the field's value where the run starts, and OFF_FIELD more; 0 when
+     *  the start is off it too). Off the field the cost was OFF_FIELD and the straight distance to the goal: a route that
+     *  first goes back, away from the goal, valued more than that from its start, so stepping off it toward the goal
+     *  scored better, and each time the walk turned back along the route it turned round again (RW's playtest of
+     *  ed08088: leg 3 on the bottom level by the sweet berry bushes, leg 1 walked from leg 0's start). */
+    double offFieldFloor = 0.0;
 
     /** With the eyes under water: the drowning a shortfall of air would bring, as cost (none while there's the air to
      *  reach air again with the reserve to spare). The air lasts until it reaches -20. */
