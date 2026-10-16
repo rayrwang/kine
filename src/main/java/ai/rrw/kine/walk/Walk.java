@@ -77,6 +77,10 @@ public final class Walk {
     private static ResourceKey<Level> dimension = null;
 
     private static Planner.Job job = null;          // the plan in flight, or the last one
+    /** A replan since job was started returned without a search (the terrain not read yet, no floor to start from):
+     *  job is the last search, from another place. In PLANNING it is not taken: its plan was made before a fall or a
+     *  hop across, and its verdict (no way onto the goal) is not this place's. */
+    private static boolean jobStale = false;
     private static Planner.Plan plan = null;        // the route being walked
     private static long planId = -1;
     private static int planPass = -1;
@@ -231,7 +235,15 @@ public final class Walk {
         if (p.isSprinting()) p.setSprinting(false);
         return k.sprint() ? new Input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), k.shift(), false) : k;
     }
-    public static final long FIRST_BUDGET = 400_000_000L, REPLAN_BUDGET = 200_000_000L;
+    /** The strict search's time for a walk's first plan and for a replan. KINE_PLAN_BUDGET_MS (tests) sets both: a
+     *  loaded machine's real-time game ran out of the 400 ms where the lockstep tests didn't (RW's walk log 2026-10-16
+     *  02:15: plan 1 "out of time", a partial route, walked while the loose job searched). */
+    public static final long FIRST_BUDGET = budget(400_000_000L), REPLAN_BUDGET = budget(200_000_000L);
+
+    private static long budget(long nanos) {
+        String ms = System.getenv("KINE_PLAN_BUDGET_MS");
+        try { return ms == null ? nanos : Long.parseLong(ms.trim()) * 1_000_000L; } catch (NumberFormatException e) { return nanos; }
+    }
     /** Ticks a walk started in water with no floor found waits for the float to bring the player up to open water. */
     static final int UNDER_WATER_WAIT = 400;
 
@@ -372,6 +384,7 @@ public final class Walk {
         Afloat.disarm();
         if (job != null) job.cancelled = true;   // an earlier walk's search: its plan is not for this walk
         job = null;
+        jobStale = false;
         state = State.PLANNING;
         message = "Planning";
         plan = null;
@@ -487,7 +500,11 @@ public final class Walk {
         }
         if (forceDirect && plan != null && plan.direct) return;   // no layer 1 refreshes either
         // plan on an up-to-date table around the player: a block just changed there may not be in it yet
-        if (!WalkTable.settled(p.getBlockX(), p.getBlockZ(), 1) && settleWaits++ < 40) { message = "Reading the terrain"; return; }
+        if (!WalkTable.settled(p.getBlockX(), p.getBlockZ(), 1) && settleWaits++ < 40) {
+            message = "Reading the terrain";
+            jobStale = true;
+            return;
+        }
         View view = WalkTable.snapshot();
         long start = startNode(view, p);
         if (start != View.NONE && p.onGround() && !p.isInWater() && !p.onClimbable()) {
@@ -495,6 +512,7 @@ public final class Walk {
             else if (floorOver(view, start, p.getY()) && retrace(p, view, start)) return;
         }
         if (start == View.NONE) {
+            jobStale = true;
             if (settleWaits++ < 40) { message = "Reading the terrain"; return; }
             // in water with no floor over it (a roof, lily pads, deeper than 24): the float (Afloat, on the ticks it plans)
             // takes the player to open water, whose top is a floor to start from
@@ -515,6 +533,7 @@ public final class Walk {
         Recipe.safeFall = costs().safeFall;   // the jump search and the checks take the walk's safe fall
         job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget, loose,
             keepAbove(p.getY()));
+        jobStale = false;
         lastPlanStart = start;
         lastPlanTerrain = Layer2.terrain();
         jobReplay = replayNext;
@@ -561,7 +580,7 @@ public final class Walk {
         plan = np;
         planId = np.id;
         planPass = np.pass;
-        seg = nearestSegment(p, plan.route);
+        seg = startSegment(p, plan.route);
         bestLeft = Double.MAX_VALUE;
         bestLeftTick = tick;
         eta.onPlan(np.time, np.route);
@@ -647,6 +666,7 @@ public final class Walk {
         // again)
         if (job != null) job.cancelled = true;
         job = null;
+        jobStale = false;
         hop = new int[]{x, z};
         hopY = h;
         hopNode = lastStand;
@@ -657,6 +677,9 @@ public final class Walk {
         retraces++;
         Layer2.newTry();
         adoptDirect(dp);
+        // a plan made now: without it the replan every 5 s while walking without a route came the next tick (the last
+        // search's time was long past), found the same start and retraced again, all five in five ticks (B0w_26 0.1)
+        lastPlanTick = tick;
         stuckReplans = 0;
         progressed = 0;
         message = String.format(java.util.Locale.ROOT, "Off the table's floors here: back to %d %d %d", x, (int) Math.floor(h), z);
@@ -717,6 +740,17 @@ public final class Walk {
             // planned the same again, 247 ticks a round (the course's vine_jump and twisting_vines_free, full3_c1)
             long sup = p.mainSupportingBlockPos.map(b -> v.nodeAt(b.getX(), p.getY(), b.getZ())).orElse(View.NONE);
             if (sup != View.NONE && groundAt(v, sup, p.getY())) return sup;
+            // on the ground where neither the column nor the supporting block's has a floor at the feet, the column's
+            // floor more than a step under them: a floor beside it within a step down, if any, is where the walk can
+            // go. On the Parkour Spiral's first level a loose jump came down short on the grass at a fence's foot,
+            // beside its end post (-26,59,-32), the box over the pool: the table has the fence's top as that column's
+            // floor and the pool, 2 under the feet, as the player's; plans started in the pool, and layer 2 stood at
+            // the edge until stuck (L1w_18's leg 1.2, RW 2026-10-16 00:23 "stuck by the fence next to the pond").
+            // The sand beside it, a step down, is the way back to the jump
+            if (n == View.NONE || floorUnder(v, n, p.getY() - STEP_START)) {
+                long step = stepFloor(v, p, bx, bz);
+                if (step != View.NONE) return step;
+            }
         }
         if (n != View.NONE) return n;
         double best = Double.MAX_VALUE;
@@ -832,7 +866,35 @@ public final class Walk {
     /** Hops taken by a chained jump this walk (tests). */
     public static int hopsChained = 0;
 
-    /** Whether node n is a ground floor with its top at the feet (y, within 0.1). */
+    /** How far under the feet a start's floor may be before a floor within a step down beside it is taken instead. */
+    static final double STEP_START = 1.1;
+
+    /** Whether floor n's top is under height y. */
+    private static boolean floorUnder(View v, long n, double y) {
+        ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
+        if (c == null) return false;
+        int i = v.index(n);
+        return i >= 0 && c.h(i) < y;
+    }
+
+    /** The ground floor nearest the player in the 3 by 3 columns round (bx, bz) whose top is at the feet or up to a
+     *  step under them, or NONE. */
+    private static long stepFloor(View v, LocalPlayer p, int bx, int bz) {
+        double y = p.getY(), best = Double.MAX_VALUE;
+        long bestN = View.NONE;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++) {
+                long m = v.nodeAt(bx + dx, y, bz + dz);
+                if (m == View.NONE) continue;
+                ChunkFloors c = v.chunk(bx + dx, bz + dz);
+                int i = v.index(m);
+                if (c == null || i < 0 || c.type(i) != ChunkFloors.GROUND || c.h(i) > y + 0.1 || c.h(i) < y - 1.05) continue;
+                double d = Math.hypot(bx + dx + 0.5 - p.getX(), bz + dz + 0.5 - p.getZ());
+                if (d < best) { best = d; bestN = m; }
+            }
+        return bestN;
+    }
+
     /** Whether floor n is over feet at y by more than a step (the table's floor in a fence's column, its top 1.5 up). */
     private static boolean floorOver(View v, long n, double y) {
         ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
@@ -841,6 +903,7 @@ public final class Walk {
         return i >= 0 && c.h(i) > y + 0.6;
     }
 
+    /** Whether node n is a ground floor with its top at the feet (y, within 0.1). */
     private static boolean groundAt(View v, long n, double y) {
         ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
         if (c == null) return false;
@@ -976,17 +1039,32 @@ public final class Walk {
         // a plan in: the first one starts the walk; later ones replace the route. The loosened layer 1's plans (its job
         // started by a strict job that found no way on) come first: while it searches, the strict job's floor nearest
         // the goal isn't walked to (on the Parkour Spiral it lay in the sea under the goal, which kills there)
-        Planner.Job lj = job == null ? null : job.loose;
+        // a replan that made no search (the terrain not read yet) after a fall or a hop across left the last search in
+        // job: its plan was seen already and the walk stood in PLANNING for good (the course's cobweb, 1200 ticks, cH23
+        // walk 3), or its verdict, no way onto the goal from where the hop started, ended the walk in the air a tick
+        // later (hh_3bc_1bm, walks 1 and 2); a fresh Go cleared it ("stuck, unstuck by toggling"). Planned again instead
+        boolean staleJob = jobStale && state == State.PLANNING;
+        Planner.Job lj = job == null || staleJob ? null : job.loose;
         Planner.Plan lp = lj == null ? null : lj.latest.get();
         if (lp != null && (lp.id != seenLooseId || lp.pass != seenLoosePass)) {
             seenLooseId = lp.id;
             seenLoosePass = lp.pass;
             noWaySeen = false;
-            adoptPlan(p, lp, lp.looseMoves == 0 ? "Walking" : "Walking, with " + lp.looseMoves + " nearly possible jumps checked in the movement copy");
+            if (offNewRoute(p, lp.route) && tick - farRouteTick > FAR_ROUTE_WAIT && state == State.WALKING) {
+                // the loose job searched from where the walk was when it began; the walk went on along the strict job's
+                // partial route meanwhile, and its route doesn't come by here: placed on it by the nearest leg, a leg
+                // three blocks up over a wall ahead, layer 2 made for it from below and stood pressed into a corner
+                // under the overhang at (-31.7,59,-27.3) until stuck (the Parkour Spiral's leg 0 to checkpoint 2, RW's
+                // walk log 2026-10-16 02:15; L1w_18 stood there 200 ticks). A search from here instead (the checks'
+                // memo keeps the moves already checked)
+                farRouteTick = tick;
+                replanFor(FAR_ROUTE_WHY, mc);
+            } else
+                adoptPlan(p, lp, lp.looseMoves == 0 ? "Walking" : "Walking, with " + lp.looseMoves + " nearly possible jumps checked in the movement copy");
         } else if (lj != null && (!lj.done || lp != null && (lj.failure == null || lp.checkedTo == Integer.MAX_VALUE))) {
             // the loose search runs with nothing yet, or its plan is being walked: the strict job's own isn't taken
             if (plan == null) message = "No way by the proven moves: searching nearly possible jumps";
-        } else if (job != null) {
+        } else if (job != null && !staleJob) {
             Planner.Plan np = job.latest.get();
             // a routine refresh of a route still being walked takes only what its job ends with: the quick first
             // pass (the weighted search) can leave the loaded area by another way out, which flashed up as a stray
@@ -1014,7 +1092,7 @@ public final class Walk {
                 plan = np;
                 planId = np.id;
                 planPass = np.pass;
-                seg = nearestSegment(p, plan.route);
+                seg = startSegment(p, plan.route);
                 // a new route, or a finer pass of the same one: its length left is not comparable with the old mark
                 bestLeft = Double.MAX_VALUE;
                 bestLeftTick = tick;
@@ -1181,7 +1259,11 @@ public final class Walk {
             stuckReplans = Math.max(stuckReplans, HOP_STUCK);
             bestLeftTick = Math.min(bestLeftTick, tick - 61);
         }
-        if (tick - bestLeftTick > 60 && idle) {
+        // and not while the loose search runs: from where the walk stands, its plan is the replan's answer (a replan from
+        // here with the strict search finding no way handed on to it, then "a replan would search the same", Stuck 30
+        // ticks later, the loose plan still coming: RW's walk log 2026-10-16 02:15, the corner at (-31.7,59,-27.3))
+        boolean looseRuns = job != null && job.loose != null && !job.loose.done;
+        if (tick - bestLeftTick > 60 && idle && !looseRuns) {
             // standing still where the last plan was made, on the same terrain, its search not cut short: a replan would
             // search the same again (deterministic) and layer 2 has had its time; on to what comes after the replans
             if (hop == null && standing(p) && Layer2.stillTicks() >= 60 && sameAsLastPlan(p)) stuckReplans = Math.max(stuckReplans, 3);
@@ -1308,12 +1390,29 @@ public final class Walk {
             else steering = false;
             return;
         }
-        if (Settings.walkLayer2 && Layer2.steer(p) && !(Layer2.standingLong() && seg < r.n && r.move[seg] == Route.WALK)) {
+        boolean l2 = Settings.walkLayer2 && Layer2.steer(p);
+        if (seg <= 1 && toStart(p, r)) {
+            // the route starts on a floor beside the feet and a step or more under them (startNode's step down: the
+            // player on ground the table has no floor for) and goes on by a jump: first a plain walk down onto the
+            // start, then the jump from a standing start there. Layer 2 counted itself on the jump already, pressed
+            // into the edge sneaking (moving, so never still for its jump search) until stuck: the Parkour Spiral's
+            // leg 1, at a fence's foot by the pool (RW 2026-10-16 00:23)
+            double ax = r.x[0] - p.getX(), az = r.z[0] - p.getZ();
+            wantYaw = (float) Math.toDegrees(Math.atan2(-ax, az));
+            wantKeys = Math.hypot(ax, az) > 0.15;
+            wantJump = false;
+            wantSprint = false;
+            layer2 = false;
+            steering = true;
+            seg = 1;
+            return;
+        }
+        if (l2 && !(Layer2.standingLong() && seg < r.n && r.move[seg] == Route.WALK)) {
             // layer 2 moves along the route its own way: keep the place on the route for the progress check and for
             // the follower should layer 2 hand it a tick. Layer 2's runs standing still a while on a plain walk of the
             // route (no search, recipe or check waited for): the follower walks it (the Parkour Spiral's leg 1, a slab
             // beside a top slab half a block up: layer 2 stood there until stuck)
-            int near = nearestSegment(p, r);
+            int near = nearestSegment(p.getX(), p.getY(), p.getZ(), r, seg, (seg < r.n ? legLength(r, seg) : 0) + 6.0);
             if (near > seg) seg = near;
             wantYaw = Layer2.yaw();
             layer2 = true;
@@ -1378,6 +1477,36 @@ public final class Walk {
         if (ax * ax + az * az > 1e-6) wantYaw = (float) Math.toDegrees(Math.atan2(-ax, az));
         else wantKeys = false;
         steering = true;
+    }
+
+    /** How far (horizontally) the walk may stand from a loose job's new route and take it; further, or under the leg it
+     *  would be placed on by more than a step, it plans from where it is (at most once in FAR_ROUTE_WAIT ticks). */
+    static final double FAR_ROUTE = 3.0;
+    static final int FAR_ROUTE_WAIT = 100;
+    static final String FAR_ROUTE_WHY = "the loose route came from where the walk was: planning from here";
+    private static int farRouteTick = -1000;
+
+    /** Whether the player is off route r for taking it now: the leg nearestSegment places it on more than FAR_ROUTE
+     *  away, or that leg's lower end more than a step over the feet (the corner under the overhang: the leg placed on
+     *  ran three blocks up, over the wall, and nearestSegment's measure counted it 2.5 off). */
+    static boolean offNewRoute(LocalPlayer p, Route r) {
+        return offNewRoute(p.getX(), p.getY(), p.getZ(), r);
+    }
+
+    static boolean offNewRoute(double px, double py, double pz, Route r) {
+        if (r.n < 2) return Math.hypot(r.x[0] - px, r.z[0] - pz) > FAR_ROUTE;
+        int k = startSegment(px, py, pz, r);
+        return pointToLeg(px, pz, r, k) > FAR_ROUTE || py < Math.min(r.y[k - 1], r.y[k]) - 0.6;
+    }
+
+    /** Whether the walk is to step down onto the route's start first (steer): standing beside it, more than a step's
+     *  part over it, and the route's first move a jump of some kind (a walk or a drop the follower and layer 2 make
+     *  from where it stands). */
+    private static boolean toStart(LocalPlayer p, Route r) {
+        if (r.n < 2 || !p.onGround() || p.isInWater() || p.onClimbable()) return false;
+        int m = r.move[1];
+        if (m == Route.WALK || m == Route.DROP || m == Route.WADE) return false;
+        return p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ()) < 1.5;
     }
 
     /** Move on past waypoints already reached. */
@@ -1482,6 +1611,35 @@ public final class Walk {
         return nearestSegment(p.getX(), p.getY(), p.getZ(), r);
     }
 
+    /** The leg of a new route the walk is on: nearestSegment over the legs no further along the route than the walk is
+     *  from its start, and 4 more (a route made from a start the walk has since left, or one that comes back by, put
+     *  the walk on a later leg passing near: three blocks up over a wall into a corner, or past its start toward the
+     *  sea's edge: R0_32 leg 0.2 walked off it and the map took the player back). */
+    static int startSegment(double px, double py, double pz, Route r) {
+        return nearestSegment(px, py, pz, r, 1, Math.hypot(px - r.x[0], pz - r.z[0]) + Math.abs(py - r.y[0]) + 4.0);
+    }
+
+    private static int startSegment(LocalPlayer p, Route r) {
+        return startSegment(p.getX(), p.getY(), p.getZ(), r);
+    }
+
+    /** The legs from leg `from` on whose start is within `reach` along the route of leg from's start (nearestSegment's
+     *  measure): the walk's place as it goes, layer 2 steering (a leg further on than that is a later pass by here). */
+    static int nearestSegment(double px, double py, double pz, Route r, int from, double reach) {
+        int best = Math.max(1, Math.min(from, r.n - 1));
+        double bestD = Double.MAX_VALUE, along = 0;
+        for (int k = best; k < r.n; k++) {
+            if (k > best) along += Math.hypot(r.x[k - 1] - r.x[k - 2], r.z[k - 1] - r.z[k - 2]) + Math.abs(r.y[k - 1] - r.y[k - 2]);
+            if (along > reach) break;
+            double h = pointToLeg(px, pz, r, k);
+            double lo = Math.min(r.y[k - 1], r.y[k]) - 1.0, hi = Math.max(r.y[k - 1], r.y[k]) + 1.5;
+            double dv = py < lo ? lo - py : py > hi ? py - hi : 0.0;
+            double d = Math.hypot(h, 2.0 * dv);
+            if (d < bestD - 1e-6) { bestD = d; best = k; }
+        }
+        return best;
+    }
+
     /** The route's leg nearest a point: by the horizontal distance to it and twice how far the point is over or under
      *  the leg's heights (a block under its lower end, a block and a half over its higher). Horizontally alone, a route
      *  that comes back over its own start (the Parkour Spiral's leg 8: up nine blocks four blocks off) put the walk at
@@ -1497,6 +1655,10 @@ public final class Walk {
             if (d < bestD - 1e-6) { bestD = d; best = k; }
         }
         return best;
+    }
+
+    private static double legLength(Route r, int k) {
+        return Math.hypot(r.x[k] - r.x[k - 1], r.z[k] - r.z[k - 1]) + Math.abs(r.y[k] - r.y[k - 1]);
     }
 
     private static double pointToLeg(double px, double pz, Route r, int k) {
