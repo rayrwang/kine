@@ -366,9 +366,9 @@ public final class FightSnapshot {
         m.active = true;
         m.sinceCheck = 20;
         double[] win = KillAura.window(e);
-        int seen = Math.max(0, Compat.invulnerableTime(e) - 11);   // a full hit from anything, as the client marks it
-        m.freshIn = Math.max((int) win[0], seen);
-        m.lastHurt = win[0] >= seen && win[0] > 0 ? win[1] : Double.MAX_VALUE;
+        int others = KillAura.othersFreshIn(e);   // others' hits (kine's own are timed from its record, in win)
+        m.freshIn = Math.max((int) win[0], others);
+        m.lastHurt = win[0] >= others && win[0] > 0 ? win[1] : Double.MAX_VALUE;
         if (m.freshIn == 0) m.lastHurt = 0;
         m.pathX = Math.floor(p.getX()) + 0.5; m.pathZ = Math.floor(p.getZ()) + 0.5;
         m.pathTargetX = p.getX(); m.pathTargetY = p.getY(); m.pathTargetZ = p.getZ();

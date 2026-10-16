@@ -83,10 +83,22 @@ public final class KillAura {
     private static final double MOB_REACH = Math.sqrt(2.04F) - 0.6F;   // a mob's melee reach past its box (Mob.DEFAULT_ATTACK_REACH)
     private static final double CREEPER_SWELL = 3.0;   // a creeper starts its fuse within 3 blocks (Creeper's SwellGoal)
 
-    /** A hit of ours on a mob: the tick the window it opened began, and the biggest hit in that window. */
-    private record Hit(int tick, double damage) {}
+    /** A hit of ours on a mob: the tick the window it opened began, the biggest hit in that window, and whether the
+     *  client has shown the server's report of it yet (the mob's hurt cooldown rising to 20, Compat.invulnerableTime). */
+    private record Hit(int tick, double damage, boolean echoed) {}
 
     private static final Map<Integer, Hit> hits = new HashMap<>();
+
+    /** A mob's hurt cooldown as the client last showed it, and the tick another's hit on it lets a full hit in again. */
+    private record Seen(int tick, int cooldown, int othersFresh) {}
+
+    private static final Map<Integer, Seen> seen = new HashMap<>();
+
+    /** The ticks after a hit of ours within which the first hurt the client shows is taken as its report: the server's
+     *  answer comes a tick or two after the attack in a lockstep test (1.21.11 and 26.x handle a packet at the next
+     *  tick's start, 1.21.10 and before as it arrives) and later by the ping on a server, so a second covers a ping of
+     *  up to about a second; a report later than that counts as another's hit, which only makes the aura wait. */
+    private static final int ECHO_WAIT = 20;
     private static boolean aimedAtMob = false;   // this tick's fight turns toward a mob in reach (the bow aura's rotation waits)
     private static final Map<Integer, Integer> angryUntil = new HashMap<>();   // neutral entityId -> tick its anger lapses
     private static int tick = 0;
@@ -136,7 +148,7 @@ public final class KillAura {
         tick++;
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || p != lastPlayer) {
-            hits.clear(); angryUntil.clear();
+            hits.clear(); seen.clear(); angryUntil.clear();
             heldX = heldY = 0; appliedYaw = appliedPitch = 0f; sentKnown = false;
             lastPlayer = p;
             return;
@@ -425,11 +437,9 @@ public final class KillAura {
             m.bonus = WeaponSelect.bonus(held, t);
             Hit h = hits.get(t.getId());
             int own = h != null && tick - h.tick() < SwingPlan.WINDOW ? SwingPlan.WINDOW - (tick - h.tick()) : 0;
-            // the client sets invulnerableTime 20 when the server reports a full hit from anything, a tick after the
-            // server did; a full hit again once the server's is at 10
-            int seen = Math.max(0, Compat.invulnerableTime(t) - (SwingPlan.WINDOW + 1));
-            m.freshIn = Math.max(own, seen);
-            m.lastHurt = own > 0 && own >= seen ? h.damage() : Double.MAX_VALUE;   // another's hit: size unknown
+            int others = othersFreshIn(t);
+            m.freshIn = Math.max(own, others);
+            m.lastHurt = own > 0 && own >= others ? h.damage() : Double.MAX_VALUE;   // another's hit: size unknown
             m.contact = contact(p, t);
             mobs.add(m);
         }
@@ -487,11 +497,38 @@ public final class KillAura {
         return false;
     }
 
-    /** Whether a mob takes a full hit now: not hit by us in the last 10 ticks, and not hurt by anything else lately
-     *  (the client marks a full hit from any source with invulnerableTime 20). */
+    /** Whether a mob takes a full hit now: not hit by us in the last 10 ticks, and not hurt by anything else lately. */
     private static boolean fresh(LivingEntity e) {
         Hit h = hits.get(e.getId());
-        return (h == null || tick - h.tick() >= SwingPlan.WINDOW) && Compat.invulnerableTime(e) <= SwingPlan.WINDOW + 1;
+        return (h == null || tick - h.tick() >= SwingPlan.WINDOW) && othersFreshIn(e) == 0;
+    }
+
+    /**
+     * Ticks until a full hit lands again as far as other hits on the mob go (another player's, a mob's, an arrow's, a
+     * hit of ours the aura didn't send), 0 if none is known. Kine's own hits are timed from its own record of them
+     * (hits): the server takes a full hit again 10 ticks after the one it handled, and the next attack sent 10 ticks
+     * after ours reaches it 10 ticks after ours did, at any ping. The client's view of the mob's hurt cooldown would
+     * time them from the server's report instead, which comes late by the ping (by a tick more on 1.21.11 and 26.x,
+     * where a packet waits for the next tick's start) and would hold the aura back that much. So a rise of the
+     * cooldown is a hurt the server reported: the first one within ECHO_WAIT ticks after a hit of ours is that hit's,
+     * and is left out; any other is another's, and a full hit lands once its cooldown is down to 10 on the server,
+     * reckoned as a tick after the client showed it (the soonest the client can).
+     */
+    public static int othersFreshIn(LivingEntity e) {
+        int id = e.getId();
+        int cooldown = Compat.invulnerableTime(e);
+        Seen s = seen.get(id);
+        int others = s != null ? s.othersFresh() : tick;
+        if (s == null || s.tick() != tick) {
+            int expected = s == null ? 0 : Math.max(0, s.cooldown() - (tick - s.tick()));   // it counts down a tick at a time
+            if (cooldown > expected) {
+                Hit h = hits.get(id);
+                if (h != null && !h.echoed() && tick - h.tick() <= ECHO_WAIT) hits.put(id, new Hit(h.tick(), h.damage(), true));
+                else others = tick + cooldown - (SwingPlan.WINDOW + 1);
+            }
+            seen.put(id, new Seen(tick, cooldown, others));
+        }
+        return Math.max(0, others - tick);
     }
 
     /** Note a hit and what its sweep caught: when their windows began and the biggest hit in each. */
@@ -513,9 +550,9 @@ public final class KillAura {
     private static void note(LivingEntity e, double damage) {
         Hit h = hits.get(e.getId());
         if (h != null && tick - h.tick() < SwingPlan.WINDOW) {
-            if (damage > h.damage()) hits.put(e.getId(), new Hit(h.tick(), damage));   // the excess over the last
+            if (damage > h.damage()) hits.put(e.getId(), new Hit(h.tick(), damage, h.echoed()));   // the excess over the last (the server reports no hurt for it)
         } else {
-            hits.put(e.getId(), new Hit(tick, damage));
+            hits.put(e.getId(), new Hit(tick, damage, false));
         }
     }
 
@@ -659,7 +696,8 @@ public final class KillAura {
         lastHurtTime = p.hurtTime;
         if ((tick & 63) == 0) {   // prune now and then so the maps don't grow without bound
             angryUntil.values().removeIf(v -> v <= tick);
-            hits.values().removeIf(h -> h.tick() + 2 * SwingPlan.WINDOW <= tick);
+            hits.values().removeIf(h -> h.tick() + Math.max(2 * SwingPlan.WINDOW, ECHO_WAIT + 1) <= tick);
+            seen.values().removeIf(v -> v.tick() + 4 * SwingPlan.WINDOW <= tick && v.othersFresh() <= tick);
         }
     }
 
