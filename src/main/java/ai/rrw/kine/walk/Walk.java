@@ -66,6 +66,12 @@ public final class Walk {
     /** The highest the player has stood (on the ground, out of water) in this walk, or where it is on a route to the
      *  goal (a way all the way there is trusted to go down): see keepAbove. */
     private static double peakY = Double.NaN;
+    /** The last floor a plan started from that was the ground under the feet (replan), and how many times the walk has
+     *  gone back to it (retrace). */
+    private static long lastStand = View.NONE;
+    private static int retraces = 0;
+    static final int RETRACE_MAX = 5;
+    static final double RETRACE_REACH = 12.0;
     /** How far under peakY a walk with no route to a goal above may still go (a step down, a slab). */
     static final double KEEP_DROP = 1.0;
     private static ResourceKey<Level> dimension = null;
@@ -359,6 +365,8 @@ public final class Walk {
         dimension = mc.level.dimension();
         walkY = destinationY();
         peakY = mc.player.getY();
+        lastStand = View.NONE;
+        retraces = 0;
         dismissed = false;
         endPreview();
         Afloat.disarm();
@@ -482,6 +490,10 @@ public final class Walk {
         if (!WalkTable.settled(p.getBlockX(), p.getBlockZ(), 1) && settleWaits++ < 40) { message = "Reading the terrain"; return; }
         View view = WalkTable.snapshot();
         long start = startNode(view, p);
+        if (start != View.NONE && p.onGround() && !p.isInWater() && !p.onClimbable()) {
+            if (groundAt(view, start, p.getY())) lastStand = start;
+            else if (floorOver(view, start, p.getY()) && retrace(p, view, start)) return;
+        }
         if (start == View.NONE) {
             if (settleWaits++ < 40) { message = "Reading the terrain"; return; }
             // in water with no floor over it (a roof, lily pads, deeper than 24): the float (Afloat, on the ticks it plans)
@@ -609,6 +621,47 @@ public final class Walk {
         long start = startNode(view, p);
         if (start == View.NONE) return null;
         return Planner.direct(view, start, d[0], d[1], walkY, costs(), margin(), canSprint(p));
+    }
+
+    /**
+     * Standing where the walk table has no floor (between a fence's posts: the table has the fence's top, 1.5 up, as that
+     * column's floor), a plan from there starts where the player isn't: back to the last floor a plan started from (the
+     * way it came, as walking without a route with layer 2: its search in the movement copy has the real blocks), and a
+     * plan from there. On the Parkour Spiral's first level a jump landed in a pocket between fences at (-5,56,-44): the
+     * walk planned from the fence's top and stood until stuck (leg 0's start to checkpoint 2, 3 of 4 tries; RW: "it can
+     * just retrace its steps, but it's not finding that"). True when taken.
+     */
+    private static boolean retrace(LocalPlayer p, View view, long start) {
+        if (lastStand == View.NONE || lastStand == start || retraces >= RETRACE_MAX || !Settings.walkLayer2 || !Settings.walkDirect)
+            return false;
+        int x = View.nodeX(lastStand), z = View.nodeZ(lastStand);
+        ChunkFloors c = view.chunk(x, z);
+        int idx = view.index(lastStand);
+        if (c == null || idx < 0) return false;
+        double h = c.h(idx);
+        if (Math.hypot(x + 0.5 - p.getX(), z + 0.5 - p.getZ()) > RETRACE_REACH) return false;
+        Planner.Plan dp = Planner.direct(view, start, x, z, h, costs(), margin(), canSprint(p));
+        if (dp == null) return false;
+        // a search from here (its start, the fence's top, isn't where the player is): its plan would come in and
+        // replace the way back (B0w_22: a loose plan from the pocket's fence top took over half way back and jumped in
+        // again)
+        if (job != null) job.cancelled = true;
+        job = null;
+        hop = new int[]{x, z};
+        hopY = h;
+        hopNode = lastStand;
+        hopFromY = p.getY();
+        hopOnSince = -1;
+        hopTaken = false;
+        hops++;
+        retraces++;
+        Layer2.newTry();
+        adoptDirect(dp);
+        stuckReplans = 0;
+        progressed = 0;
+        message = String.format(java.util.Locale.ROOT, "Off the table's floors here: back to %d %d %d", x, (int) Math.floor(h), z);
+        if (replanWhy.size() < 200) replanWhy.add(tick + ": off the table's floors: back to " + x + " " + z + " (retrace " + retraces + ")");
+        return true;
     }
 
     /** No way on to a far goal (layer 1's every reachable place searched, the walk at the floor nearest it, the goal past
@@ -780,6 +833,14 @@ public final class Walk {
     public static int hopsChained = 0;
 
     /** Whether node n is a ground floor with its top at the feet (y, within 0.1). */
+    /** Whether floor n is over feet at y by more than a step (the table's floor in a fence's column, its top 1.5 up). */
+    private static boolean floorOver(View v, long n, double y) {
+        ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
+        if (c == null) return false;
+        int i = v.index(n);
+        return i >= 0 && c.h(i) > y + 0.6;
+    }
+
     private static boolean groundAt(View v, long n, double y) {
         ChunkFloors c = v.chunk(View.nodeX(n), View.nodeZ(n));
         if (c == null) return false;
