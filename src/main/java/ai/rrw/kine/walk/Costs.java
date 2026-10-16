@@ -55,8 +55,30 @@ public final class Costs {
     /** Ticks a block of climb at the fastest: a jump reaches one block up in 3 ticks (the copy: 0.42, then
      *  (v - 0.08) * 0.98 a tick, 1.0016 after three). */
     public double fastestClimb = 3.0;
-    /** Drops of more than this hurt (the game's safe fall distance; Baritone's maxFallHeightNoWater). */
+    /** The proven moves' deepest drop (the graph's DROP, the sweep): Baritone's maxFallHeightNoWater, a block in hand under
+     *  the game's own limit (safeFall). */
     public double maxFall = 3.0;
+    /** The most a fall may be without hurting, blocks: LivingEntity.calculateFallDamage is floor(fall + 1e-6 - 3) (26.1.2,
+     *  the SAFE_FALL_DISTANCE attribute 3), so a fall under 4 costs nothing; 3.9 keeps a tenth in hand. What layer 2's
+     *  runs, the jump search and the loose moves allow (the Parkour Spiral's second level is a walk off a slab 3.5 over
+     *  the next floor). The strict graph keeps maxFall: with this, its sweep tightened routes down slopes of drops that
+     *  layer 2 with Parkour off then wouldn't take (Layer2Test.parkourOffGoesDownASteepSlopeOfDrops). */
+    public double safeFall = 3.9;
+
+    /**
+     * The deepest fall onto a block whose landing takes `factor` of the damage (BlockInfo.fallFactor: hay bales and honey
+     * 0.2, a bed 0.5; Block.fallOn's overrides) that hurts no more than a fall of `limit` onto stone, with the same
+     * margin in hand: the damage is floor((fall + 1e-6 - 3) * factor). At the safe fall of 3.9 a hay bale takes a fall
+     * of 7.9 (the Parkour Spiral drops into a cave onto hay). A factor of 0 (slime, which bounces) takes any fall: 30
+     * more.
+     */
+    public static double fallLimit(double limit, float factor) {
+        if (!(factor < 1f)) return limit;
+        if (factor <= 0f) return limit + 30.0;
+        double allowed = Math.floor(limit - 3.0 + 1e-6);
+        double margin = allowed + 1.0 - (limit - 3.0);
+        return 3.0 + (allowed + 1.0) / factor - margin;
+    }
     /** Added for each hazard (lava, fire, cactus and the like) in the eight columns around a floor at body height. */
     public double hazardNear = 2.0;
 
@@ -139,6 +161,19 @@ public final class Costs {
         return c;
     }
 
+    private static final java.util.Map<Costs, java.util.Map<Double, Costs>> BY_FALL = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** These costs with falls hurting up to `hp` allowed (the walk's Fall damage allowed: a fall of hp more hurts that
+     *  much more): one copy per base and allowance. */
+    public static Costs withFallDamage(Costs base, int hp) {
+        return BY_FALL.computeIfAbsent(base, b -> new java.util.concurrent.ConcurrentHashMap<>()).computeIfAbsent((double) hp, m -> {
+            Costs c = base.copy();
+            c.maxFall = base.maxFall + hp;
+            c.safeFall = base.safeFall + hp;
+            return c;
+        });
+    }
+
     /** A copy of every number. */
     Costs copy() {
         Costs t = timeOnly();
@@ -158,6 +193,7 @@ public final class Costs {
         t.glideStart = glideStart; t.glidePerBlock = glidePerBlock; t.glideWear = 0.0;
         t.walkOffFraction = walkOffFraction; t.jumpOne = jumpOne; t.fastest = fastest; t.fastestClimb = fastestClimb;
         t.maxFall = maxFall;
+        t.safeFall = safeFall;
         t.waterPenalty = 0.0;
         t.hazardNear = 0.0;
         return t;

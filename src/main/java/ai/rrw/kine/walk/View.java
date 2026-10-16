@@ -18,6 +18,11 @@ public final class View {
         this.chunks = new Long2ObjectOpenHashMap<>(chunks);
     }
 
+    /** Another snapshot of the same chunks, for another thread (the chunk cache below is one search's). */
+    public View copy() {
+        return new View(chunks);
+    }
+
     public static long key(int cx, int cz) {
         return ((long) cx << 32) | (cz & 0xFFFFFFFFL);
     }
@@ -103,6 +108,23 @@ public final class View {
         }
         if (y >= c.openFrom[col] - 1e-5) return Palette.AIR;   // over the highest floor and hazard: open sky
         return Palette.SOLID;
+    }
+
+    /** The kind of block at (x, y, z) where the table really knows it: inside a floor's window, a hazard's height, a
+     *  floor's free space or open sky; null where block() would only assume a solid block (between a floor's free space,
+     *  capped at ChunkFloors.MAX_CLEAR, and whatever is above: on a tower a level's air more than 24 over the one below). */
+    public Kind blockKnown(int x, int y, int z) {
+        ChunkFloors c = chunk(x, z);
+        if (c == null) return null;
+        Kind k = block(x, y, z);
+        if (k != Palette.SOLID) return k;
+        // block() ends with SOLID for "anything else": known only when a floor's window says so
+        int col = (x & 15) + 16 * (z & 15);
+        for (int i = c.start[col]; i < c.start[col + 1]; i++) {
+            int w = y - c.fb[i];
+            if (w >= 0 && w < ChunkFloors.WINDOW) return k;
+        }
+        return null;
     }
 
     /** Whether the column (x, z) has a hazard height in [y0, y1] (block heights, inclusive). */

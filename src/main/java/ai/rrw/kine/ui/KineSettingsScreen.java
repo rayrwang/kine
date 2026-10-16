@@ -197,6 +197,18 @@ public abstract class KineSettingsScreen extends Screen {
     private static final String DESC_WALK_FREE_JUMPS =
         "With Parkour on, near a jump the movement search also tries any heading to the degree and the jump on any tick, "
         + "turning in the air toward the landing, with or without a 45 strafe, beside its usual moves.";
+    private static final String DESC_WALK_LOOSE =
+        "With Parkour on, when the proven moves find no way the planner also tries nearly possible jumps (onto slabs, "
+        + "fences and carpets, longer and higher ones, bounces off slime), checks each one on the chosen route in its copy "
+        + "of the game's movement before the walk gets to it, and plans round any that fails. Off: no way by the proven "
+        + "moves goes to the nearest floor, the movement search without a route and the hops, as before.";
+    private static final String DESC_WALK_OPEN_DOORS =
+        "Lets the route go through closed wooden doors: the walk stops in front of one, looks at it and opens it as you "
+        + "would by clicking, then walks through. Off: closed doors are walls. Iron doors need redstone and stay walls.";
+    private static final String DESC_WALK_FALL_DAMAGE =
+        "The most a drop may hurt you on the walk, in hearts: 0 (the default) takes no drop that hurts, as before; more "
+        + "lets the route and the jumps take drops that cost up to that much, never below four hearts left. Armour and "
+        + "Feather Falling are not counted yet: the real damage is that or less.";
     private static final String DESC_WALK_GAIT =
         "The most the walk may use, like a thrust lever: it never goes faster, and still jumps where the ground needs it "
         + "(a step up, out of water). Walk: no sprinting at all. Sprint: sprints, jumping only where the ground needs a "
@@ -374,6 +386,10 @@ public abstract class KineSettingsScreen extends Screen {
                    v -> Settings.parkourAllowed() && v != 0 ? "ON" : "OFF"),
             Opt.of("Movement search without a route", DESC_WALK_DIRECT, Settings.WALK_DIRECT),
             Opt.of("Free moves near jumps", DESC_WALK_FREE_JUMPS, Settings.WALK_FREE_JUMPS, () -> Settings.walkParkour, null),
+            Opt.of("Nearly possible jumps", DESC_WALK_LOOSE, Settings.WALK_LOOSE, () -> Settings.walkParkour, null),
+            Opt.of("Open doors", DESC_WALK_OPEN_DOORS, Settings.WALK_OPEN_DOORS),
+            Opt.of("Fall damage allowed", DESC_WALK_FALL_DAMAGE, Settings.WALK_FALL_DAMAGE, () -> Settings.walkPathfinder,
+                   v -> String.format(java.util.Locale.ROOT, "%.1f hearts", v / 2.0)),
             Opt.of("Gait", DESC_WALK_GAIT, Settings.WALK_GAIT),
             Opt.of("Distance and ETA", DESC_WALK_READOUTS, Settings.WALK_READOUTS),
             Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,

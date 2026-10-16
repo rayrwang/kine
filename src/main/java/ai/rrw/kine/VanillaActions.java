@@ -48,6 +48,7 @@ public final class VanillaActions {
         KillAura.beforeKeybinds(mc);   // asks the bow aura where to turn when it has nothing to swing at
         BowAura.act(mc);   // after the aura's turn and pick: hold use to draw, let go to loose
         ai.rrw.kine.combat.AutoEat.beforeKeybinds(mc);   // after the aura's turn and pick: hold use to eat
+        ai.rrw.kine.walk.DoorOpener.beforeKeybinds(mc);   // after the aura's turn and pick: the walk's click on a door
     }
 
     /** Once this tick's rotation has gone to the server, before the tick-end packet: each epoch's AfterRotationSentMixin

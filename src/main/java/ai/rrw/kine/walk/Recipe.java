@@ -263,13 +263,16 @@ public final class Recipe {
     }
 
     /** The game's safe fall (Costs.maxFall): a landing's fall past it hurts, unless the block takes it all (slime). */
-    static final double SAFE_FALL = 3.0;
+    static final double SAFE_FALL = 3.9;   // under 4 a fall costs nothing (Costs.maxFall)
+    /** The fall the jump search accepts on a landing: SAFE_FALL, or more by the walk's Fall damage allowed (Walk sets it
+     *  at each plan and tick: Walk.costs().safeFall). */
+    static volatile double safeFall = SAFE_FALL;
 
     /** Whether the step just taken landed with a fall that hurts (MoveState.landedFall, set by a landing step; the
      *  caller clears it before the step). A copy-found jump took a bounce off slime that came down 4.25 onto the
      *  landing (dev5_c5, slime_bounce: health lost): the search checked only where it came down. */
     static boolean hurts(MoveState s) {
-        return s.onGround && s.landedFall > SAFE_FALL + 1e-6 && s.landedFallFactor > 0f;
+        return s.onGround && s.landedFall > Costs.fallLimit(safeFall, s.landedFallFactor) + 1e-6;
     }
 
     /** Whether s is in the landing's scaffolding column below its top: the feet in a piece of it (climbable there). */
@@ -370,7 +373,7 @@ public final class Recipe {
             phys.step(s, 0, 0f, 0f);
             if (s.inWater) return true;
             if ((s.touched & ai.rrw.kine.move.BlockInfo.SLIME) != 0) return true;   // a bounce: no fall damage
-            if (s.onGround && !(s.vy > 0.0)) return fall0 + Math.max(0.0, y0 - s.y) <= maxFall;
+            if (s.onGround && !(s.vy > 0.0)) return fall0 + Math.max(0.0, y0 - s.y) <= Costs.fallLimit(maxFall, s.landedFallFactor);
             s.touched = 0;
         }
         return false;
@@ -467,26 +470,40 @@ public final class Recipe {
 
     /** The walk to a run-up spot (up to 60 ticks walking, then sneaking to it), at rest within SPOT_NEAR. */
     static Recipe approachFar(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz) {
-        Recipe a = approach(phys, start, startYaw, tx, tz, 60, 16, SPOT_NEAR);
+        return approachFar(phys, start, startYaw, tx, tz, 0.0);
+    }
+
+    /** As above; dyMax: how far up or down from the start it may come to rest (0: at the start's height). */
+    static Recipe approachFar(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz, double dyMax) {
+        Recipe a = approach(phys, start, startYaw, tx, tz, 60, 16, SPOT_NEAR, dyMax);
         if (a == null) return null;
         double err = Math.hypot(a.endX - tx, a.endZ - tz);
         if (err <= SPOT_FINE) return a;
         MoveState m = after(phys, start, a);
-        Recipe b = approach(phys, m, a.yaw[a.ticks - 1], tx, tz, 0, 6, err - 0.003);
+        Recipe b = approach(phys, m, a.yaw[a.ticks - 1], tx, tz, 0, 6, err - 0.003, 0.0);
         return b == null ? a : concatMoves(a, b);
     }
 
     static Recipe approach(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz) {
-        Recipe a = approach(phys, start, startYaw, tx, tz, 6, 16, SPOT_NEAR);
+        return approach(phys, start, startYaw, tx, tz, 0.0);
+    }
+
+    /** As above; dyMax: how far up or down from the start it may come to rest (0: at the start's height; a spot on
+     *  another block than the one stood on may be a step up or down, see Layer2.searchFrom). */
+    static Recipe approach(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz, double dyMax) {
+        Recipe a = approach(phys, start, startYaw, tx, tz, 6, 16, SPOT_NEAR, dyMax);
         if (a == null) return null;
         // a second, finer step from where the first comes to rest (a few ticks of sneaking): a template's run round a
         // wall's corner can miss from a few hundredths off its spot
         double err = Math.hypot(a.endX - tx, a.endZ - tz);
         if (err <= SPOT_FINE) return a;
         MoveState m = after(phys, start, a);
-        Recipe b = approach(phys, m, a.yaw[a.ticks - 1], tx, tz, 0, 6, err - 0.003);
+        Recipe b = approach(phys, m, a.yaw[a.ticks - 1], tx, tz, 0, 6, err - 0.003, 0.0);
         return b == null ? a : concatMoves(a, b);
     }
+
+    /** How far up or down a walk to a spot may come to rest from where it starts (blocks): a step. */
+    static final double STEP_TO_SPOT = 0.6;
 
     /** How near a spot the walk to it tries to come to rest with its second, finer step (blocks). */
     static final double SPOT_FINE = 0.012;
@@ -501,7 +518,7 @@ public final class Recipe {
 
     /** The walk to (tx, tz) with up to maxWalk ticks walking then maxSneak sneaking, at rest within `near`. */
     private static Recipe approach(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz, int maxWalk,
-                                   int maxSneak, double near) {
+                                   int maxSneak, double near, double dyMax) {
         double bestD = near;
         int bestT = Integer.MAX_VALUE;
         float[] bestYaw = null;
@@ -540,7 +557,10 @@ public final class Recipe {
                         break;
                     }
                 }
-                if (!still || Math.abs(s.y - start.y) > 1e-3) continue;
+                // at rest at the start's height, or a step up or down from it (a spot on the block beside: a loose jump's
+                // take-off half a block over the slab the walk came to rest on, the Parkour Spiral's leg 1, whose search
+                // then found no way and the walk stood)
+                if (!still || Math.abs(s.y - start.y) > dyMax + 1e-3) continue;
                 double dd = Math.hypot(s.x - tx, s.z - tz);
                 if (dd < bestD - 0.01 || dd <= bestD + 0.01 && t < bestT) {
                     bestD = Math.min(bestD, dd);

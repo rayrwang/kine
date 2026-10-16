@@ -70,12 +70,42 @@ public final class McKinds {
         }
     }
 
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> BY_OFFSET = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The kind id of st at (x, y, z), for a block whose shape the game offsets by its position (st.hasOffsetFunction:
+     * bamboo, pointed dripstone, some plants): its collision shape where it stands, one kind per state and offset. At one
+     * fixed offset (id) a bamboo stalk's thin box was in the same place in every column, so most stalks' tops were no
+     * floor at all or a floor in the wrong place (the Parkour Spiral's bamboo levels, 2026-10-15).
+     */
+    public static int idAt(BlockState st, int x, int y, int z) {
+        BlockPos pos = new BlockPos(x, y, z);
+        VoxelShape vs = st.getCollisionShape(EmptyBlockGetter.INSTANCE, pos, CollisionContext.empty());
+        if (vs.isEmpty()) return id(st);   // a plant without collision: wherever it is drawn, nothing to stand on
+        AABB bb = vs.bounds();
+        long key = (long) Block.getId(st) * 1_000_003L ^ Math.round(bb.minX * 1000) * 31_337L ^ Math.round(bb.minZ * 1000) * 7_919L
+            ^ Math.round(bb.minY * 1000);
+        Integer have = BY_OFFSET.get(key);
+        if (have != null) return have;
+        synchronized (LOCK) {
+            have = BY_OFFSET.get(key);
+            if (have != null) return have;
+            int id = st.isAir() ? Palette.AIR.id : make(st, false, pos).id;
+            BY_OFFSET.put(key, id);
+            return id;
+        }
+    }
+
     private static Kind make(BlockState st) {
         return make(st, false);
     }
 
     private static Kind make(BlockState st, boolean climb) {
-        VoxelShape vs = st.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
+        return make(st, climb, BlockPos.ZERO);
+    }
+
+    private static Kind make(BlockState st, boolean climb, BlockPos at) {
+        VoxelShape vs = st.getCollisionShape(EmptyBlockGetter.INSTANCE, at, CollisionContext.empty());
         BlockInfo info = WorldSnapshot.info(st, vs);
         if (climb) info = WorldSnapshot.climbable(info);
         List<double[]> boxes = new ArrayList<>();
@@ -98,16 +128,19 @@ public final class McKinds {
             flags |= Kind.AVOID;
         Block b = st.getBlock();
         if (b instanceof DoorBlock || b instanceof TrapDoorBlock || b instanceof FenceGateBlock) flags |= Kind.DOOR;
+        if (b instanceof DoorBlock && st.is(BlockTags.WOODEN_DOORS) && !st.getValue(DoorBlock.OPEN)) flags |= Kind.CLOSED_DOOR;
         if (b.getSpeedFactor() < 1.0F) flags |= Kind.SLOW;
         // what is drawn above the collision: a snow layer is drawn a layer higher than you stand (one layer: no
         // collision at all), soul sand and mud a full block; plants have no collision and stay out, so the rails go
         // under grass and flowers, which really are drawn over them
         float drawnTop = Float.NaN;
-        VoxelShape drawn = st.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, CollisionContext.empty());
+        VoxelShape drawn = st.getShape(EmptyBlockGetter.INSTANCE, at, CollisionContext.empty());
         if (!drawn.isEmpty() && (st.is(Blocks.SNOW) || !vs.isEmpty())) {
             double top = drawn.max(Direction.Axis.Y);
             if (vs.isEmpty() || top > vs.max(Direction.Axis.Y) + 1e-6) drawnTop = (float) top;
         }
-        return Palette.add(climb ? st + "[climbable]" : st.toString(), info, boxes, flags, drawnTop);
+        String name = climb ? st + "[climbable]" : at.equals(BlockPos.ZERO) || vs.isEmpty() ? st.toString()
+            : st + String.format(java.util.Locale.ROOT, "[at %.3f %.3f]", vs.bounds().minX, vs.bounds().minZ);
+        return Palette.add(name, info, boxes, flags, drawnTop);
     }
 }

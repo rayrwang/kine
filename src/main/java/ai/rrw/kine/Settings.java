@@ -70,7 +70,7 @@ public final class Settings {
     /** Collision avoidance's quiet time after it lets go, tenths of a second. */
     public static int collisionCooldown;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
-        walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps;
+        walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps, walkLoose, walkOpenDoors;
     /** The walk's gait (RW 2026-10-14, "add teh gaint"): the most the walk may use, as an Airbus thrust lever sets the
      *  most the autothrust may command; it still jumps where the ground needs it. GAIT_WALK: no sprint key at all;
      *  GAIT_SPRINT: sprinting, a jump only where the ground needs one; GAIT_SPRINT_JUMP: sprint-jumping as before (the
@@ -79,6 +79,9 @@ public final class Settings {
     public static final int GAIT_WALK = 0, GAIT_SPRINT = 1, GAIT_SPRINT_JUMP = 2, GAIT_HOPS = 3;
     /** The walking route's safety margin, hundredths of a block. */
     public static int walkMargin;
+    /** The most health (half hearts) the walk may lose to a drop (RW 2026-10-14: "a todo seting how big jumps the
+     *  pathifnder is allwod to take damange"); 0: no drop that hurts. */
+    public static int walkFallDamage;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
         displayFlightProfile, displayRangeEndurance, displayFireworkFuel, flightRibbon;
@@ -228,6 +231,12 @@ public final class Settings {
     public static final Option WALK_PARKOUR               = toggle("walkParkour", WALK, false, v -> walkParkour = v);
     public static final Option WALK_DIRECT                = toggle("walkDirect", WALK, true, v -> walkDirect = v);
     public static final Option WALK_FREE_JUMPS            = toggle("walkFreeJumps", WALK, true, v -> walkFreeJumps = v);
+    // the loosened route planner, the fallback when the proven moves find no way (Loose; the spiral agent, 2026-10-15)
+    public static final Option WALK_LOOSE                 = toggle("walkLoose", WALK, true, v -> walkLoose = v);
+    // walking through closed wooden doors, opened on the way (DoorOpener; the spiral agent, 2026-10-15)
+    public static final Option WALK_OPEN_DOORS            = toggle("walkOpenDoors", WALK, true, v -> walkOpenDoors = v);
+    // the most a drop may hurt, half hearts (the spiral agent, 2026-10-15: a parkour map's drops of 3.5 and 4)
+    public static final Option WALK_FALL_DAMAGE           = level("walkFallDamage", WALK, 0, 20, v -> walkFallDamage = v);
     public static final Option WALK_READOUTS              = toggle("walkReadouts", WALK, true, v -> walkReadouts = v);
 
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);

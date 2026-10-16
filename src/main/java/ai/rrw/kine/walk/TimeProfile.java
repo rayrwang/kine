@@ -47,6 +47,8 @@ public final class TimeProfile {
         g.canSprint = canSprint;
         g.gaps = gaps;
         g.glides = glides;
+        g.looseOf(r);   // a loose route's own loose moves, priced as the search priced them
+        g.doors = Graph.doorsOn;
         int n = r.path.length;
         double[] x = new double[n], z = new double[n], ticks = new double[n], foot = new double[n];
         for (int i = 0; i < n; i++) {
@@ -68,7 +70,7 @@ public final class TimeProfile {
             else if (mv == Graph.SWIM) best *= swimStraighten[i];
             ticks[i] = ticks[i + 1] + best;
             boolean onFoot = mv == Graph.WALK || mv == Graph.JUMP || mv == Graph.DROP || mv == Graph.GAP
-                || mv == Graph.CLIMB_OFF;
+                || mv == Graph.LOOSE || mv == Graph.OPEN || mv == Graph.CLIMB_OFF;
             foot[i] = foot[i + 1] + (onFoot ? len : 0.0);
         }
         // the corners of the tightened route (Costs.turn a 90 degree turn; the search's floors carry no heading), each

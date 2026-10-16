@@ -143,7 +143,7 @@ public final class WalkTable {
         WORKER.submit(() -> {
             try {
                 long b0 = System.nanoTime();
-                ChunkFloors cf = ColumnScan.chunk(cx, cz, new Sections(copies, minY));
+                ChunkFloors cf = ColumnScan.chunk(cx, cz, new Sections(copies, minY, cx, cz));
                 ChunkFloors before = CHUNKS.get(k);
                 cf.stampColumnsFrom(before != null ? before : SEEN.get(k));
                 if (EPOCH.get() == epoch) CHUNKS.put(k, cf);
@@ -158,6 +158,11 @@ public final class WalkTable {
     }
 
     /** A snapshot for one search (client thread or any). */
+    /** Whether the column (x, z) is in the table now (its chunk built). */
+    public static boolean known(int x, int z) {
+        return CHUNKS.containsKey(View.key(x >> 4, z >> 4));
+    }
+
     public static View snapshot() {
         Long2ObjectOpenHashMap<ChunkFloors> m = new Long2ObjectOpenHashMap<>(CHUNKS.size() * 2);
         CHUNKS.forEach(m::put);
@@ -202,7 +207,7 @@ public final class WalkTable {
     }
 
     /** The kinds of copied sections, bottom up, for ColumnScan. */
-    private record Sections(PalettedContainer<BlockState>[] copies, int minY) implements ColumnScan.Source {
+    private record Sections(PalettedContainer<BlockState>[] copies, int minY, int cx, int cz) implements ColumnScan.Source {
         public int minY() { return minY; }
         public int maxY() { return minY + copies.length * 16; }
         public void column(int lx, int lz, int[] ids) {
@@ -216,7 +221,8 @@ public final class WalkTable {
                     BlockState st = c.get(lx, y, lz);
                     // an open trapdoor over a ladder facing the same way climbs as a ladder (the copy's rule)
                     ids[base + y] = below != null && net.minecraft.world.level.block.Block.getId(st) != 0
-                        && ai.rrw.kine.move.WorldSnapshot.trapdoorLadder(st, below) ? McKinds.climbableId(st) : McKinds.id(st);
+                        && ai.rrw.kine.move.WorldSnapshot.trapdoorLadder(st, below) ? McKinds.climbableId(st)
+                        : st.hasOffsetFunction() ? McKinds.idAt(st, cx * 16 + lx, minY + base + y, cz * 16 + lz) : McKinds.id(st);
                     below = st;
                 }
             }

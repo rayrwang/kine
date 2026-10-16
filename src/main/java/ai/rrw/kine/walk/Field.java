@@ -195,10 +195,15 @@ public final class Field {
 
     /**
      * The landing of a jump ahead, for layer 2's free actions: along the field's cheapest moves from the floor at (x, y,
-     * z), within `reach` blocks, the first GAP move's landing floor {x, y, z} (its centre and height); walking without a
+     * z), within `reach` blocks, the first GAP (or loose) move's landing floor {x, y, z} (its centre and height); walking without a
      * route, standing on a floor not joined to the goal, the best joined floor within reach. Null when none.
      */
     double[] jumpAhead(double x, double y, double z, double reach) {
+        return jumpAhead(x, y, z, reach, false);
+    }
+
+    /** As above; jumps: a jump up (JUMP) counts as a jump ahead too (the jump search before a move layer 2 stalled at). */
+    double[] jumpAhead(double x, double y, double z, double reach, boolean jumps) {
         int i = nodeAt(x, y, z);
         if (i < 0) return null;
         if (joined != null && !joined[i]) {
@@ -210,7 +215,8 @@ public final class Field {
             int nx = next[j];
             if (nx < 0) return null;
             if (Math.hypot(px[nx] - x, pz[nx] - z) > reach + 6) return null;
-            if (nextMove[j] == Graph.GAP) return Math.hypot(px[j] - x, pz[j] - z) <= reach ? new double[]{px[nx], py[nx], pz[nx]} : null;
+            if (Graph.jumpMove(nextMove[j]) || jumps && nextMove[j] == Graph.JUMP)
+                return Math.hypot(px[j] - x, pz[j] - z) <= reach ? new double[]{px[nx], py[nx], pz[nx]} : null;
             j = nx;
         }
         return null;
@@ -255,6 +261,13 @@ public final class Field {
      *  sourced along it. */
     public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
                               Route route, double x, double z, int goalX, int goalZ, double goalY, boolean reachedGoal) {
+        return build(v, c, canSprint, gaps, glides, planId, path, null, route, x, z, goalX, goalZ, goalY, reachedGoal);
+    }
+
+    /** As above; result: the plan's search result, whose loose moves (a loose route's) the field's graph offers. */
+    public static Field build(View v, Costs c, boolean canSprint, boolean gaps, boolean glides, long planId, long[] path,
+                              PathSearch.Result result, Route route, double x, double z, int goalX, int goalZ, double goalY,
+                              boolean reachedGoal) {
         long t0 = System.nanoTime();
         int at = nearestIndex(path, x, z);
         int from = at;
@@ -269,6 +282,8 @@ public final class Field {
         g.canSprint = canSprint;
         g.gaps = gaps;
         g.glides = glides;
+        g.looseOf(result);
+        g.doors = Graph.doorsOn;
         g.goalX = goalX; g.goalZ = goalZ;
         f.make(g, path, route, from, to);
         f.buildNanos = System.nanoTime() - t0;

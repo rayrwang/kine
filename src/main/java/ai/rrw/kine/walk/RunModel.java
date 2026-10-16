@@ -42,6 +42,12 @@ import java.util.SplittableRandom;
 final class RunModel implements Model<RunWorld> {
     static final float TURN = 29.5F;
     static final double UNSAFE = 1000.0, UNCOPIED = 40.0, OFF_FIELD = 300.0;
+
+    /** The height the walk keeps while it has no route to a goal above (Walk.keepAbove, set each tick; NaN: none): a
+     *  tick ending on the ground or in water under it is UNSAFE (a run of layer 2's dropped into the sea under the goal,
+     *  the Parkour Spiral). Taken by each model as it is made. */
+    static volatile double keepAboveNow = Double.NaN;
+    final double keepAbove = keepAboveNow;
     /** Air (RW, 2026-10-12: "ti donst take into acount my air bubles ... the serach shoudl also acocutn for hte air
      *  bubles/damage"): drowning damage costs DROWN_COST ticks a point of health; a run that ends with the eyes under
      *  water must leave the air to reach air again (the ticks to the nearest open water top, straight up or a few blocks
@@ -327,9 +333,12 @@ final class RunModel implements Model<RunWorld> {
     /** This tick's marks: a hurting landing, hurting blocks, a glide, movement the copy leaves out. */
     private double marks(MoveState s, boolean air0, double y0, double fall0) {
         double c = 0;
-        // a landing on slime (the shift key up) costs nothing, on a bed half the fall (SlimeBlock and BedBlock.fallOn)
-        double fall = (fall0 + Math.max(0.0, y0 - s.y)) * ((s.touched & BlockInfo.BED) != 0 ? 0.5 : 1.0);
-        if (air0 && s.onGround && !s.inWater && (s.touched & BlockInfo.SLIME) == 0 && fall > maxFall) c += UNSAFE;
+        // a landing on slime (the shift key up) costs nothing, on a bed, a hay bale or honey a share of the fall
+        // (Block.fallOn's overrides: the landing's fall factor, Costs.fallLimit)
+        double fall = fall0 + Math.max(0.0, y0 - s.y);
+        if (air0 && s.onGround && !s.inWater && (s.touched & BlockInfo.SLIME) == 0
+            && fall > Costs.fallLimit(maxFall, s.landedFallFactor)) c += UNSAFE;
+        if ((s.onGround || s.inWater) && s.y < keepAbove - 1e-3) c += UNSAFE;
         if ((s.touched & BlockInfo.HAZARD) != 0) c += UNSAFE;
         if ((s.touched & BlockInfo.UNCOPIED) != 0) c += UNCOPIED;
         if (s.wouldGlide) c += UNSAFE;

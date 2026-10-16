@@ -53,6 +53,11 @@ public final class BlockInfo {
     /** Its bottom face is sturdy (BlockState.isFaceSturdy down): water under it counts to its top for the eyes on 26.3+
      *  (FluidState.getHeightForCamera, Rules.EYES_CAMERA_HEIGHT). */
     public static final int STURDY_DOWN = 65536;
+    /** Hurts the one standing on it (Block.stepOn: magma, unless sneaking), the block under the feet as the game finds it
+     *  (getOnPosLegacy, 0.2 under them: under a carpet, the block below the carpet). The other HAZARD blocks hurt only
+     *  from inside their cell (entityInside), which the box finds: a carpet on a cactus is safe to stand on, and the
+     *  copy had counted the cactus under it as touched (the Parkour Spiral's cactus garden, 2026-10-15). */
+    public static final int STEP_HURTS = 131072;
 
     /**
      * ScaffoldingBlock.getCollisionShape for an entity whose feet were at entityBottom when its collision context was

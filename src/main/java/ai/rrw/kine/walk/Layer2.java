@@ -150,6 +150,7 @@ public final class Layer2 {
         recipeJob = null;
         searchGen++;
         recipeTryKey = Long.MIN_VALUE;
+        holdPlan = null;
         groundY = Double.NaN;
         lastRecipeTry = tick - 1000;   // a try in the last walk doesn't hold this one's first back
         spotsEmpty.clear();
@@ -268,6 +269,8 @@ public final class Layer2 {
      */
     private static Future<Recipe> chainJob = null;
     private static Recipe chainBase = null;
+    /** The chain being searched goes along a loose route (Walk.nextLooseFrom), not to a hop's next floor. */
+    private static boolean chainRoute = false;
     private static double[] chainNext = null;
     private static long chainedFor = Long.MIN_VALUE;
     static final int CHAIN_LEAD = 4;
@@ -379,6 +382,21 @@ public final class Layer2 {
         controlling = false;
         if (!Settings.walkLayer2) return false;
         if (playRecipe(p)) return true;
+        if (recipeJob == null && p.onGround() && looseTakeOffAt(holdPlan, p.getX(), p.getY(), p.getZ()) > 0
+            && !holdSearched(p)) {
+            // on a loose jump's take-off: stand, so the jump search runs from rest (maybeSearchRouteGap). Layer 2's own
+            // runs can't make such a jump and kept stepping about at its edge, never still, so no search came, and the
+            // walk fell back off the level and went round again (the Parkour Spiral's leg 1: the bounce off the slime
+            // at (-21..-20,58,-41..-40) from the ledge at (-16,63.5,-37), RW's playtest of 81fd819 and L1_11)
+            action = RunModel.STOP;
+            yaw = KillAura.lastSentYaw(p);
+            heading = Float.NaN;
+            safe = true;
+            controlling = true;
+            controlledTicks++;
+            lastWhy = "at a loose jump's take-off";
+            return true;
+        }
         if (recipeJob != null && !recipeJob.isDone() && p.onGround()) {
             // a jump search runs from the state it started in (standing): stand until it is back
             action = RunModel.STOP;
@@ -437,7 +455,7 @@ public final class Layer2 {
             try { c = chainJob.get(); } catch (Exception ignored) { }
             chainJob = null;
             // in time: the jump being played is still the one the search started from, and it hasn't landed yet
-            if (c != null && recipe != null && recipe == chainBase && recipeT < recipe.ticks && Walk.chainHop(chainNext)) {
+            if (c != null && recipe != null && recipe == chainBase && recipeT < recipe.ticks && (chainRoute || Walk.chainHop(chainNext))) {
                 chainStart = recipe.ticks;
                 recipe = Recipe.then(recipe, c);
                 chainsFound++;
@@ -497,7 +515,7 @@ public final class Layer2 {
         int[][] land = new int[cand.length][];
         for (int k = 0; k < cand.length; k++)
             land[k] = new int[]{(int) Math.floor(f.x(cand[k])), (int) Math.round(f.y(cand[k])) - 1, (int) Math.floor(f.z(cand[k]))};
-        submitSearch(p, f, g, body, land, false);
+        submitSearch(p, f, g, body, land, false, null);
     }
 
     /**
@@ -507,12 +525,96 @@ public final class Layer2 {
      * field's jump ahead (its GAP, or the joined floor in reach); a search that finds nothing there counts for the hop.
      */
     private static void maybeSearchRouteGap(LocalPlayer p, Planner.Plan plan, Field f, BlockGrid g, Body body) {
+        waitingCheck = false;
         if (!Settings.walkParkour || recipe != null || recipeJob != null || !p.onGround() || stillTicks < STALL_TICKS) return;
-        double[] gap = jumpAhead(plan, f, p.getX(), p.getY(), p.getZ(), RECIPE_REACH);
+        // the move layer 2 stands before: the first jump of the way on (a gap, a loose move, or a jump up: on the
+        // Parkour Spiral layer 2 stood beside a cactus whose top carries a carpet, the route's jump up onto it, while the
+        // search aimed at the gap after it)
+        double[] gap = stallJump(plan, f, p.getX(), p.getY(), p.getZ(), RECIPE_REACH);
+        // standing on a loose jump's take-off (the hold in steer): that jump's landing
+        int held = looseTakeOffAt(plan, p.getX(), p.getY(), p.getZ());
+        if (held > 0) gap = new double[]{View.nodeX(plan.result.path[held]) + 0.5, plan.result.pathY[held], View.nodeZ(plan.result.path[held]) + 0.5};
         if (gap == null) return;
+        // a loose move not yet checked in the copy (the loose job checks the route's in order, ahead of the walk): wait
+        int li = looseIndex(plan, gap[0], gap[1], gap[2]);
+        if (li > 0 && plan.checkedTo < li) { waitingCheck = true; return; }
         if (!readyToSearch(p)) return;
         int[][] land = {{(int) Math.floor(gap[0]), (int) Math.round(gap[1]) - 1, (int) Math.floor(gap[2])}};
-        submitSearch(p, f, g, body, land, !plan.direct);
+        routedLanding = plan.direct ? null : gap.clone();
+        // a loose move: its spots on the take-off's block, as its check had them (the walk may stand on the block beside
+        // it: on the Parkour Spiral checked moves then found no way live, and were blocked, 2026-10-15's d6b)
+        int[] from = null;
+        if (li > 0) {
+            long tn = plan.result.path[li - 1];
+            from = new int[]{View.nodeX(tn), (int) Math.floor(plan.result.pathY[li - 1] - 1e-3), View.nodeZ(tn)};
+        }
+        submitSearch(p, f, g, body, land, !plan.direct, from);
+    }
+
+    /** The jump layer 2 stands before (maybeSearchRouteGap): the field's first jump on along its cheapest moves, a jump up
+     *  included (Field.jumpAhead with jumps), or the route's own next jump from the floor stood on; null if none in
+     *  reach. */
+    static double[] stallJump(Planner.Plan plan, Field f, double x, double y, double z, double reach) {
+        double[] a = f.jumpAhead(x, y, z, reach, true);
+        if (a != null || plan == null || plan.direct) return a;
+        PathSearch.Result r = plan.result;
+        for (int i = 1; i < r.path.length; i++) {
+            if (!Graph.jumpMove(r.moves[i]) && r.moves[i] != Graph.JUMP) continue;
+            double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
+            double lx = View.nodeX(r.path[i]) + 0.5, lz = View.nodeZ(r.path[i]) + 0.5;
+            if (Math.hypot(tx - x, tz - z) > 1.5 || Math.abs(r.pathY[i - 1] - y) > 0.6) continue;
+            if (Math.hypot(lx - x, lz - z) > reach + 1.0) return null;
+            return new double[]{lx, r.pathY[i], lz};
+        }
+        return null;
+    }
+
+    /** The plan layer 2 last walked (endTick), for the take-off hold in steer. */
+    private static volatile Planner.Plan holdPlan = null;
+    /** How near a loose jump's take-off (its block's middle, blocks) the walk stands for the jump search. */
+    static final double HOLD_NEAR = 0.8;
+
+    /** The path index of the plan's loose move whose take-off the player stands on (within HOLD_NEAR of its block's
+     *  middle, at its height), or -1. */
+    static int looseTakeOffAt(Planner.Plan plan, double x, double y, double z) {
+        if (plan == null || plan.direct) return -1;
+        PathSearch.Result r = plan.result;
+        for (int i = 1; i < r.path.length; i++) {
+            if (r.moves[i] != Graph.LOOSE) continue;
+            double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
+            if (Math.hypot(tx - x, tz - z) <= HOLD_NEAR && Math.abs(r.pathY[i - 1] - y) < 0.6) return i;
+        }
+        return -1;
+    }
+
+    /** Whether the jump search has already run from the floor the player stands on (readyToSearch's once a floor): the
+     *  hold then lets go, so the walk isn't held by a search that won't come. */
+    private static boolean holdSearched(LocalPlayer p) {
+        return recipeTryKey == (((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY());
+    }
+
+    /** The landing the last jump search for a route's jump aimed at {x, y, z} (its floor's centre and height), or null. */
+    private static volatile double[] routedLanding = null;
+    /** Standing before a loose move whose check in the movement copy is still running (the walk waits for it). */
+    private static boolean waitingCheck = false;
+
+    static double[] lastRoutedLanding() {
+        return routedLanding;
+    }
+
+    static boolean waitingForCheck() {
+        return waitingCheck;
+    }
+
+    /** The path index of a loose move of the plan landing on the floor at (x, y, z) (its centre and height), or -1. */
+    static int looseIndex(Planner.Plan plan, double x, double y, double z) {
+        if (plan == null) return -1;
+        PathSearch.Result r = plan.result;
+        int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
+        for (int i = 1; i < r.path.length; i++)
+            if (r.moves[i] == Graph.LOOSE && View.nodeX(r.path[i]) == bx && View.nodeZ(r.path[i]) == bz && Math.abs(r.pathY[i] - y) < 0.1)
+                return i;
+        return -1;
     }
 
     /** A chained jump's search, while a jump to a hop's floor plays (see chainJob). */
@@ -529,7 +631,14 @@ public final class Layer2 {
         for (int t = recipeT; t < r.ticks; t++) phys.step(s, r.keys[t], r.yaw[t], 0f);
         if (!s.onGround) return;   // onto a climbable: it holds on there
         double[] next = Walk.nextHopFrom(r.lx, r.lz, s.x, s.y, s.z);
+        // along a loose route: its next loose move from this landing, chained on the same way (no hop to take over)
+        boolean route = false;
+        if (next == null) {
+            next = Walk.nextLooseFrom(r.lx, r.lz, s.y);
+            route = next != null;
+        }
         if (next == null) return;
+        chainRoute = route;
         int[] l = {(int) next[0], (int) Math.round(next[2]) - 1, (int) next[1]};
         float yaw0 = r.yaw[r.ticks - 1];
         chainBase = r;
@@ -545,13 +654,15 @@ public final class Layer2 {
         long fromNode = (long) next[4];
         int gx = (int) next[0], gz = (int) next[1];
         double gy = next[2];
-        RunSim.Goal goal2 = new RunSim.Goal(gx, gz, gy, true, p.getXRot(), costs.maxFall, Settings.walkParkour, Settings.walkFreeJumps);
+        RunSim.Goal goal2 = new RunSim.Goal(gx, gz, gy, true, p.getXRot(), costs.safeFall, Settings.walkParkour, Settings.walkFreeJumps);
         float pitch0 = KillAura.lastSentPitch(p);
+        boolean routeChain = route;
         chainJob = RECIPES.submit(() -> {
             GroundPhysics ph = new GroundPhysics(g, body);
             float b = Recipe.yawTo(s.x, s.z, l[0] + 0.5, l[2] + 0.5);
             Recipe c = Recipe.searchParallel(SEARCH, SEARCH_THREADS, ph, s, yaw0, l[0], l[1], l[2], b - 90f, b + 90f, 6f, 8, 8, 60);
             if (c.found()) return c;
+            if (routeChain) return null;   // the walk lands, stands and searches as usual
             Planner.Plan dp = Planner.direct(v, fromNode, gx, gz, gy, costs, margin, canSprint);
             if (dp == null) return null;
             Field f2 = Field.direct(v, costs, canSprint, true, false, dp.id, dp.result.path, gx, gz, gy);
@@ -571,7 +682,7 @@ public final class Layer2 {
         if (a != null || plan == null || plan.direct) return a;
         PathSearch.Result r = plan.result;
         for (int i = 1; i < r.path.length; i++) {
-            if (r.moves[i] != Graph.GAP) continue;
+            if (!Graph.jumpMove(r.moves[i])) continue;
             double tx = View.nodeX(r.path[i - 1]) + 0.5, tz = View.nodeZ(r.path[i - 1]) + 0.5;
             double lx = View.nodeX(r.path[i]) + 0.5, lz = View.nodeZ(r.path[i]) + 0.5;
             if (Math.hypot(tx - x, tz - z) > 1.5 || Math.abs(r.pathY[i - 1] - y) > 0.6) continue;
@@ -606,7 +717,7 @@ public final class Layer2 {
      * each spot). If no spot has one either way, a neo template that lands (NeoTemplates.fit: a sequence found offline,
      * fitted where the walk stands). Spots whose search found nothing are not searched again this walk.
      */
-    private static void submitSearch(LocalPlayer p, Field f, BlockGrid g, Body body, int[][] land, boolean routed) {
+    private static void submitSearch(LocalPlayer p, Field f, BlockGrid g, Body body, int[][] land, boolean routed, int[] spotBlock) {
         MoveState s = WorldSnapshot.state(p);
         float sent = KillAura.lastSentYaw(p), sentPitch = KillAura.lastSentPitch(p);
         // from where the player comes to rest, keys up (a search starts with it still sliding up to 0.01 a tick, and
@@ -614,8 +725,16 @@ public final class Layer2 {
         // why88 tries 3 and 4); the recipe waits for rest before its first tick (playRecipe)
         GroundPhysics rest = new GroundPhysics(g, body);
         for (int i = 0; i < 60 && s.onGround && s.vx * s.vx + s.vz * s.vz > REST2; i++) rest.step(s, 0, sent, sentPitch);
-        int bx = s.hasSupport ? s.supX : p.getBlockX(), bz = s.hasSupport ? s.supZ : p.getBlockZ();
         int by = s.hasSupport ? s.supY : (int) Math.floor(s.y - 1e-3);
+        // the block whose spots the search tries (a loose move's take-off: see maybeSearchRouteGap), when the player
+        // rests within a block and a half of it at its height
+        boolean onTakeOff = spotBlock != null && Math.hypot(spotBlock[0] + 0.5 - s.x, spotBlock[2] + 0.5 - s.z) <= 1.5 && spotBlock[1] == by;
+        // a search for a loose move of the route (spotBlock given): its walks to spots may end a step up or down (see
+        // searchAll); on the Parkour Spiral's leg 1 the walk stood on a bottom slab's edge over lava, the move's way on a
+        // top slab half a block up beside it (L1_15 14 of 14 with this; inferring it from the take-off's distance, 1 of 8)
+        boolean looseMove = spotBlock != null;
+        int bx = onTakeOff ? spotBlock[0] : s.hasSupport ? s.supX : p.getBlockX();
+        int bz = onTakeOff ? spotBlock[2] : s.hasSupport ? s.supZ : p.getBlockZ();
         RunSim.Goal goal = searchGoal;
         recipeRouted = routed;
         hopJumpNone = false;
@@ -630,13 +749,13 @@ public final class Layer2 {
         recipeJob = RECIPES.submit(() -> {
             long t0 = System.nanoTime();
             Recipe result = null;
-            NeoTemplates.stop = () -> gen != searchGen;
+            NeoTemplates.STOP.set(() -> gen != searchGen);
             try {
-                result = searchAll(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz, gen);
+                result = searchAll(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz, gen, looseMove);
                 if (result != null) result.fromRest = true;
                 return result;
             } finally {
-                NeoTemplates.stop = NeoTemplates.NEVER;
+                NeoTemplates.STOP.set(NeoTemplates.NEVER);
                 boolean letGo = gen != searchGen;
                 if (SEARCH_LOG) {
                     StringBuilder ls = new StringBuilder();
@@ -659,17 +778,42 @@ public final class Layer2 {
 
     /** The search itself (submitSearch's job): from here, the spots, the templates; the first way found, or null. */
     private static Recipe searchAll(MoveState s, float sent, float sentPitch, BlockGrid g, Body body, Field f, RunSim.Goal goal,
-                                    int[][] land, int bx, int by, int bz, int gen) throws InterruptedException {
+                                    int[][] land, int bx, int by, int bz, int gen, boolean looseMove) throws InterruptedException {
+        return searchFrom(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz, () -> gen != searchGen, SEARCH, SEARCH_THREADS,
+            SPOTS, looseMove ? null : spotsEmpty, Walk.gait() >= Settings.GAIT_SPRINT, looseMove ? Recipe.STEP_TO_SPOT : 0.0);
+    }
+
+    /**
+     * The jump search from state s (the view at sent) onto the first of the landings that has a way, as submitSearch's
+     * job runs it, with its threads and memory given: the climb templates, the search from s (split over searchThreads
+     * on searchPool), the standing spots and run-ups (on spotPool, each spot whose search finds nothing put in empty),
+     * layer 2's own run from each spot when goal is given (RunSim), the templates. stop: let go (every part returns
+     * null once it is true). The loose moves' checks (LooseCheck) run the same search on their own threads.
+     */
+    static Recipe searchFrom(MoveState s, float sent, float sentPitch, BlockGrid g, Body body, Field f, RunSim.Goal goal,
+                             int[][] land, int bx, int by, int bz, java.util.function.BooleanSupplier stop,
+                             ExecutorService searchPool, int searchThreads, ExecutorService spotPool, java.util.Set<Long> empty,
+                             boolean sprint) throws InterruptedException {
+        return searchFrom(s, sent, sentPitch, g, body, f, goal, land, bx, by, bz, stop, searchPool, searchThreads, spotPool, empty,
+            sprint, 0.0);
+    }
+
+    /** As above; stepToSpot: how far up or down a walk to a spot may end (Recipe.STEP_TO_SPOT for a loose jump's take-off
+     *  beside the block stood on, submitSearch; 0: at the start's height). */
+    static Recipe searchFrom(MoveState s, float sent, float sentPitch, BlockGrid g, Body body, Field f, RunSim.Goal goal,
+                             int[][] land, int bx, int by, int bz, java.util.function.BooleanSupplier stop,
+                             ExecutorService searchPool, int searchThreads, ExecutorService spotPool, java.util.Set<Long> empty,
+                             boolean sprint, double stepToSpot) throws InterruptedException {
         // a climb template first, onto a ladder chain's far ladder (found offline for that layout: ladder_90_spiral,
         // whose hops went ladder by ladder and hung on the second; the jump search finds the first hop and stops there)
         for (int[] l : climbs(f, g, s)) {
             Recipe t = NeoTemplates.fit(new GroundPhysics(g, body), s, sent, bx, by, bz, l, true);
             if (t != null) return t;
         }
-        if (gen != searchGen) return null;
-        Recipe here = searchLands(new GroundPhysics(g, body), s, sent, land, true);
+        if (stop.getAsBoolean()) return null;
+        Recipe here = searchLands(new GroundPhysics(g, body), s, sent, land, searchPool, searchThreads, sprint);
         if (here != null) return here;
-        if (gen != searchGen) return null;
+        if (stop.getAsBoolean()) return null;
         double[][] near = Recipe.spots(bx, bz, s.x, s.z, land[0][0] + 0.5, land[0][2] + 0.5);
         double[][] back = Recipe.backSpots(new GroundPhysics(g, body), bx, by, bz, s.y, land[0][0] + 0.5, land[0][2] + 0.5);
         java.util.List<java.util.concurrent.Callable<Recipe>> jobs = new java.util.ArrayList<>();
@@ -678,32 +822,32 @@ public final class Layer2 {
             double[] sp = si < near.length ? near[si] : back[si - near.length];
             boolean far = si >= near.length;
             long k = spotKey(sp[0], s.y, sp[1], land[0]);
-            if (spotsEmpty.contains(k)) continue;
+            if (empty != null && empty.contains(k)) continue;
             keys.add(k);
             jobs.add(() -> {
-                if (gen != searchGen) return null;
+                if (stop.getAsBoolean()) return null;
                 GroundPhysics ph = new GroundPhysics(g, body);
-                Recipe a = far ? Recipe.approachFar(ph, s, sent, sp[0], sp[1]) : Recipe.approach(ph, s, sent, sp[0], sp[1]);
+                Recipe a = far ? Recipe.approachFar(ph, s, sent, sp[0], sp[1], stepToSpot) : Recipe.approach(ph, s, sent, sp[0], sp[1], stepToSpot);
                 if (a == null) return null;
                 MoveState m = Recipe.after(ph, s, a);
                 float view = a.yaw[a.ticks - 1];
-                Recipe j = searchLands(ph, m, view, land, false);
+                Recipe j = searchLands(ph, m, view, land, null, 1, sprint);
                 if (j == null && goal != null) j = RunSim.run(f, g, body, goal, m, view, sentPitch, land);
                 return j == null ? null : Recipe.concat(a, j);
             });
         }
         if (!jobs.isEmpty()) {
-            java.util.List<Future<Recipe>> fs = SPOTS.invokeAll(jobs);
+            java.util.List<Future<Recipe>> fs = spotPool.invokeAll(jobs);
             Recipe found = null;
             for (int i = 0; i < fs.size(); i++) {
                 Recipe r;
                 try { r = fs.get(i).get(); } catch (Exception ex) { r = null; }
-                if (r == null) { if (gen == searchGen) spotsEmpty.add(keys.get(i)); }
+                if (r == null) { if (empty != null && !stop.getAsBoolean()) empty.add(keys.get(i)); }
                 else if (found == null) found = r;
             }
             if (found != null) return found;
         }
-        if (gen != searchGen) return null;
+        if (stop.getAsBoolean()) return null;
         // a template found offline (a neo, a long jump, a ladder chain) when neither search makes it from any spot:
         // fitted from the block the walk stands on and then from the floors of its level near it (its take-off: the walk
         // may rest short of it, as on RW's triple neo, 3 blocks back on the walkway), onto the search's landings and
@@ -776,12 +920,12 @@ public final class Layer2 {
 
     /** The copy's jump search from s (the view at sent) to each landing in turn; the first found, or null. parallel:
      *  each search split over the SEARCH threads. */
-    private static Recipe searchLands(GroundPhysics phys, MoveState s, float sent, int[][] land, boolean parallel) {
-        boolean sprint = Walk.gait() >= Settings.GAIT_SPRINT;   // the gait: at Walk, walking jumps only
+    private static Recipe searchLands(GroundPhysics phys, MoveState s, float sent, int[][] land, ExecutorService pool, int threads,
+                                      boolean sprint) {
         for (int[] l : land) {
             float bearing = Recipe.yawTo(s.x, s.z, l[0] + 0.5, l[2] + 0.5);
-            Recipe r = parallel
-                ? Recipe.searchParallel(SEARCH, SEARCH_THREADS, phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60, sprint)
+            Recipe r = pool != null
+                ? Recipe.searchParallel(pool, threads, phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60, sprint)
                 : Recipe.search(phys, s, sent, l[0], l[1], l[2], bearing - 90f, bearing + 90f, 6f, 8, 8, 60, sprint);
             if (r.found()) return r;
         }
@@ -824,8 +968,15 @@ public final class Layer2 {
     /** As above; stand: the destination counts as reached only standing still on it (a hop's floor: RunModel.stand). */
     static void endTick(Minecraft mc, Planner.Plan plan, int[] dest, double destY, boolean stand) {
         tick++;
+        waitingCheck = false;   // set again below while standing before a loose move still being checked
+        holdPlan = plan;
         LocalPlayer p = mc.player;
         if (!Settings.walkLayer2 || plan == null || p == null || mc.level == null || dest == null) return;
+        // the jump search runs once per floor stood on; once the player stands on another, it may run on the first again
+        // when the walk comes back to it (the Parkour Spiral's leg 1, r10: a jump made, a fall back onto its take-off
+        // later, and the walk stood there without a search until stuck)
+        if (p.onGround() && recipeTryKey != Long.MIN_VALUE && recipe == null && recipeJob == null
+            && (((long) p.getBlockX() << 40) ^ ((long) p.getBlockZ() << 16) ^ p.getBlockY()) != recipeTryKey) recipeTryKey = Long.MIN_VALUE;
         // the field: built once a route's plan comes in, and again as the player gets half way along its corridor
         if (fieldJob != null && fieldJob.isDone()) {
             try {
@@ -855,8 +1006,8 @@ public final class Layer2 {
             boolean gaps = Settings.walkParkour;
             fieldJob = plan.direct
                 ? WORKER.submit(() -> Field.direct(v, costs, canSprint, gaps, glides, plan.id, path, dest[0], dest[1], destY))
-                : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.route, px, pz, dest[0], dest[1],
-                    destY, reached));
+                : WORKER.submit(() -> Field.build(v, costs, canSprint, gaps, glides, plan.id, path, plan.result, plan.route, px, pz,
+                    dest[0], dest[1], destY, reached));
         }
         Field f = field;
         if (f == null) return;
@@ -891,7 +1042,7 @@ public final class Layer2 {
         var dv = p.getDeltaMovement();
         stillTicks = p.onGround() && dv.x * dv.x + dv.z * dv.z <= RunModel.STILL2 ? stillTicks + 1 : 0;
         maybeChain(p, grid, WorldSnapshot.body(p));
-        searchGoal = new RunSim.Goal(dest[0], dest[1], destY, stand, p.getXRot(), Walk.costs().maxFall, Settings.walkParkour,
+        searchGoal = new RunSim.Goal(dest[0], dest[1], destY, stand, p.getXRot(), Walk.costs().safeFall, Settings.walkParkour,
             Settings.walkFreeJumps);
         if (plan.direct && grid != null) maybeSearchRecipe(p, f, grid, WorldSnapshot.body(p));
         // walking a route, or without one on a floor the graph joins to the goal (a gap move layer 2's own actions
@@ -917,7 +1068,7 @@ public final class Layer2 {
         int at = tick;
         boolean display = Layer2View.frameDue(tick);
         if (Settings.walkLayer2Display) Layer2View.ensureRegistered();
-        double maxFall = Walk.costs().maxFall;
+        double maxFall = Walk.costs().safeFall;   // layer 2's runs: the game's own safe fall (Costs.safeFall)
         boolean parkour = Settings.walkParkour;
         double goalY = destY;
         // a jump ahead (the field's next GAP within 5 blocks, or walking without a route a joined floor in reach): free

@@ -131,6 +131,7 @@ public final class WorldSnapshot {
                     && st.getValue(net.minecraft.world.level.block.ScaffoldingBlock.BOTTOM)) flags |= BlockInfo.SCAFFOLD_BOTTOM;
             }
             if (st.is(Blocks.SLIME_BLOCK)) flags |= BlockInfo.SLIME;
+            if (st.is(Blocks.MAGMA_BLOCK)) flags |= BlockInfo.STEP_HURTS;
             if (st.is(BlockTags.BEDS)) flags |= BlockInfo.BED;
             var fs = st.getFluidState();
             int fluid = fs.isEmpty() ? BlockInfo.NO_FLUID : fs.is(net.minecraft.tags.FluidTags.WATER) ? BlockInfo.WATER_FLUID

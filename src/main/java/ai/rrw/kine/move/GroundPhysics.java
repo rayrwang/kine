@@ -967,7 +967,13 @@ public final class GroundPhysics {
         for (int x = xa; x <= xb; x++)
             for (int y = ya; y <= yb; y++)
                 for (int z = za; z <= zb; z++) t |= uncopied(grid.get(x, y, z).flags);
-        if (s.onGround) t |= uncopied(blockAt(onPos(s, 0.2F)).flags) & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
+        if (s.onGround) {
+            // the block stood on (getOnPosLegacy): its stepOn (magma) hurts; a cactus under a carpet doesn't (entityInside
+            // only, from inside its cell: the box above finds that)
+            int on = uncopied(blockAt(onPos(s, 0.2F)).flags);
+            t |= on & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
+            if ((on & BlockInfo.STEP_HURTS) != 0) t |= BlockInfo.HAZARD;
+        }
         s.touched |= t & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.FLUID | BlockInfo.UNCOPIED);
     }
 

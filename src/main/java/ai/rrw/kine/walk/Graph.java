@@ -28,9 +28,19 @@ package ai.rrw.kine.walk;
  */
 final class Graph {
     static final int WALK = 0, WADE = 1, DROP = 2, JUMP = 3, WATER_IN = 4, SWIM = 5, WATER_OUT = 6,
-        CLIMB_ON = 7, CLIMB_UP = 8, CLIMB_DOWN = 9, CLIMB_OFF = 10, EXIT = 11, START = 12, GAP = 13, GLIDE = 14;
+        CLIMB_ON = 7, CLIMB_UP = 8, CLIMB_DOWN = 9, CLIMB_OFF = 10, EXIT = 11, START = 12, GAP = 13, GLIDE = 14, LOOSE = 15,
+        OPEN = 16;
     static final String[] NAMES = {"walk", "wade", "drop", "jump", "water-in", "swim", "water-out",
-        "climb-on", "climb-up", "climb-down", "climb-off", "exit", "start", "gap", "glide"};
+        "climb-on", "climb-up", "climb-down", "climb-off", "exit", "start", "gap", "glide", "loose", "door"};
+
+    /** What opening a door costs the route (ticks): turning to it, the click, the door's swing, the step through. */
+    static final double DOOR_COST = 20.0;
+
+    /** A move layer 2 makes as a jump the jump search can find (Layer2's stall search, the field's jump ahead): a gap,
+     *  a loose move. */
+    static boolean jumpMove(int mv) {
+        return mv == GAP || mv == LOOSE;
+    }
 
     // 8 neighbours, then 8 knight's moves
     static final int[] DX = {1, 0, -1, 0, 1, -1, -1, 1, 1, 2, 2, 1, -1, -2, -2, -1};
@@ -49,6 +59,37 @@ final class Graph {
     boolean gaps = false;
     /** Offer glides off drops with an elytra (layer 2 with elytra hops on, a glider worn). */
     boolean glides = false;
+    /** Offer loose moves (Loose): the loosened layer 1, only when the proven moves found no way. */
+    boolean loose = false;
+    /** Offer walking through closed wooden doors (OPEN): Walk opens them on the way (DoorOpener). */
+    boolean doors = false;
+    /** The Open doors setting as the walk last read it (Walk.replan): the planner's searches, layer 2's field and the
+     *  time profile take it from here, not from Settings (which the unit tests can't load). */
+    static volatile boolean doorsOn = false;
+    /** Moves not to offer, by Loose.edge(from, to): loose moves whose check in the movement copy failed, and moves the
+     *  walk stood before while the jump search found no way over them (Walk's blocked moves). Null: none. */
+    it.unimi.dsi.fastutil.longs.LongSet blocked = null;
+    /** Extra costs on moves (by Loose.edge): loose moves whose quick check found no way (doubtful, LooseCheck), priced up
+     *  so the search looks for a way round them before they get the full check. Null: none. */
+    it.unimi.dsi.fastutil.longs.Long2DoubleMap penalty = null;
+    /** Loose moves offered beyond the proven ones without the loose search (a loose route's own, for layer 2's field and
+     *  the route's time): from node to its landings. Null: none. */
+    it.unimi.dsi.fastutil.longs.Long2ObjectMap<long[]> routeLoose = null;
+    /** The floor being expanded (for the blocked moves' keys). */
+    private long expanding;
+
+    /** Offer the loose moves of a search's result (its LOOSE steps) as moves from their take-offs. */
+    void looseOf(PathSearch.Result r) {
+        if (r == null) return;
+        for (int i = 1; i < r.path.length; i++) {
+            if (r.moves[i] != LOOSE) continue;
+            if (routeLoose == null) routeLoose = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+            long[] old = routeLoose.get(r.path[i - 1]);
+            long[] nu = old == null ? new long[1] : java.util.Arrays.copyOf(old, old.length + 1);
+            nu[nu.length - 1] = r.path[i];
+            routeLoose.put(r.path[i - 1], nu);
+        }
+    }
     /** The goal column, and whether the goal lies beyond the loaded area (then edge floors get an EXIT move). */
     int goalX, goalZ;
     boolean goalUnknown;
@@ -73,6 +114,8 @@ final class Graph {
     }
 
     private void add(long node, double cst, int mv) {
+        if (blocked != null && node != Long.MIN_VALUE && blocked.contains(Loose.edge(expanding, node))) return;
+        if (penalty != null && node != Long.MIN_VALUE) cst += penalty.get(Loose.edge(expanding, node));
         if (n == to.length) {
             to = java.util.Arrays.copyOf(to, n * 2);
             cost = java.util.Arrays.copyOf(cost, n * 2);
@@ -84,6 +127,7 @@ final class Graph {
     /** The moves out of this node into to/cost/move (n of them). */
     void expand(long node) {
         n = 0;
+        expanding = node;
         int x = View.nodeX(node), z = View.nodeZ(node), i = View.nodeI(node);
         ChunkFloors a = v.chunk(x, z);
         if (a == null) return;
@@ -140,6 +184,7 @@ final class Graph {
         }
         if (gaps && type == ChunkFloors.GROUND) gapMoves(a, ai, x, z);
         if (glides && type == ChunkFloors.GROUND) glideMoves(a, ai, x, z);
+        if (type == ChunkFloors.GROUND && (loose || routeLoose != null)) looseMoves(a, ai, x, z, node);
         if (edge && goalUnknown) {
             double gx = goalX + 0.5 - (x + 0.5), gz = goalZ + 0.5 - (z + 0.5);
             add(Long.MIN_VALUE, Math.sqrt(gx * gx + gz * gz) * beyondRate, EXIT);
@@ -154,7 +199,13 @@ final class Graph {
         if (btype == ChunkFloors.GROUND) {
             boolean wade = ((a.flags(ai) | b.flags(bj)) & ChunkFloors.WADE) != 0;
             if (Math.abs(dh) <= STEP + 1e-5) {
-                if (!walkFits(a, ai, x, z, b, bj, bx, bz, d)) return;
+                if (!walkFits(a, ai, x, z, b, bj, bx, bz, d)) {
+                    // a closed wooden door in the way, in this column or the next at the body's height: through it, opened
+                    if (doors && straight && (closedDoor(x, z, ah) || closedDoor(bx, bz, bh))
+                        && b.head(bj) >= H - 1e-4 && a.head(ai) >= H - 1e-4)
+                        add(target, len * c.rate(canSprint, slow, wade) + DOOR_COST + hazardCost(b, bj, bx, bz), OPEN);
+                    return;
+                }
                 add(target, len * c.rate(canSprint, slow, wade) + hazardCost(b, bj, bx, bz), wade ? WADE : WALK);
                 return;
             }
@@ -172,7 +223,7 @@ final class Graph {
                 add(target, c.jumpCost(len, dh) + hazardCost(b, bj, bx, bz), JUMP);
             } else if (straight && dh < -STEP) {
                 boolean water = (b.flags(bj) & ChunkFloors.WADE) != 0;
-                if (-dh > c.maxFall + 1e-5 && !water) return;
+                if (-dh > Costs.fallLimit(c.maxFall, fallFactor(b, bj)) + 1e-5 && !water) return;
                 // fall through the other column: free over the whole cell from its floor to above where we start
                 if (!plainOrVine(b, bj) || b.clearTop(bj) < ah + H - 1e-4) return;
                 if (!plain(a, ai) && !sweepFits(a, ai, x, z, bx, bz, ah)) return;
@@ -245,6 +296,12 @@ final class Graph {
         add(target, c.walk + (dh > STEP ? c.jumpPenalty : 0), CLIMB_OFF);
     }
 
+    /** Whether column (x, z) holds a closed wooden door at the feet or the head of a body standing at height h. */
+    boolean closedDoor(int x, int z, double h) {
+        int y = (int) Math.floor(h + 1e-3);
+        return v.block(x, y, z).is(Kind.CLOSED_DOOR) || v.block(x, y + 1, z).is(Kind.CLOSED_DOOR);
+    }
+
     /** Room above the take-off, the gap and the landing for the jump's arc (the feet rise 1.25 at most). */
     static final double ARC = H + 1.25;
 
@@ -297,6 +354,223 @@ final class Graph {
             if (!ok) continue;
             add(View.node(lx, lz, k), j.length * c.sprint + c.gapPenalty + hazardCost(b, bj, lx, lz), GAP);
         }
+    }
+
+    /**
+     * LOOSE (the loosened layer 1, Loose): from a ground floor at an edge (Loose's take-offs: a floor not plain, or one
+     * with a neighbouring column holding no floor within a step of it), a jump to any floor within Loose.reach for the
+     * landing's height (a ground floor with room to stand, at most a jump up and no more than a safe fall down unless
+     * into water, or a climbable's cell at most a jump up), where no proven move already goes. The route's own loose
+     * moves (routeLoose) are offered from their take-offs with or without the loose search.
+     */
+    private void looseMoves(ChunkFloors a, int ai, int x, int z, long node) {
+        float ah = a.h(ai);
+        if (a.head(ai) < H - 1e-4) return;
+        int strict = n;
+        if (routeLoose != null) {
+            long[] own = routeLoose.get(node);
+            // the route's own: as the loose search chose them (a bounce off slime among them, whose straight line may
+            // cross a wall the bounce goes round), so no flight line
+            if (own != null) for (long t : own) looseTo(ah, x, z, t, strict, false);
+        }
+        if (!loose) return;
+        bounceMoves(ah, x, z);
+        if (!looseEdge(a, ai, x, z)) return;
+        int r = (int) Math.ceil(Loose.MAX_REACH);
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                double d = Math.sqrt(dx * dx + dz * dz);
+                if (d > Loose.MAX_REACH + 1e-9) continue;
+                int bx = x + dx, bz = z + dz;
+                ChunkFloors b = v.chunk(bx, bz);
+                if (b == null) continue;
+                int cnt = b.count(bx & 15, bz & 15);
+                for (int j = 0; j < cnt; j++) {
+                    int bj = b.index(bx & 15, bz & 15, j);
+                    float bh = b.h(bj);
+                    if (d > Loose.reach(bh - ah, Costs.fallLimit(c.safeFall, fallFactor(b, bj))) + 1e-9) continue;
+                    looseTo(ah, x, z, View.node(bx, bz, j), strict, true);
+                }
+            }
+    }
+
+    /** The loose move from the floor being expanded (at ah, column x z) to floor `target`, if it is one: see looseMoves. */
+    private void looseTo(float ah, int x, int z, long target, int strict, boolean flight) {
+        int bx = View.nodeX(target), bz = View.nodeZ(target);
+        ChunkFloors b = v.chunk(bx, bz);
+        if (b == null) return;
+        int bj = v.index(target);
+        if (bj < 0) return;
+        int btype = b.type(bj);
+        float bh = b.h(bj);
+        double dh = bh - ah;
+        if (btype == ChunkFloors.GROUND) {
+            if (dh > Loose.MAX_UP + 1e-4 || b.head(bj) < H - 1e-4) return;
+            if (!flight) { add(target, Loose.cost(c, Math.hypot(bx - x, bz - z), dh) + hazardCost(b, bj, bx, bz), LOOSE); return; }
+            if (dh < -Costs.fallLimit(c.safeFall, fallFactor(b, bj)) - 1e-4 && (b.flags(bj) & ChunkFloors.WADE) == 0) return;
+        } else if (btype == ChunkFloors.CLIMB) {
+            if (dh > Loose.CLIMB_UP + 1e-4 || dh < -c.safeFall - 1e-4) return;
+        } else return;
+        for (int k = 0; k < strict; k++) if (to[k] == target) return;   // a proven move goes there
+        if (flight && FLIGHT_CHECK && !flightOpen(x, z, ah, bx, bz, bh)) return;
+        double d = Math.hypot(bx - x, bz - z);
+        add(target, Loose.cost(c, d, dh) + hazardCost(b, bj, bx, bz), LOOSE);
+    }
+
+    /**
+     * Bounces off slime (loose): from the take-off, a fall onto a slime floor at least a block below it (and no more than 6:
+     * the jump search gives up on a try that far under its start) within Loose.BOUNCE_REACH, and the bounce on to any
+     * ground floor within BOUNCE_REACH of the slime and no higher than a jump over the take-off (the bounce gives back
+     * the fall, less the air's drag). One loose move from the take-off to that floor, the bounce inside it: the jump search
+     * goes on through a bounce (Recipe: on the ground and going up). On the Parkour Spiral a checkpoint four blocks over
+     * the walkway is reached so, by a drop from the level before onto slime at the walkway's height.
+     */
+    private void bounceMoves(float ah, int x, int z) {
+        int r = (int) Math.ceil(Loose.BOUNCE_REACH);
+        it.unimi.dsi.fastutil.longs.LongArrayList slimes = null;
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++) {
+                if (Math.sqrt(dx * dx + dz * dz) > Loose.BOUNCE_REACH) continue;
+                ChunkFloors b = v.chunk(x + dx, z + dz);
+                if (b == null) continue;
+                int cnt = b.count((x + dx) & 15, (z + dz) & 15);
+                for (int j = 0; j < cnt; j++) {
+                    int bj = b.index((x + dx) & 15, (z + dz) & 15, j);
+                    float bh = b.h(bj);
+                    if (b.type(bj) != ChunkFloors.GROUND || bh > ah - 1.0 + 1e-4 || bh < ah - 6.0) continue;
+                    if (!Palette.get(b.window(bj, 0)).info.is(ai.rrw.kine.move.BlockInfo.SLIME)) continue;
+                    if (slimes == null) slimes = new it.unimi.dsi.fastutil.longs.LongArrayList();
+                    slimes.add(View.node(x + dx, z + dz, j));
+                }
+            }
+        if (slimes == null) return;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet have = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (int k = 0; k < n; k++) have.add(to[k]);
+        for (int si = 0; si < slimes.size(); si++) {
+            long sl = slimes.getLong(si);
+            int sx = View.nodeX(sl), sz = View.nodeZ(sl);
+            double dAS = Math.hypot(sx - x, sz - z);
+            float s1h = v.chunk(sx, sz).h(v.index(sl));
+            double peak1 = bouncePeak(ah + Loose.MAX_UP, s1h);
+            bounceTargets(ah, x, z, sx, sz, dAS, peak1, have);
+            // a second bounce: on to another slime floor within reach, at least a block under the first bounce's top,
+            // and from it to the landing. On the Parkour Spiral a garden three blocks over the floor beside it is reached
+            // so, by two slime pads under the level before.
+            for (int dx = -r; dx <= r; dx++)
+                for (int dz = -r; dz <= r; dz++) {
+                    double d12 = Math.sqrt(dx * dx + dz * dz);
+                    if (d12 > Loose.BOUNCE_REACH || d12 < 1.0) continue;
+                    int tx = sx + dx, tz = sz + dz;
+                    ChunkFloors b = v.chunk(tx, tz);
+                    if (b == null) continue;
+                    int cnt = b.count(tx & 15, tz & 15);
+                    for (int j = 0; j < cnt; j++) {
+                        int bj = b.index(tx & 15, tz & 15, j);
+                        float bh = b.h(bj);
+                        if (b.type(bj) != ChunkFloors.GROUND || bh > peak1 - 1.0 + 1e-4 || bh < s1h - 6.0) continue;
+                        if (!Palette.get(b.window(bj, 0)).info.is(ai.rrw.kine.move.BlockInfo.SLIME)) continue;
+                        bounceTargets(ah, x, z, tx, tz, dAS + d12, bouncePeak(peak1, bh), have);
+                    }
+                }
+        }
+    }
+
+    /** About how high a bounce off slime whose top is at sh goes, from a fall that started at top: the fall less a tenth
+     *  (the air's drag, both ways; Entity.move's restitution gives the speed back). */
+    static double bouncePeak(double top, double sh) {
+        return sh + 0.9 * (top - sh);
+    }
+
+    /** The landings of a bounce off the slime in column sx sz (reached over dBefore blocks from the take-off at ah,
+     *  column x z) that goes up to peak: ground floors within BOUNCE_REACH of it, a quarter block or more under the
+     *  peak and no higher than a jump over the take-off, not slime. */
+    private void bounceTargets(float ah, int x, int z, int sx, int sz, double dBefore, double peak,
+                               it.unimi.dsi.fastutil.longs.LongOpenHashSet have) {
+        int r = (int) Math.ceil(Loose.BOUNCE_REACH);
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++) {
+                double dSB = Math.sqrt(dx * dx + dz * dz);
+                if (dSB > Loose.BOUNCE_REACH) continue;
+                int bx = sx + dx, bz = sz + dz;
+                if (bx == x && bz == z) continue;
+                ChunkFloors b = v.chunk(bx, bz);
+                if (b == null) continue;
+                int cnt = b.count(bx & 15, bz & 15);
+                for (int j = 0; j < cnt; j++) {
+                    int bj = b.index(bx & 15, bz & 15, j);
+                    float bh = b.h(bj);
+                    if (b.type(bj) != ChunkFloors.GROUND || bh > ah + Loose.MAX_UP + 1e-4 || bh > peak - 0.25
+                        || bh < ah - Costs.fallLimit(c.safeFall, fallFactor(b, bj)) - 1e-4 || b.head(bj) < H - 1e-4) continue;
+                    if (Palette.get(b.window(bj, 0)).info.is(ai.rrw.kine.move.BlockInfo.SLIME)) continue;
+                    long target = View.node(bx, bz, j);
+                    if (!have.add(target)) continue;
+                    add(target, Loose.bounceCost(c, dBefore + dSB) + hazardCost(b, bj, bx, bz), LOOSE);
+                }
+            }
+    }
+
+    /**
+     * Whether a jump from floor (ax, az) at height ah to floor (bx, bz) at bh can get through, by the table alone: the
+     * straight line between the columns' centres, or one beside it (0.9 to either side: a neo's way round a wall's
+     * end), crosses no wall at the body's height over the higher floor (a block covering its cell across, more than half a block tall, both half a block and one and a half over it), past the take-off's and short of the landing's own
+     * columns. A wall across all three is no jump of any kind; the copy's check would only spend its time finding so
+     * (the Parkour Spiral offline: dozens of checks of jumps through the tower's own walls).
+     */
+    static boolean FLIGHT_CHECK = !"0".equals(System.getenv("KINE_FLIGHT_CHECK"));
+
+    boolean flightOpen(int ax, int az, double ah, int bx, int bz, double bh) {
+        double top = Math.max(ah, bh);
+        int y1 = (int) Math.floor(top + 0.5), y2 = (int) Math.floor(top + 1.5);
+        double sx = ax + 0.5, sz = az + 0.5, ex = bx + 0.5, ez = bz + 0.5;
+        double lx = ex - sx, lz = ez - sz, len = Math.hypot(lx, lz);
+        if (len < 1.5) return true;
+        double nx = -lz / len, nz = lx / len;
+        for (double off : new double[]{0.0, 0.9, -0.9}) {
+            boolean clear = true;
+            for (double t = 0.5; t <= len - 0.5 && clear; t += 0.25) {
+                double px = sx + lx / len * t + nx * off, pz = sz + lz / len * t + nz * off;
+                int cx = (int) Math.floor(px), cz = (int) Math.floor(pz);
+                if (cx == ax && cz == az || cx == bx && cz == bz) continue;
+                if (wallCell(cx, y1, cz) && wallCell(cx, y2, cz)) clear = false;
+            }
+            if (clear) return true;
+        }
+        return false;
+    }
+
+    /** A cell a body can't pass through: unknown or solid as far as the table knows, or a block covering the whole cell
+     *  across and more than half a block tall. Thin ones (fences, walls, panes, bamboo) a jump can pass beside: they
+     *  don't count (the copy's check decides). */
+    private boolean wallCell(int x, int y, int z) {
+        Kind k = v.blockKnown(x, y, z);
+        if (k == null) return false;   // not known to the table (a tall gap's middle): not counted as a wall
+        if (k == Palette.SOLID || k == Palette.UNKNOWN || k == Palette.HAZARD_SOLID) return true;
+        return k.topFull && !Float.isNaN(k.cellBottom) && k.cellTop - k.cellBottom > 0.5;
+    }
+
+    /** A loose jump's take-off: a floor not plain, or one with a neighbouring column (of the eight) holding no ground
+     *  floor within a step of it (an edge: a drop, a gap, a wall), or only one a quarter block or more under it (a raised
+     *  take-off: a slab on the floor, whose jump reaches higher than its neighbours'; on the Parkour Spiral the way up
+     *  from leg 17's walkway starts from one). An inner floor of open ground offers none: a jump from it would start
+     *  from the edge floor beside it, which has them (the jump search's run-up spots go back). */
+    private boolean looseEdge(ChunkFloors a, int ai, int x, int z) {
+        if (!plain(a, ai)) return true;
+        float ah = a.h(ai);
+        for (int d = 0; d < 8; d++) {
+            int bx = x + DX[d], bz = z + DZ[d];
+            ChunkFloors b = v.chunk(bx, bz);
+            if (b == null) return true;
+            int cnt = b.count(bx & 15, bz & 15);
+            boolean floor = false;
+            for (int j = 0; j < cnt && !floor; j++) {
+                int bj = b.index(bx & 15, bz & 15, j);
+                floor = b.type(bj) == ChunkFloors.GROUND && Math.abs(b.h(bj) - ah) <= STEP + 1e-5 && b.head(bj) >= H - 1e-4
+                    && b.h(bj) > ah - 0.25f;
+            }
+            if (!floor) return true;
+        }
+        return false;
     }
 
     /** A column of the run-up behind a take-off: a plain floor at the take-off's height with room to run. */
@@ -395,6 +669,11 @@ final class Graph {
     }
 
     /** A floor whose top covers its cell and whose cell is as free as its middle. */
+    /** The share of a fall's damage a landing on floor idx takes (BlockInfo.fallFactor of the block it stands on). */
+    static float fallFactor(ChunkFloors c, int idx) {
+        return Palette.get(c.window(idx, 0)).info.fallFactor;
+    }
+
     static boolean plain(ChunkFloors c, int idx) {
         return (c.flags(idx) & ChunkFloors.SIMPLE) != 0;
     }

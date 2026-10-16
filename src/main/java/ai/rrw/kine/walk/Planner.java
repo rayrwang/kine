@@ -27,6 +27,19 @@ public final class Planner {
         return t;
     });
 
+    /** The loosened layer 1's searches and their checks, on their own thread (Loose, LooseCheck): started by a strict
+     *  job whose first pass shows no way, so the walk doesn't wait for both. */
+    private static final ExecutorService LOOSE = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "kine-walk-loose");
+        t.setDaemon(true);
+        t.setPriority(Thread.NORM_PRIORITY - 1);
+        return t;
+    });
+
+    /** The loose search's time a search; the loose job's whole time (its searches and checks); its searches at most. */
+    static final long LOOSE_SEARCH_NANOS = 1_000_000_000L, LOOSE_JOB_NANOS = 90_000_000_000L;
+    static final int LOOSE_SEARCHES = 400;   // with the quick checks most searches end in a fraction of a second
+
     /** The weights of the passes, quick to cheapest. With the estimate at the sprint-jump speed, w = 1.27 makes it
      *  about the sprint cost on open ground. */
     static final double[] WEIGHTS = {2.0, 1.27, 1.0};
@@ -57,6 +70,12 @@ public final class Planner {
         /** No route: layer 1 found none and the goal is near, so layer 2 walks with its own search (Field.direct); the
          *  route is the straight line, for the progress check and the display. */
         public final boolean direct;
+        /** A loosened layer 1 route (its search offered Loose moves): the path index up to which its loose moves have
+         *  been checked in the movement copy and found a way (every loose move at or before it has one); MAX_VALUE: all
+         *  of them, or a route of proven moves. Written by the loose job's checks, read by the walk. */
+        public volatile int checkedTo = Integer.MAX_VALUE;
+        /** The loose moves on the route (0 for a route of proven moves). */
+        public volatile int looseMoves = 0;
         Plan(Route route, PathSearch.Result result, int pass, long id, long[] stamps, Replay replay, RailPath rails,
              TimeProfile time, boolean throughUnknown) {
             this(route, result, pass, id, stamps, replay, rails, time, throughUnknown, false);
@@ -77,6 +96,11 @@ public final class Planner {
         public volatile boolean exhausted = false; // that, with every reachable place searched (the goal shut in)
         public volatile long nanos = 0;
         public volatile int passes = 0;
+        /** The loosened layer 1's job, started when this one's first pass found no way (or only a short way toward a far
+         *  goal): its plans replace this one's. Null when none. */
+        public volatile Job loose = null;
+        /** Why the loose job gave up without a route (for the walk's message and the report). */
+        public volatile String looseWhy = "";
         public final long submitted = System.nanoTime();
         final long id;
         Job(long id) { this.id = id; }
@@ -119,10 +143,41 @@ public final class Planner {
     /** goalY: the destination's Y (feet), only that floor of the column is the goal; NaN: any floor of it. */
     public static Job plan(View view, long start, int gx, int gz, double goalY, Costs costs, double margin, boolean canSprint,
                            boolean gaps, boolean glides, long budgetNanos) {
+        return plan(view, start, gx, gz, goalY, costs, margin, canSprint, gaps, glides, budgetNanos, null);
+    }
+
+    /**
+     * The loosened layer 1's context for a walk (Walk keeps it): the moves found not to work (by Loose.edge; the strict
+     * search leaves them out too), the checks' memory, the blocks the checks read, the player's body, the terrain's
+     * version when asked, whether the walk sprints.
+     */
+    public record LooseContext(java.util.Set<Long> blocked, LooseCheck.Memo memo, LooseCheck.Grids grids,
+                               ai.rrw.kine.move.Body body, long terrain, boolean sprint) {}
+
+    /** What a doubtful loose move (its quick check found no way) costs the search more (ticks): enough that a way round
+     *  it with a few more jumps or a longer walk is tried first (LooseCheck.checkRoute). */
+    static final double DOUBT = 40.0;
+
+    /** The doubtful moves' extra costs now (from the memo's doubtful keys: their moves, started standing). */
+    private static it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap penaltiesNow(java.util.Set<Long> doubtfulEdges) {
+        it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap m = new it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap();
+        for (Long e : doubtfulEdges) m.put(e.longValue(), DOUBT);
+        return m;
+    }
+
+    /** As above; loose: the loosened layer 1 as the fallback when this search finds no way (null: none). */
+    public static Job plan(View view, long start, int gx, int gz, double goalY, Costs costs, double margin, boolean canSprint,
+                           boolean gaps, boolean glides, long budgetNanos, LooseContext loose) {
+        return plan(view, start, gx, gz, goalY, costs, margin, canSprint, gaps, glides, budgetNanos, loose, Double.NaN);
+    }
+
+    /** As above; keepAbove: the lowest floor the way may end at when the goal can't be reached (PathSearch.keepAbove). */
+    public static Job plan(View view, long start, int gx, int gz, double goalY, Costs costs, double margin, boolean canSprint,
+                           boolean gaps, boolean glides, long budgetNanos, LooseContext loose, double keepAbove) {
         Job job = new Job(++ids);
         WORKER.submit(() -> {
             try {
-                run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budgetNanos, goalY);
+                run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budgetNanos, goalY, loose, keepAbove);
             } catch (Throwable t) {
                 Kine.LOGGER.warn("Kine walk: search failed", t);
                 job.failure = "search error";
@@ -135,13 +190,43 @@ public final class Planner {
     }
 
     private static void run(Job job, View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint,
-                            boolean gaps, boolean glides, long budget, double goalY) {
+                            boolean gaps, boolean glides, long budget, double goalY, LooseContext loose, double keepAbove) {
         run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budget, new PathSearch(view, costs)
-            .canSprint(canSprint).gaps(gaps).glides(glides).goalY(goalY));
+            .canSprint(canSprint).gaps(gaps).glides(glides).goalY(goalY).blocked(loose == null ? null : blockedNow(loose))
+            .doors(Graph.doorsOn).keepAbove(keepAbove),
+            goalY, loose);
+    }
+
+    /** The context's blocked moves now, as a set the search can read on its own thread. */
+    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet blockedNow(LooseContext c) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet s = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (Long e : c.blocked()) s.add(e.longValue());
+        return s;
+    }
+
+    /**
+     * Whether the strict search's first pass shows no way on: every reachable floor searched (shut in, or only the floor
+     * nearest the goal), or cut short with its best floor hardly nearer the goal than the start (on a big map the search
+     * may run out of time before it runs out of floors: the Parkour Spiral's sea and desert round the tower). Nearer by
+     * a quarter of the start's estimate or 8 blocks at the fastest, it is a way on, as toward any far goal.
+     */
+    static boolean noWayOn(PathSearch.Result r, View view, long start, int gx, int gz, double goalY, Costs costs) {
+        if (r.exhausted) return true;
+        if (!r.partial || r.path.length == 0) return false;
+        double s0 = nearness(view, start, gx, gz, goalY, costs), s1 = nearness(view, r.path[r.path.length - 1], gx, gz, goalY, costs);
+        return s0 - s1 < Math.max(0.25 * s0, costs.estimate(8.0, 0.0));
+    }
+
+    private static double nearness(View v, long n, int gx, int gz, double goalY, Costs c) {
+        ChunkFloors ch = v.chunk(View.nodeX(n), View.nodeZ(n));
+        int i = v.index(n);
+        double h = ch == null || i < 0 ? Double.NaN : ch.h(i);
+        double hor = Math.hypot(gx - View.nodeX(n), gz - View.nodeZ(n));
+        return c.estimate(hor, Double.isNaN(goalY) || Double.isNaN(h) ? 0.0 : Math.max(0.0, goalY - h));
     }
 
     private static void run(Job job, View view, long start, int gx, int gz, Costs costs, double margin, boolean canSprint,
-                            boolean gaps, boolean glides, long budget, PathSearch search) {
+                            boolean gaps, boolean glides, long budget, PathSearch search, double goalY, LooseContext loose) {
         long t0 = System.nanoTime(), deadline = t0 + budget;
         double bestCost = Double.MAX_VALUE;
         int prevExpanded = 0;
@@ -171,6 +256,14 @@ public final class Planner {
                 pass--;
                 continue;
             }
+            // no way on by the proven moves: the loosened layer 1 on its own thread at once (RW 2026-10-15: "so it shoudl
+            // try purely legal layer 1, then fallbakc ot het right"); its plans replace this job's when they come
+            // only toward a goal in the loaded area: toward one past it (the Kine Parkour course's target, 900 blocks on)
+            // the walk crosses what layer 1 can't with hops, as before; with the loose search there, the walk waited
+            // on checks of the course's jumps and stood (stuck at #30 in cS1, at #18 in RW's playtest, 2026-10-15)
+            if (pass == 0 && loose != null && job.loose == null && !job.cancelled && view.known(gx, gz)
+                && noWayOn(r, view, start, gx, gz, goalY, costs))
+                job.loose = loose(job, view.copy(), start, gx, gz, goalY, costs, margin, canSprint, glides, loose);
             if (r.exhausted && !r.nearest) { job.failure = r.reason; job.exhausted = true; return; }
             if (!r.found && !r.partial && !r.nearest) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
             if (r.partial && pass == 0) {
@@ -185,24 +278,128 @@ public final class Planner {
             // published: the first result, then any pass that finds a path at least as cheap (a smaller weight's path
             // of the same cost is proven cheaper or as cheap, and its search is the one the replay shows)
             if (job.latest.get() == null || r.found && c <= bestCost + 1e-6) {
-                Route route = new Tighten(view, costs, margin, canSprint).route(r, gx, gz);
-                RailPath rails = new RailPath(view, route);
-                Replay replay = new Replay(r, route, rails, ai.rrw.kine.Settings.walkSearchDetailed);
-                r.tree = null;   // drawn from the replay now; let the record go
-                TimeProfile time = null;
-                try {
-                    time = TimeProfile.of(view, costs, canSprint, gaps, glides, r, route, gx, gz);
-                } catch (RuntimeException e) {
-                    Kine.LOGGER.warn("Kine walk: no time profile for the ETA", e);
-                }
-                boolean blind = !route.viaExit && r.found && crossesUnknown(view, route.x[0], route.z[0], gx + 0.5, gz + 0.5);
-                job.latest.set(new Plan(route, r, pass, job.id, stamps(view, route), replay, rails, time, blind));
+                job.latest.set(makePlan(view, r, pass, job.id, gx, gz, costs, margin, canSprint, gaps, glides));
                 if (r.found) bestCost = c;
             }
             if (r.partial || r.exhausted) break;   // out of time or floors, or no way to the goal: a better pass won't help
         }
         lastPasses = job.passes;
         lastNanos = System.nanoTime() - t0;
+    }
+
+    /** A search's result made into a plan: the tightened route, the rails, the search display's replay, the time
+     *  profile for the ETA, the columns' stamps. */
+    private static Plan makePlan(View view, PathSearch.Result r, int pass, long id, int gx, int gz, Costs costs, double margin,
+                                 boolean canSprint, boolean gaps, boolean glides) {
+        Route route = new Tighten(view, costs, margin, canSprint).route(r, gx, gz);
+        RailPath rails = new RailPath(view, route);
+        Replay replay = new Replay(r, route, rails, ai.rrw.kine.Settings.walkSearchDetailed);
+        r.tree = null;   // drawn from the replay now; let the record go
+        TimeProfile time = null;
+        try {
+            time = TimeProfile.of(view, costs, canSprint, gaps, glides, r, route, gx, gz);
+        } catch (RuntimeException e) {
+            Kine.LOGGER.warn("Kine walk: no time profile for the ETA", e);
+        }
+        boolean blind = !route.viaExit && r.found && crossesUnknown(view, route.x[0], route.z[0], gx + 0.5, gz + 0.5);
+        return new Plan(route, r, pass, id, stamps(view, route), replay, rails, time, blind);
+    }
+
+    /**
+     * The loosened layer 1 (Loose), as a job of its own: the search with loose moves, its route published at once (the
+     * walk can go along its proven moves), its loose moves checked in the movement copy in route order (LooseCheck), each
+     * checked one marked on the plan (checkedTo); a loose move that fails its check is blocked with its family
+     * (Loose.family, in the walk's context, so the walk's later searches leave it out too) and the search runs again
+     * without it (LazySP), until a route's loose moves all have a way, none is left, a route costs more than
+     * Loose.costBound, or the job's time runs out.
+     */
+    private static Job loose(Job parent, View view, long start, int gx, int gz, double goalY, Costs costs, double margin,
+                             boolean canSprint, boolean glides, LooseContext ctx) {
+        Job job = new Job(++ids);
+        LOOSE.submit(() -> {
+            try {
+                runLoose(job, parent, view, start, gx, gz, goalY, costs, margin, canSprint, glides, ctx);
+            } catch (Throwable t) {
+                Kine.LOGGER.warn("Kine walk: loose search failed", t);
+                job.failure = "loose search error";
+            } finally {
+                job.nanos = System.nanoTime() - job.submitted;
+                job.done = true;
+            }
+        });
+        return job;
+    }
+
+    /** The loose job's searches and checks (see loose). */
+    public static volatile int looseSearches = 0, looseChecksFailed = 0, looseRoutesChecked = 0;
+
+    private static void runLoose(Job job, Job parent, View view, long start, int gx, int gz, double goalY, Costs costs,
+                                 double margin, boolean canSprint, boolean glides, LooseContext ctx) throws InterruptedException {
+        long t0 = System.nanoTime();
+        java.util.function.BooleanSupplier stop = () -> job.cancelled || parent.cancelled || System.nanoTime() - t0 > LOOSE_JOB_NANOS;
+        double bound = Loose.costBound(costs, start, gx, gz, goalY, view);
+        java.util.Set<Long> doubtfulEdges = ctx.memo().priced;
+        for (int it = 0; it < LOOSE_SEARCHES; it++) {
+            if (stop.getAsBoolean()) { job.failure = "loose search let go"; return; }
+            PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(true).glides(glides).loose(true).goalY(goalY)
+                .blocked(blockedNow(ctx)).penalties(penaltiesNow(doubtfulEdges)).doors(Graph.doorsOn);
+            PathSearch.Result r = search.run(start, gx, gz, 2.0, System.nanoTime() + LOOSE_SEARCH_NANOS, 2_000_000, true);
+            job.passes = it + 1;
+            looseSearches++;
+            if (!r.found) {
+                job.failure = r.exhausted ? "no way even with nearly possible jumps" : "the loose search ran out of time";
+                parent.looseWhy = job.failure;
+                looseLog(job, it, r, "no route: " + job.failure);
+                return;
+            }
+            if (r.cost > bound) {
+                job.failure = String.format(java.util.Locale.ROOT, "only a loose way round far (%.0f ticks against at most %.0f)", r.cost, bound);
+                parent.looseWhy = job.failure;
+                looseLog(job, it, r, job.failure);
+                return;
+            }
+            int n = 0;
+            for (int i = 1; i < r.moves.length; i++) if (r.moves[i] == Graph.LOOSE) n++;
+            Plan p = makePlan(view, r, it, job.id, gx, gz, costs, margin, canSprint, true, glides);
+            p.looseMoves = n;
+            p.checkedTo = n == 0 ? Integer.MAX_VALUE : 0;
+            // published only once every loose move of it has a way: a route published before its checks was walked
+            // while the search went on, and each next candidate's took the walk somewhere else (the Parkour Spiral's
+            // leg 1: led off past the end of a fence, it stood there at a pool's edge, d9a; RW's playtest of
+            // 05524e3 stood near that fence too). The walk waits for it ("searching nearly possible jumps").
+            if (n == 0) { job.latest.set(p); return; }
+            LooseCheck.RouteVerdict v = LooseCheck.checkRoute(r, ctx.grids(), ctx.body(), ctx.memo(), ctx.terrain(), ctx.sprint(), stop,
+                i -> p.checkedTo = i, doubtfulEdges);
+            int fail = v.index();
+            looseLog(job, it, r, v.isDoubtful() ? v.doubtful().length + " doubtful" : fail == -1 ? "every loose move has a way"
+                : fail < 0 ? "let go" : "no way " + View.nodeX(r.path[fail - 1]) + "," + r.pathY[fail - 1] + ","
+                + View.nodeZ(r.path[fail - 1]) + " -> " + View.nodeX(r.path[fail]) + "," + r.pathY[fail] + "," + View.nodeZ(r.path[fail]));
+            if (v.isDoubtful()) {
+                // priced up with its family (Loose.family): the neighbouring columns' copies of a jump that failed its
+                // quick check would come back one by one otherwise; one the route still takes gets the full check
+                looseChecksFailed++;
+                for (long e : v.doubtful()) doubtfulEdges.add(e);
+                for (long e : Loose.family(view, r.path[fail - 1], r.path[fail])) doubtfulEdges.add(e);
+                continue;
+            }
+            if (fail == -1) { p.checkedTo = Integer.MAX_VALUE; looseRoutesChecked++; job.latest.set(p); return; }
+            if (fail < 0) { job.failure = "loose search let go"; return; }
+            looseChecksFailed++;
+            for (long e : Loose.family(view, r.path[fail - 1], r.path[fail])) ctx.blocked().add(e);
+        }
+        job.failure = "the loose search's tries ran out";
+        parent.looseWhy = job.failure;
+        looseLog(job, LOOSE_SEARCHES, null, job.failure);
+    }
+
+    /** One loose search's outcome in the log (KINE_SEARCH_LOG set, as layer 2's jump searches: lockstep tests). */
+    private static void looseLog(Job job, int it, PathSearch.Result r, String what) {
+        if (!Layer2.SEARCH_LOG) return;
+        int n = 0;
+        if (r != null) for (int i = 1; i < r.moves.length; i++) if (r.moves[i] == Graph.LOOSE) n++;
+        Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine walk loose: job %d search %d%s: %s", job.id, it,
+            r == null ? "" : String.format(java.util.Locale.ROOT, " (%s, cost %.0f, %d loose, %d expanded, %.0f ms)",
+                r.found ? "found" : r.nearest ? "nearest" : r.partial ? "partial" : "none", r.cost, n, r.expanded, r.nanos / 1e6), what));
     }
 
     /** Whether the straight line from (ax, az) to (bx, bz) crosses a column the view doesn't know (every half block). */

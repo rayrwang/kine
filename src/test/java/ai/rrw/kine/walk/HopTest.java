@@ -115,4 +115,54 @@ public class HopTest {
         assertEquals(-1, View.nodeZ(c), "from the pad, the start");
         assertEquals(0, View.nodeX(c));
     }
+
+    /** Beside a tower's goal column with the destination's Y on its top (the Parkour Spiral, RW 2026-10-15: the walk
+     *  stood beside the block it should have gone up onto, with or without a Y): no floor is horizontally nearer, but
+     *  with a Y the climb counts (Hop.nearness), so the floor a block up and two out is nearer, and the walk hops there.
+     *  Without a Y, as before: nothing. Still no more than a jump up. */
+    @Test
+    void besideATowerAFloorUpAndOutwardIsNearerWithAY() {
+        TestWorld w = blocks(-8, -8, 23, 23);
+        w.fill(-6, 10, -6, 12, 10, 6, STONE);    // the ground: feet 11
+        w.fill(0, 11, 0, 0, 15, 0, STONE);       // the tower, the goal's column: its top 16
+        w.set(3, 11, 0, STONE);                  // a block up, two farther out than where the walk stands: feet 12
+        w.fill(6, 11, 3, 6, 12, 3, STONE);       // two up: more than a jump
+        View v = w.view();
+        Costs c = Costs.LAYER2;
+        double goalY = 16, px = 1.5, py = 11, pz = 0.5;
+        Hop.Best best = new Hop.Best();
+        double g = Math.hypot(0 - 1, 0 - 0);
+        best.stood(Hop.nearness(c, g, py, goalY), g, Hop.tie(c, goalY));
+        long a = Hop.pick(v, c, px, py, pz, 0, 0, goalY, best, new HashSet<>(), 3.0, 8.0);
+        assertNotEquals(View.NONE, a, "a floor up and outward");
+        assertEquals(3, View.nodeX(a));
+        assertEquals(0, View.nodeZ(a));
+        // without a Y: nothing horizontally nearer than beside the column, and no step up within 1.5
+        assertEquals(View.NONE, Hop.pick(v, px, py, pz, 0, 0, 1.0, new HashSet<>(), 3.0, 8.0));
+        // from the block up: the tower's side again at its foot is lower, not nearer; nothing more than a jump up
+        Hop.Best b2 = best.copy();
+        double g2 = Math.hypot(0 - 3, 0 - 0);
+        b2.stood(Hop.nearness(c, g2, 12, goalY), g2, Hop.tie(c, goalY));
+        Set<Long> tried = new HashSet<>();
+        tried.add(a);
+        assertEquals(View.NONE, Hop.pick(v, c, 3.5, 12, 0.5, 0, 0, goalY, b2, tried, 3.0, 8.0), "the ground is lower: not nearer");
+    }
+
+    /** With a Y the climb ties two floors at one height beside a tower: the one horizontally nearer than the best stand
+     *  by more than TIE is the nearer (Hop.Best keeps the horizontal distance among the stands as near). */
+    @Test
+    void atOneHeightTheHorizontallyNearerIsNearer() {
+        TestWorld w = blocks(-8, -8, 23, 23);
+        w.fill(-6, 10, -6, 12, 10, 6, STONE);    // the ground: feet 11
+        w.fill(0, 11, 0, 0, 20, 0, STONE);       // a tall tower, the goal's column: its top 21
+        View v = w.view();
+        Costs c = Costs.LAYER2;
+        double goalY = 21;
+        Hop.Best best = new Hop.Best();
+        double g = Math.hypot(0 - 5, 0 - 0);      // standing 5 out on the ground
+        best.stood(Hop.nearness(c, g, 11, goalY), g, Hop.tie(c, goalY));
+        long a = Hop.pick(v, c, 5.5, 11, 0.5, 0, 0, goalY, best, new HashSet<>(), 3.0, 8.0);
+        assertNotEquals(View.NONE, a, "the ground a block nearer the tower");
+        assertTrue(Math.hypot(View.nodeX(a), View.nodeZ(a)) < 5 - Hop.TIE);
+    }
 }

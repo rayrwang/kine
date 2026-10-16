@@ -78,6 +78,18 @@ public final class PathSearch {
         return this;
     }
 
+    /** The lowest a floor the way ends at may be when the goal can't be reached (the nearest floor of an exhausted
+     *  search, the best of a partial one), NaN: any. The walk keeps to the height it has climbed while its goal is
+     *  above (Walk.keepAbove): by the estimate alone, which prices a climb as cheap as a ladder's (the A* bound must not
+     *  overcharge), the sea under a goal ten blocks up looked three times nearer than the start (the Parkour Spiral,
+     *  RW's playtest 2026-10-15: the walk dropped into the sea instead of doing the course). The start counts always. */
+    private double keepAbove = Double.NaN;
+
+    public PathSearch keepAbove(double y) {
+        this.keepAbove = y;
+        return this;
+    }
+
     private boolean goalFloor(double h) {
         return Double.isNaN(goalY) || Math.abs(h - goalY) < 0.6;
     }
@@ -135,6 +147,30 @@ public final class PathSearch {
         return true;
     }
 
+    /** Offer loose moves (Loose: the loosened layer 1, the fallback when the proven moves find no way). */
+    public PathSearch loose(boolean b) {
+        graph.loose = b;
+        return this;
+    }
+
+    /** Extra costs on moves (doubtful loose moves, by Loose.edge); null for none. */
+    public PathSearch penalties(it.unimi.dsi.fastutil.longs.Long2DoubleMap p) {
+        graph.penalty = p;
+        return this;
+    }
+
+    /** Moves not to offer (Walk's blocked moves, by Loose.edge); null for none. */
+    public PathSearch blocked(it.unimi.dsi.fastutil.longs.LongSet b) {
+        graph.blocked = b;
+        return this;
+    }
+
+    /** Offer walking through closed wooden doors (Graph.OPEN). */
+    public PathSearch doors(boolean b) {
+        graph.doors = b;
+        return this;
+    }
+
     /** Offer jumps over gaps (layer 2 only). */
     public PathSearch gaps(boolean b) {
         graph.gaps = b;
@@ -151,6 +187,34 @@ public final class PathSearch {
      * maxNodes floors seen.
      */
     public Result run(long start, int gx, int gz, double w, long deadline, int maxNodes, boolean recordTree) {
+        Result r = runOnce(start, gx, gz, w, deadline, maxNodes, recordTree);
+        if (r.found || Double.isNaN(keepAbove) || !dips(r, keepAbove)) return r;
+        // no way to the goal, and the way to the floor nearest it goes under the height kept (the floor itself keeps
+        // it: the cheapest way there swam the sea round the Parkour Spiral's first level, drawn so, and layer 2 then
+        // stood before it, RW's playtest of 05524e3): again with the floors under that height left out, so the way
+        // walked and drawn keeps it too
+        floorMin = keepAbove;
+        try {
+            Result k = runOnce(start, gx, gz, w, Math.max(deadline, System.nanoTime() + KEPT_NANOS), maxNodes, recordTree);
+            k.nanos += r.nanos;
+            return k;
+        } finally {
+            floorMin = Double.NaN;
+        }
+    }
+
+    /** The second search's time at least (a kept height's, see run). */
+    static final long KEPT_NANOS = 200_000_000L;
+    /** Floors under this aren't searched (the start is): the kept height's second search, see run. */
+    private double floorMin = Double.NaN;
+
+    /** Whether a way goes under height y past its start. */
+    static boolean dips(Result r, double y) {
+        for (int i = 1; i < r.pathY.length; i++) if (r.pathY[i] < y - 1e-4) return true;
+        return false;
+    }
+
+    private Result runOnce(long start, int gx, int gz, double w, long deadline, int maxNodes, boolean recordTree) {
         long t0 = System.nanoTime();
         reset();
         Result r = new Result();
@@ -225,7 +289,8 @@ public final class PathSearch {
             // as near (within Hop.TIE blocks: a block aside of a far goal), the floor nearer the destination's Y by 0.4
             // or more is the nearer (the course's start beside its pad, a block lower: RW 2026-10-14, flower_pot_jump)
             boolean better;
-            if (bestId < 0 || near < bestH - tieH) better = true;
+            if (id != s && fy[id] < keepAbove - 1e-4) better = false;   // below the height the walk keeps (NaN: never)
+            else if (bestId < 0 || near < bestH - tieH) better = true;
             else if (near >= bestH + tieH) better = false;
             else if (nearerY(fy[id], fy[bestId])) better = true;
             else if (nearerY(fy[bestId], fy[id])) better = false;
@@ -236,6 +301,7 @@ public final class PathSearch {
             graph.expand(key);
             for (int k = 0; k < graph.n; k++) {
                 long to = graph.to[k];
+                if (!Double.isNaN(floorMin) && to != Long.MIN_VALUE && floorH(to) < floorMin - 1e-4) continue;
                 if (graph.move[k] == Graph.EXIT) {
                     double sc = exitScore(g[id], graph.cost[k], sx, sz, View.nodeX(key), View.nodeZ(key));
                     if (sc < bestExitScore) { bestExitScore = sc; bestExit = id; }
@@ -480,6 +546,12 @@ public final class PathSearch {
         double dx = x - graph.goalX, dz = z - graph.goalZ;
         double climb = Double.isNaN(goalMinH) || Double.isNaN(h) ? 0 : Math.max(0, goalMinH - h);
         return c.estimate(Math.sqrt(dx * dx + dz * dz), climb);
+    }
+
+    private double floorH(long key) {
+        ChunkFloors cf = v.chunk(View.nodeX(key), View.nodeZ(key));
+        int idx = v.index(key);
+        return cf == null || idx < 0 ? Double.NaN : cf.h(idx);
     }
 
     private int see(long key, int par, double gg, int mv, int expansions) {
