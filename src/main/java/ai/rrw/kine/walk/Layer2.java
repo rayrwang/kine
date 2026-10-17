@@ -356,6 +356,9 @@ public final class Layer2 {
     static final int HOLD_SLIDE_TICKS = 20;
     /** How far round (blocks, square) and down from the feet layer 2 looks for lava before sprint-jumping. */
     static final int HOP_HAZARD_R = 3, HOP_HAZARD_DOWN = 12;
+    /** How far round the player (columns) a hurting block makes layer 2's runs look for ground ticks over it with
+     *  nothing under the box (RunModel.hazardNear): a run's 20 ticks reach about 6 blocks. */
+    static final int HAZARD_NEAR_R = 8;
 
     /** Whether a hurting block (lava, fire, magma, cactus...) lies in the grid within r columns of (x, z), from the feet
      *  down to `down` under them. */
@@ -651,7 +654,10 @@ public final class Layer2 {
         harvest();
         Out o = last;
         if (o == null || o.result().plan() == null) return fallback("no plan yet");
-        if (o.unsafe()) return fallback("every run unsafe");
+        // in lava every run is unsafe, the root's own end has no mark: the least bad run, the one out
+        // soonest, rather than the follower, who stood in the 1-deep pool by checkpoint 3's stage 16 with no keys until
+        // dead (RW's dev135 walk, 04:43)
+        if (o.unsafe() && !p.isInLava()) return fallback("every run unsafe");
         int at = tick - o.tick();
         int[] plan = o.result().plan();
         // the first segment's heading was fixed at the plan's first tick; later ticks of the same segment keep it
@@ -1681,6 +1687,7 @@ public final class Layer2 {
         boolean approach = !s.inWater && p.onGround() && looseTakeOffAt(plan, s.x, s.y, s.z) < 0
             && looseTakeOffNear(plan, s.x, s.y, s.z, LOOSE_APPROACH, !NO_HOPS);
         boolean noHops = NO_HOPS && overLava || approach;
+        boolean hazardNear = g != null && hazardBelow(g, s.x, s.y, s.z, HAZARD_NEAR_R, HOP_HAZARD_DOWN);
         job = WORKER.submit(() -> {
             long r0 = System.nanoTime();
             RunModel model = new RunModel(new GroundPhysics(g, body), f, dest[0], dest[1], viewPitch, maxFall);
@@ -1689,6 +1696,7 @@ public final class Layer2 {
             model.harmTickCost = harmCost;
             model.cap = gait;
             model.noSprintJumps = noHops;
+            model.hazardNear = hazardNear;
             model.stand = stand && model.arrived(s);   // settling once on the hop's floor (RunModel.stand)
             if (target != null) { model.targetX = target[0]; model.targetY = target[1]; model.targetZ = target[2]; }
             model.freeMemory = freeMem;

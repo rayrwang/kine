@@ -181,7 +181,7 @@ public final class Recipe {
                                 s.landedFall = 0.0;
                                 s.touched = 0;
                                 phys.step(s, k, view, 0f);
-                                if (spoils(s)) break;
+                                if (spoils(s) || standsOverHazard(phys, s)) break;
                                 pos[3 * t] = s.x; pos[3 * t + 1] = s.y; pos[3 * t + 2] = s.z;
                                 if (after >= 0) after++;
                                 boolean onCol = s.x + 0.3 > lx && s.x - 0.3 < lx + 1 && s.z + 0.3 > lz && s.z - 0.3 < lz + 1;
@@ -258,6 +258,21 @@ public final class Recipe {
                 }
             }
         return false;
+    }
+
+    /**
+     * Whether s stands on the ground with nothing under its box, over something that hurts within 6 below (lava, fire,
+     * magma): the tick a move ends past an edge, on the ground still only because its fall was resolved before its step
+     * across (Entity.collide: the vertical first). The server runs the player's own movement each of its ticks from
+     * where the client last was (Player.canSimulateMovement is true there; LivingEntity.aiStep's travel, then
+     * ServerGamePacketListenerImpl.tickPlayer puts the player back), so if it ticks twice on that position (a frame the
+     * client was slow) its fall takes the player into the lava: 4 damage, and the server's velocity sent on the hit
+     * (0, -0.23, 0) in place of the jump's. RW's dev135 walk (04:43) took off so from the grass edge at (-45,94,3) over
+     * the lava pool at (-45..-43,94,3..7) by checkpoint 3's stage 16, was hit at the jump's top and came down in the
+     * pool, dead; lockstep, one server tick to a client tick, the same jump was made unharmed every time.
+     */
+    static boolean standsOverHazard(GroundPhysics phys, MoveState s) {
+        return s.onGround && !s.inWater && phys.edgeOverHazard(s, 0.0, 6.0);
     }
 
     /** Whether the step just taken touched a block that hurts (magma, a berry bush, cactus) or one whose movement the

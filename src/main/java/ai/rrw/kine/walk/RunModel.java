@@ -63,6 +63,9 @@ final class RunModel implements Model<RunWorld> {
     static final double DROWN_COST = 60.0, AIR_RESERVE = 30.0, AIR_TICK = 0.02, RISE_TICKS = 8.0, UNDER_END = 0.25;
     /** Count the air (on; off only to measure what it changes). */
     boolean airAware = true;
+    /** A block that hurts lies near the player (Layer2: within HAZARD_NEAR_R columns and 12 below): ground ticks with
+     *  nothing under the box over one are UNSAFE (marks). */
+    boolean hazardNear = false;
     /** Parkour (the setting): off, a run that crosses a gap in the air and lands on its far side is UNSAFE (gapCheck). */
     boolean parkour = true;
     /** The segment length in water: a sprint swim pays only after sinking until the eyes are under, about 35 ticks
@@ -376,6 +379,9 @@ final class RunModel implements Model<RunWorld> {
         // a landing on the edge of what holds it over lava (within EDGE_MARGIN): live it comes down a hundredth off the
         // copy's and slides off (RW's far walk cleg1, f61: layer 2 hopping the slabs over the Parkour Spiral's lava field)
         if (air0 && s.onGround && !s.inWater && phys.edgeOverHazard(s, EDGE_MARGIN, 6.0)) c += UNSAFE;
+        // on the ground with nothing under the box, over lava or the like (Recipe.standsOverHazard: the server's own
+        // fall from there on a slow client frame); looked at only where such a block is near (hazardNear, Layer2)
+        else if (hazardNear && s.onGround && !s.inWater && phys.edgeOverHazard(s, 0.0, 6.0)) c += UNSAFE;
         if ((s.touched & BlockInfo.UNCOPIED) != 0) c += UNCOPIED;
         if (s.wouldGlide) c += UNSAFE;
         s.touched = 0;

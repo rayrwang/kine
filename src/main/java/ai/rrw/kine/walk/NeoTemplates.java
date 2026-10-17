@@ -383,7 +383,7 @@ final class NeoTemplates {
                     q.landedFall = 0.0;
                     q.touched = 0;
                     phys.step(q, key, vv, 0f);
-                    if (Recipe.hurts(q) || Recipe.spoils(q)) continue;
+                    if (Recipe.hurts(q) || Recipe.spoils(q) || Recipe.standsOverHazard(phys, q)) continue;
                     if (!jumped && Recipe.offFloor(at, q)) continue;
                     if (after >= 0) after++;
                     if (q.y < l[1] - 4) continue;
@@ -483,7 +483,7 @@ final class NeoTemplates {
             s.landedFall = 0.0;
             s.touched = 0;
             phys.step(s, key, v, 0f);
-            if (Recipe.hurts(s) || Recipe.spoils(s)) return null;
+            if (Recipe.hurts(s) || Recipe.spoils(s) || Recipe.standsOverHazard(phys, s)) return null;
             if (!jumped && Recipe.offFloor(at, s)) return null;
             ys.add(v);
             ks.add(key);
