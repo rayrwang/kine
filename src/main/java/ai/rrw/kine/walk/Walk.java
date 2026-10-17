@@ -258,7 +258,7 @@ public final class Walk {
         // whatever the falls to it, and with damage allowed it lay on the ground under the Kine Parkour course: the walk
         // dropped off the course after #5 and stopped at #6 (RW's settings from 2026-10-16 04:03, Fall damage allowed 2,
         // for the Parkour Spiral's leg 13; the gate's q39_g2a, CB400_40, CB_41)
-        if (!nearGoal(destination())) return 0;
+        if (!nearGoal(aim())) return 0;
         return Math.max(0, Math.min(Settings.walkFallDamage, (int) Math.floor(p.getHealth()) - 8));
     }
 
@@ -427,6 +427,10 @@ public final class Walk {
         int[] d = destination();
         if (!Settings.walkPathfinder || mc.player == null || d == null) return;
         dimension = mc.level.dimension();
+        stage = null;
+        stagesTaken = 0;
+        stageRetries = 0;
+        stagedFrom = null;
         walkY = destinationY();
         peakY = mc.player.getY();
         lastStand = View.NONE;
@@ -537,7 +541,91 @@ public final class Walk {
         dismissed = true;
     }
 
+    /** A stage of a far destination (takeStage): walked to as the destination while set; null when none. */
+    private static int[] stage = null;
+    private static double stageY = Double.NaN;
+    private static int stagesTaken = 0, stageRetries = 0;
+    private static PathSearch.Result stagedFrom = null;
+    /** A stage is the first floor walked onto along the loose route at least STAGE_RUN blocks along it (horizontal
+     *  plus vertical) or after STAGE_LOOSE of its loose jumps; at most STAGE_MAX stages a walk, STAGE_RETRIES not
+     *  reached in a row. */
+    static final double STAGE_RUN = 40.0;
+    static final int STAGE_LOOSE = 8, STAGE_MAX = 200, STAGE_RETRIES = 4;
+
+    /** Where the walk plans to: the stage if one is set, else the destination. */
+    static int[] aim() {
+        return stage != null ? stage : destination();
+    }
+
+    /** Set the next stage from loose route r (too long for one walk), if it has a floor far enough along; true if set. */
+    private static boolean takeStage(LocalPlayer p, PathSearch.Result r) {
+        if (r == null || r.path == null || r.path.length < 3) return false;
+        View v = WalkTable.snapshot();
+        double run = 0;
+        int loose = 0, pick = -1;
+        for (int i = 1; i < r.path.length - 1; i++) {
+            double dx = View.nodeX(r.path[i]) - View.nodeX(r.path[i - 1]), dz = View.nodeZ(r.path[i]) - View.nodeZ(r.path[i - 1]);
+            run += Math.hypot(dx, dz) + Math.abs(r.pathY[i] - r.pathY[i - 1]);
+            if (r.moves[i] == Graph.LOOSE) loose++;
+            if (run < STAGE_RUN && loose < STAGE_LOOSE) continue;
+            // a floor walked onto (not a jump's landing in the air, a ladder or water), the next move a walk too
+            if (r.moves[i] != Graph.WALK || r.moves[i + 1] != Graph.WALK || !groundAt(v, r.path[i], r.pathY[i])) continue;
+            pick = i;
+            break;
+        }
+        if (pick < 0) return false;
+        int[] s = {View.nodeX(r.path[pick]), View.nodeZ(r.path[pick])};
+        stagesTaken++;
+        setStage(p, s, r.pathY[pick]);
+        message = String.format(java.util.Locale.ROOT, "Far: walking by stages (stage %d at %d %d %d)", stagesTaken, s[0],
+            (int) Math.floor(r.pathY[pick]), s[1]);
+        if (replanWhy.size() < 200) replanWhy.add(tick + ": far: stage " + stagesTaken + " at " + s[0] + " " + s[1] + " (" + pick + " of "
+            + r.path.length + " steps)");
+        return true;
+    }
+
+    private static void setStage(LocalPlayer p, int[] s, double y) {
+        stage = s;
+        stageY = y;
+        walkY = y;
+        goalChanged(p);
+    }
+
+    private static void clearStage(LocalPlayer p, String why) {
+        stage = null;
+        stageY = Double.NaN;
+        walkY = destinationY();
+        goalChanged(p);
+        message = why;
+    }
+
+    /** The goal planned to changed (a stage set or done): what the walk remembers about its way to the goal starts
+     *  again (the hops' nearest stand, the floors tried, the height kept), and it plans afresh. */
+    private static void goalChanged(LocalPlayer p) {
+        if (job != null) job.cancelled = true;
+        job = null;
+        plan = null;
+        state = State.PLANNING;
+        seg = 1;
+        stuckReplans = 0;
+        noWaySeen = false;
+        hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
+        hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest.reset(); hops = 0; hopsBlind = 0; hopsOff = false; hopFails = 0;
+        hopOnSince = -1; hopTaken = false; hopLeft = View.NONE;
+        Layer2.newTry();
+    }
+
     private static void fail(String why) {
+        if (stage != null && stageRetries < STAGE_RETRIES && Minecraft.getInstance().player != null) {
+            // a stage not reached: on to the destination from here instead (a new loose route from here, a new stage)
+            stageRetries++;
+            if (replanWhy.size() < 200) replanWhy.add(tick + ": stage " + stagesTaken + " not reached (" + why + "): planning on to the destination");
+            clearStage(Minecraft.getInstance().player, "stage " + stagesTaken + " not reached: planning on to the destination");
+            if (job != null) job.cancelled = true;
+            job = null;
+            replan(Minecraft.getInstance(), FIRST_BUDGET);
+            return;
+        }
         if (job != null) job.cancelled = true;
         state = State.FAILED;
         message = why;
@@ -550,7 +638,7 @@ public final class Walk {
 
     private static void replan(Minecraft mc, long budget) {
         LocalPlayer p = mc.player;
-        int[] d = destination();
+        int[] d = aim();
         if (p == null || d == null) return;
         if (jobBusy()) return;   // one at a time
         if (forceDirect && plan == null) {
@@ -681,6 +769,11 @@ public final class Walk {
             gapSeg = gapFrom != View.NONE && gapTo != View.NONE && gapFrom != gapTo ? k : -1;
             return false;
         }
+        // on the ground on the move's landing at any tick, a copy-found jump still playing too (a jump chained on from
+        // the landing): made. Judged only once the play ended, the chained jump on from leg 43's loose landing (42,7)
+        // had taken the player 1.4 off it, the move counted as missed twice, though made both times, was blocked, and
+        // the walk went round, back over the cactus tops (f107 g3b: 24 health lost)
+        if (gapSeg >= 0 && ground && onLanding(p, gapTo)) { gapSeg = -1; return false; }
         // a copy-found jump still playing (a drop onto slime and the bounce off it is one) has not come down yet
         if (gapSeg < 0 || !ground || Layer2.playingRecipe()) return false;
         boolean fell = p.getY() < gapLow - 1.0;
@@ -689,12 +782,7 @@ public final class Walk {
             // a copy-found jump for a loose move that came down short of its landing at the take-off's height: counted
             // with the falls (the 03:14 case, f67: the step from a chorus stem onto the flower beside it, 93 jumps found
             // and played, each back on the stem)
-            View v = WalkTable.snapshot();
-            ChunkFloors lc = v.chunk(View.nodeX(gapTo), View.nodeZ(gapTo));
-            int li = lc == null ? -1 : v.index(gapTo);
-            boolean onLanding = li >= 0 && Math.abs(p.getY() - lc.h(li)) < 0.6
-                && Math.hypot(p.getX() - View.nodeX(gapTo) - 0.5, p.getZ() - View.nodeZ(gapTo) - 0.5) < 1.2;
-            if (!gapLoose || !gapRecipe || onLanding) return false;
+            if (!gapLoose || !gapRecipe || onLanding(p, gapTo)) return false;
         }
         String at = String.format(java.util.Locale.ROOT, "%d %d to %d %d", View.nodeX(gapFrom), View.nodeZ(gapFrom), View.nodeX(gapTo),
             View.nodeZ(gapTo));
@@ -713,6 +801,15 @@ public final class Walk {
         movesBlocked++;
         replanFor("a loose jump missed twice: planning round it (" + at + ")", mc);
         return true;
+    }
+
+    /** Whether the player stands on floor n (within 0.6 of its height, 1.2 of its column's middle). */
+    private static boolean onLanding(LocalPlayer p, long n) {
+        View v = WalkTable.snapshot();
+        ChunkFloors lc = v.chunk(View.nodeX(n), View.nodeZ(n));
+        int li = lc == null ? -1 : v.index(n);
+        return li >= 0 && Math.abs(p.getY() - lc.h(li)) < 0.6
+            && Math.hypot(p.getX() - View.nodeX(n) - 0.5, p.getZ() - View.nodeZ(n) - 0.5) < 1.2;
     }
 
     private static boolean gapLoose = false, gapRecipe = false;
@@ -1004,7 +1101,7 @@ public final class Walk {
             || !Settings.walkLayer2 || !Settings.walkDirect || !Settings.walkParkour) return null;
         // the jump being played lands on the hop's floor, block (lx, lz) (else it isn't across yet)
         if (lx != hop[0] || lz != hop[1] || Math.abs(y - hopY) >= 0.6) return null;
-        int[] d = destination();
+        int[] d = aim();
         if (d == null) return null;
         View view = WalkTable.snapshot();
         Hop.Best best = hopBest.copy();
@@ -1027,7 +1124,7 @@ public final class Walk {
      */
     static boolean chainHop(double[] next) {
         if (hop == null || plan == null || !plan.direct) return false;
-        int[] d = destination();
+        int[] d = aim();
         if (d == null) return false;
         View view = WalkTable.snapshot();
         int nx = (int) next[0], nz = (int) next[1];
@@ -1247,7 +1344,7 @@ public final class Walk {
             }
         }
         if (p == null || !active()) { measure(t0); return; }
-        int[] d = destination();
+        int[] d = aim();
         if (d == null) { cancel(); measure(t0); return; }
         AlphaFloor.update(mc, p, tick);
         int g = gait();
@@ -1286,6 +1383,16 @@ public final class Walk {
         } else if (lj != null && (!lj.done || lp != null && (lj.failure == null || lp.checkedTo == Integer.MAX_VALUE))) {
             // the loose search runs with nothing yet, or its plan is being walked: the strict job's own isn't taken
             if (plan == null) message = "No way by the proven moves: searching nearly possible jumps";
+        } else if (lj != null && lj.done && lp == null && lj.longRoute != null && lj.longRoute != stagedFrom && Settings.walkParkour
+                   && stagesTaken < STAGE_MAX && takeStage(p, lj.longRoute)) {
+            // a far destination whose loose route is too long for one walk (Loose.costBound): its first stretch is
+            // walked as a destination of its own, and from there the destination again (the Parkour Spiral in one
+            // walk, RW 2026-10-16 22:10: from the starting island to the pyramid tip the loose route is some ten times
+            // the estimate, 10874 ticks against a bound of 4656, so no loose route was taken at all)
+            stagedFrom = lj.longRoute;
+            replan(mc, FIRST_BUDGET);
+            measure(t0);
+            return;
         } else if (job != null && !staleJob) {
             Planner.Plan np = job.latest.get();
             // a routine refresh of a route still being walked takes only what its job ends with: the quick first
@@ -1438,6 +1545,16 @@ public final class Walk {
         double gx = d[0] + 0.5 - p.getX(), gz = d[1] + 0.5 - p.getZ();
         if (gx * gx + gz * gz <= 0.25 && (p.onGround() || p.isInWater() || holdingClimb(p))
             && (Double.isNaN(walkY) || Math.abs(p.getY() - walkY) < 0.6)) {
+            if (stage != null) {
+                // a stage on the way to a far destination: on to the destination (its loose route, if still too long,
+                // gives the next stage); the stages not reached count again from here (STAGE_RETRIES in a row: taking a
+                // new stage reset them, and the one-shot stood stuck through 35 stages at checkpoint 20, os123a)
+                stageRetries = 0;
+                clearStage(p, "at stage " + stagesTaken + ": planning on to the destination");
+                replan(mc, FIRST_BUDGET);
+                measure(t0);
+                return;
+            }
             state = State.ARRIVED;
             message = "Arrived";
             steering = false;
@@ -1813,7 +1930,11 @@ public final class Walk {
         // within reach, so it was walked back down onto the start and jumped up again, over and over: the course's
         // up_1p25_max_height, #54, 70 to 225 ticks of it, c52a-d)
         if (Math.abs(p.getY() - r.y[1]) < 0.3 && Math.hypot(r.x[1] - p.getX(), r.z[1] - p.getZ()) < 0.8) return false;
-        if (!(p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ()) < 1.5)) return false;
+        double away = Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ());
+        if (!(p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && away < 1.5)) return false;
+        // and only to a start beside: right over it there is no step to walk down (the start a ladder's floor under the
+        // feet, the player on top: it stood 0.08 from it with no keys, the one-shot's checkpoint 20, os123a, 5000 ticks)
+        if (away < 0.3) return false;
         // and only off the table's floors (its case: the player on ground the table has no floor for). Standing on a
         // floor of the table, the route's own landing at its very edge 0.80 from the middle (the test above wants 0.8),
         // the walk was taken back toward the route's start over the gap between: the course's tower_staircase, #64
@@ -1925,15 +2046,18 @@ public final class Walk {
     }
 
     static double keepAbove(double y) {
-        if (Double.isNaN(walkY) || Double.isNaN(peakY)) return Double.NaN;
+        // walking by stages, the destination's own height and place: a stage under the height climbed is a step of the
+        // way up, not a goal below
+        double gy = stage != null ? destinationY() : walkY;
+        if (Double.isNaN(gy) || Double.isNaN(peakY)) return Double.NaN;
         // only toward a goal in the loaded area: toward one past it (the Kine Parkour course's target) the hops' and the
         // nearest floor's way on goes down drops as often as up, and the course's own machinery is as it was
-        int[] d = destination();
+        int[] d = stage != null ? destination() : aim();
         if (d == null || !nearGoal(d)) return Double.NaN;
         double lim = peakY - KEEP_DROP;
         // fallen under it (off a jump, into a pool): a block under where it is, so there is a way back up to look for
         if (y < lim) lim = y - KEEP_DROP;
-        return walkY > lim + 1e-3 ? lim : Double.NaN;
+        return gy > lim + 1e-3 ? lim : Double.NaN;
     }
 
     /** Each walking tick: the highest stood (a route all the way to the goal moves it to where the player is: such a

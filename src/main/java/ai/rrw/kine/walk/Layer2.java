@@ -484,6 +484,64 @@ public final class Layer2 {
 
     /** The keys this tick at the rotation sent now. */
     public static int keys(LocalPlayer p) {
+        int k = keys0(p);
+        if (landsHurt(p)) {
+            // the tick that lands hurt (a fall past the safe fall, not onto a block that takes it; or onto a block that
+            // hurts with no hit in the last 10 ticks): the server sends the player's velocity on the hit, so a jump or a
+            // step made on the landing keeps nothing of its run. The one-shot dropped down leg 32's shaft onto a slab
+            // over the lava, sprint-jumped on landing, had its velocity set the next tick and came down in the lava
+            // between the slabs (os122a). Keys up and sneak on that tick; from the next, layer 2 plans from the state
+            // the server set
+            if (lastPressedTick != tick) { lastPressed = MoveState.SHIFT; lastPressedTick = tick; }
+            return MoveState.SHIFT;
+        }
+        return k;
+    }
+
+    /** Whether the player, in the air, comes down this tick onto a floor where the landing hurts (see keys). */
+    static boolean landsHurt(LocalPlayer p) {
+        BlockGrid g = grid;
+        if (g == null || p.onGround() || p.isInWater() || p.onClimbable() || p.isFallFlying()) return false;
+        var v = p.getDeltaMovement();
+        if (v.y >= 0) return false;
+        double next = (v.y - 0.08) * 0.98, y = p.getY();
+        // the highest floor under the box's four corners within this tick's fall; the block landed on, as the game
+        // picks it (the supporting block nearest the middle): the one under the middle's column if it is up there
+        double top = Double.NEGATIVE_INFINITY;
+        ai.rrw.kine.move.BlockInfo under = null;
+        boolean soft = false;
+        int cx = (int) Math.floor(p.getX()), cz = (int) Math.floor(p.getZ());
+        java.util.List<Object[]> found = new java.util.ArrayList<>();
+        for (int dx = -1; dx <= 1; dx += 2)
+            for (int dz = -1; dz <= 1; dz += 2) {
+                int bx = (int) Math.floor(p.getX() + dx * 0.299), bz = (int) Math.floor(p.getZ() + dz * 0.299);
+                for (int by = (int) Math.floor(y); by >= (int) Math.floor(y + next) - 1; by--) {
+                    if (!g.inside(bx, by, bz)) break;
+                    ai.rrw.kine.move.BlockInfo b = g.get(bx, by, bz);
+                    if (b.shape.empty) continue;
+                    double t = by + b.shape.top();
+                    if (t > y + 1e-6) continue;
+                    found.add(new Object[]{t, b, bx == cx && bz == cz});
+                    if (t > top) top = t;
+                    break;
+                }
+            }
+        for (Object[] f : found) {
+            if ((double) f[0] < top - 1e-6) continue;
+            ai.rrw.kine.move.BlockInfo b = (ai.rrw.kine.move.BlockInfo) f[1];
+            // a slime block or a bed among the blocks landed on: the landing bounces, and a sneak there would stop the
+            // bounce (and on slime let the fall hurt): never. RW's playtest of dev123 (23:55): onto slime from 4.25,
+            // the guard sneaked on the landing tick and every bounce failed until a try that came in lower
+            if ((b.flags & (ai.rrw.kine.move.BlockInfo.SLIME | ai.rrw.kine.move.BlockInfo.BED)) != 0) soft = true;
+            if (under == null || (boolean) f[2]) under = b;
+        }
+        if (soft || under == null || y + next > top + 1e-6) return false;   // a bounce, or not down this tick
+        if ((under.flags & ai.rrw.kine.move.BlockInfo.HARMFUL) != 0 && p.hurtTime == 0) return true;
+        double fall = ai.rrw.kine.compat.Compat.fallDistance(p) + (y - top);
+        return Math.floor((fall + 1e-6 - 3.0) * under.fallFactor) >= 1.0;
+    }
+
+    private static int keys0(LocalPlayer p) {
         if (recipeKeysTick == tick) return recipeKeys;
         int last = lastPressedTick == tick - 1 || lastPressedTick == tick ? lastPressed : 0;
         // a free action's keys come from its movement heading (its view may be 45 degrees off it: a strafe)
@@ -653,6 +711,16 @@ public final class Layer2 {
         }
         MoveState live = WorldSnapshot.state(p);
         if (RECIPE_LOG) recipeLog(phys, r, live, p);
+        if (recipeT == 0 && p.onGround() && waitForHit(p, r)) {
+            action = RunModel.STOP;
+            yaw = KillAura.lastSentYaw(p);
+            recipeKeys = 0;
+            recipeKeysTick = tick;
+            safe = true;
+            controlling = true;
+            lastWhy = "recipe: waiting for the next hit";
+            return true;
+        }
         if (!r.stillLands(phys, live, recipeT, r.lx, r.ly, r.lz)) {
             if (RECIPE_LOG) Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine recipe: tick %d dropped at %d of %d (%s)",
                 tick, recipeT, r.ticks, r.how));
@@ -680,6 +748,29 @@ public final class Layer2 {
         controlledTicks++;
         lastWhy = "recipe";
         return true;
+    }
+
+    /** Whether the block at (x, y, z) of grid g hurts (Harmful blocks allowed: a cactus). */
+    static boolean harmfulAt(BlockGrid g, int x, int y, int z) {
+        return g != null && g.inside(x, y, z) && (g.get(x, y, z).flags & ai.rrw.kine.move.BlockInfo.HARMFUL) != 0;
+    }
+
+    /**
+     * Standing on a block that hurts, whether recipe r's start waits: its take-off (the ticks up to its first jump, and
+     * one more) must fall before the next hit. A hit (every 10 ticks of contact; the client's hurtTime counts down from 10
+     * after one) has the server send the player's velocity, so a jump whose take-off tick takes a hit loses its push.
+     * Started right after a hit, the take-off has the hit's 10 ticks; a recipe whose jump comes later than that can't
+     * avoid one and doesn't wait.
+     */
+    private static boolean waitForHit(LocalPlayer p, Recipe r) {
+        if (grid == null || p.mainSupportingBlockPos.isEmpty()) return false;
+        var b = p.mainSupportingBlockPos.get();
+        if (!harmfulAt(grid, b.getX(), b.getY(), b.getZ())) return false;
+        int j = 0;
+        while (j < r.ticks && (r.keys[j] & MoveState.JUMP) == 0) j++;
+        int need = j + 2;
+        if (need > 9) return false;
+        return p.hurtTime < need;
     }
 
     /** Each played tick of a recipe against the copy's prediction from where its play began (KINE_RECIPE_LOG=1, a
@@ -941,6 +1032,11 @@ public final class Layer2 {
         MoveState s = WorldSnapshot.state(p);
         for (int t = recipeT; t < r.ticks; t++) phys.step(s, r.keys[t], r.yaw[t], 0f);
         if (!s.onGround) return;   // onto a climbable: it holds on there
+        // not on from a landing that hurts (a cactus's top, Harmful blocks allowed): the hit on landing has the server
+        // send the player's velocity, and the run the chained jump carries on with is gone (the Parkour Spiral's leg 43:
+        // landed on the first cactus top, the velocity set the next tick, the chained jump to the second came down 5
+        // short among the cacti, f107 and f118). The walk lands, stands and searches from rest (startsAfterHit)
+        if (s.hasSupport && harmfulAt(g, s.supX, s.supY, s.supZ)) return;
         double[] next = Walk.nextHopFrom(r.lx, r.lz, s.x, s.y, s.z);
         // along a loose route: its next loose move from this landing, chained on the same way (no hop to take over)
         boolean route = false;

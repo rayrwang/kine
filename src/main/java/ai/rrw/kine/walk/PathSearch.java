@@ -90,6 +90,23 @@ public final class PathSearch {
         return this;
     }
 
+    /** The height kept (keepAbove), NaN for none. */
+    double keptHeight() {
+        return keepAbove;
+    }
+
+    /** No way through water (wading or swimming) at or under this height (NaN: any), the start's floor aside: toward a
+     *  goal above, the kept height (Walk.keepAbove). The Parkour Spiral's sea kills (the map respawns a player in it on
+     *  the last checkpoint): toward its pyramid tip from the first level the cheapest loose way waded the sea round the
+     *  island (from (-7,51,-49) to (-0.5,51,51.5)), the walk's stage on it took it down into the sea, and it died (os121a).
+     *  Water a level's own floor height or above (puddles, a pool on the level) stays. */
+    private double waterMin = Double.NaN;
+
+    public PathSearch waterMin(double y) {
+        this.waterMin = y;
+        return this;
+    }
+
     private boolean goalFloor(double h) {
         return Double.isNaN(goalY) || Math.abs(h - goalY) < 0.6;
     }
@@ -315,6 +332,7 @@ public final class PathSearch {
             for (int k = 0; k < graph.n; k++) {
                 long to = graph.to[k];
                 if (!Double.isNaN(floorMin) && to != Long.MIN_VALUE && floorH(to) < floorMin - 1e-4) continue;
+                if (!Double.isNaN(waterMin) && to != Long.MIN_VALUE && to != start && floorH(to) <= waterMin + 1e-3 && swim(to)) continue;
                 if (graph.move[k] == Graph.EXIT) {
                     double sc = exitScore(g[id], graph.cost[k], sx, sz, View.nodeX(key), View.nodeZ(key));
                     if (sc < bestExitScore) { bestExitScore = sc; bestExit = id; }

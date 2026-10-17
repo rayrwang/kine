@@ -103,6 +103,8 @@ public final class Planner {
         public volatile Job loose = null;
         /** Why the loose job gave up without a route (for the walk's message and the report). */
         public volatile String looseWhy = "";
+        /** The loose route found but too long for one walk (Loose.costBound): the walk's stages come from it. */
+        public volatile PathSearch.Result longRoute = null;
         public final long submitted = System.nanoTime();
         final long id;
         Job(long id) { this.id = id; }
@@ -244,7 +246,7 @@ public final class Planner {
                             boolean gaps, boolean glides, long budget, double goalY, LooseContext loose, double keepAbove) {
         run(job, view, start, gx, gz, costs, margin, canSprint, gaps, glides, budget, new PathSearch(view, costs)
             .canSprint(canSprint).gaps(gaps).glides(glides).goalY(goalY).blocked(loose == null ? null : blockedNow(loose))
-            .doors(Graph.doorsOn).keepAbove(keepAbove),
+            .doors(Graph.doorsOn).keepAbove(keepAbove).waterMin(keepAbove),
             goalY, loose);
     }
 
@@ -318,7 +320,7 @@ public final class Planner {
             if (pass == 0 && loose != null && job.loose == null && !job.cancelled && view.known(gx, gz)
                 && Math.hypot(gx - View.nodeX(start), gz - View.nodeZ(start)) <= Walk.NEAR_GOAL
                 && (noWayOn(r, view, start, gx, gz, goalY, costs) || loose.first() && !r.found))
-                job.loose = loose(job, view.copy(), start, gx, gz, goalY, costs, margin, canSprint, glides, loose);
+                job.loose = loose(job, view.copy(), start, gx, gz, goalY, costs, margin, canSprint, glides, loose, search.keptHeight());
             if (r.exhausted && !r.nearest) { job.failure = r.reason; job.exhausted = true; return; }
             if (!r.found && !r.partial && !r.nearest) { if (pass == 0) job.failure = r.reason.isEmpty() ? "no route" : r.reason; return; }
             if (r.partial && pass == 0) {
@@ -369,11 +371,11 @@ public final class Planner {
      * Loose.costBound, or the job's time runs out.
      */
     private static Job loose(Job parent, View view, long start, int gx, int gz, double goalY, Costs costs, double margin,
-                             boolean canSprint, boolean glides, LooseContext ctx) {
+                             boolean canSprint, boolean glides, LooseContext ctx, double waterMin) {
         Job job = new Job(++ids);
         LOOSE.submit(() -> {
             try {
-                runLoose(job, parent, view, start, gx, gz, goalY, costs, margin, canSprint, glides, ctx);
+                runLoose(job, parent, view, start, gx, gz, goalY, costs, margin, canSprint, glides, ctx, waterMin);
             } catch (Throwable t) {
                 Kine.LOGGER.warn("Kine walk: loose search failed", t);
                 job.failure = "loose search error";
@@ -389,7 +391,7 @@ public final class Planner {
     public static volatile int looseSearches = 0, looseChecksFailed = 0, looseRoutesChecked = 0;
 
     private static void runLoose(Job job, Job parent, View view, long start, int gx, int gz, double goalY, Costs costs,
-                                 double margin, boolean canSprint, boolean glides, LooseContext ctx) throws InterruptedException {
+                                 double margin, boolean canSprint, boolean glides, LooseContext ctx, double waterMin) throws InterruptedException {
         long t0 = System.nanoTime();
         java.util.function.BooleanSupplier stop = () -> job.cancelled || parent.cancelled || System.nanoTime() - t0 > LOOSE_JOB_NANOS;
         double bound = Loose.costBound(costs, start, gx, gz, goalY, view);
@@ -408,7 +410,7 @@ public final class Planner {
                 if (timeUp.getAsBoolean() && !job.cancelled && !parent.cancelled) publishPrefix(job, view, prefixOf, prefixEnd, gx, gz, costs, margin, canSprint, glides);
                 return;
             }
-            PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(true).glides(glides).loose(true).goalY(goalY)
+            PathSearch search = new PathSearch(view, costs).canSprint(canSprint).gaps(true).glides(glides).loose(true).goalY(goalY).waterMin(waterMin)
                 .blocked(blockedNow(ctx)).penalties(penaltiesNow(doubtfulEdges)).doors(Graph.doorsOn);
             PathSearch.Result r = search.run(start, gx, gz, 2.0, System.nanoTime() + searchNanos, 2_000_000, true);
             job.passes = it + 1;
@@ -428,6 +430,7 @@ public final class Planner {
                 return;
             }
             if (r.cost - Loose.harmCost(view, r, costs) > bound) {
+                job.longRoute = r;
                 job.failure = String.format(java.util.Locale.ROOT, "only a loose way round far (%.0f ticks against at most %.0f)", r.cost, bound);
                 parent.looseWhy = job.failure;
                 looseLog(job, it, r, job.failure);
