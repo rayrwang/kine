@@ -144,6 +144,10 @@ final class NeoTemplates {
      *  rest a few hundredths off the spot, the sneak's smallest step being some 0.06). */
     static final float[] AIR_OFFSETS = {0f, 1f, -1f, 2.5f, -2.5f, 5f, -5f};
     static final int[] JUMP_SHIFTS = {0, -1, 1};
+    /** A log line for each fit of the templates whose id starts with KINE_FIT_LOG's value (a measuring tool, off by
+     *  default). */
+    static final String FIT_LOG_ID = System.getenv().getOrDefault("KINE_FIT_LOG", "");
+    static final boolean FIT_LOG = !FIT_LOG_ID.isEmpty();
     /** The spots a little forward (and one back) of a template's own, along its start, tried when none of the
      *  variations land from the walk to its own (blocks). */
     static final double[] SPOT_SHIFTS = {0.01, 0.02, -0.01};
@@ -202,7 +206,12 @@ final class NeoTemplates {
             // is the block below it, a slab's its own
             // (a held climbable landing: its block in play may be named by a node at its bottom or its top, a block
             // either way; the copy's hold check decides)
-            if (Math.abs(by + t.landingFeet() - (l[1] + 1)) > (t.climb() ? 1.05 : 0.55) || Math.abs(s.y - (by + t.feet())) > 0.02) return null;
+            if (Math.abs(by + t.landingFeet() - (l[1] + 1)) > (t.climb() ? 1.05 : 0.55) || Math.abs(s.y - (by + t.feet())) > 0.02) {
+                if (FIT_LOG && t.id().startsWith(FIT_LOG_ID)) Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                    "Kine fit: %s from %d %d %d to %s: heights (feet %.3f vs %.3f, landing %.3f vs %d)", t.id(), bx, by, bz,
+                    java.util.Arrays.toString(l), s.y, by + t.feet(), by + t.landingFeet(), l[1] + 1));
+                return null;
+            }
             for (int m = 0; m <= 1; m++)
                 for (int r = 0; r < 4; r++) {
                     double[] o = turn(t.ldx(), t.ldz(), r, m == 1);
@@ -210,6 +219,9 @@ final class NeoTemplates {
                     if (!dropped.isEmpty() && dropped.contains(t.id() + " r" + r + (m == 1 ? "m" : ""))) continue;
                     fitsTried++;
                     Recipe found = fitOne(phys, s, sent, bx, by, bz, l, t, r, m == 1, shifted);
+                    if (FIT_LOG && t.id().startsWith(FIT_LOG_ID)) Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                        "Kine fit: %s r%d%s from %d %d %d (at %.3f %.3f %.3f) to %s%s, safe fall %.2f: %s", t.id(), r, m == 1 ? "m" : "", bx, by, bz,
+                        s.x, s.y, s.z, java.util.Arrays.toString(l), shifted ? " shifted" : "", Recipe.safeFall, found == null ? "none" : found.how));
                     if (found != null) { fitsFound++; return found; }
                 }
         }
@@ -233,7 +245,11 @@ final class NeoTemplates {
             // a spot off the block stood on (a template's run-up starts back along a runway): the longer walk there
             walk = Math.hypot(spx - s.x, spz - s.z) > 1.0 ? Recipe.approachFar(phys, s, sent, spx, spz)
                 : Recipe.approach(phys, s, sent, spx, spz);
-            if (walk == null) return null;
+            if (walk == null) {
+                if (FIT_LOG && t.id().startsWith(FIT_LOG_ID)) Kine.LOGGER.info(String.format(java.util.Locale.ROOT,
+                    "Kine fit: %s r%d%s: no walk to its spot %.2f %.2f from %.3f %.3f", t.id(), r, m ? "m" : "", spx, spz, s.x, s.z));
+                return null;
+            }
             at = Recipe.after(phys, s, walk);
             view = walk.yaw[walk.ticks - 1];
         }

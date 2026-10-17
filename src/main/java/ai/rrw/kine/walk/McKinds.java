@@ -116,6 +116,7 @@ public final class McKinds {
         if (st.is(BlockTags.FIRE) || st.is(Blocks.CACTUS) || st.is(Blocks.SWEET_BERRY_BUSH) || st.is(Blocks.WITHER_ROSE)
             || st.is(Blocks.CAMPFIRE) || st.is(Blocks.SOUL_CAMPFIRE) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.POINTED_DRIPSTONE))
             flags |= Kind.HAZARD;
+        if (st.is(Blocks.CACTUS)) flags |= Kind.HARMFUL;   // (not berry bushes: WorldSnapshot)
         if (st.is(Blocks.MAGMA_BLOCK)) flags |= Kind.FLOOR_HAZARD;
         if (climb || st.is(BlockTags.CLIMBABLE) && !st.is(Blocks.SCAFFOLDING)) flags |= Kind.CLIMB;
         // slime is a floor (no longer avoided: layer 2's copy bounces on it, 0be5aef, and its friction is the block's):

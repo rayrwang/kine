@@ -38,6 +38,9 @@ public final class ChunkFloors {
     /** Plain but for a climbable without a collision at the feet (a vine hanging over the grass): a jump up onto it or
      *  a drop down into it is as plain a move as onto a plain floor. */
     public static final int CLIMB_PLAIN = 16;
+    /** A floor on or in a harmful block (a cactus's top), only with Harmful blocks allowed
+     *  (ColumnScan.harmfulFloors): standing there hurts. */
+    public static final int HARMFUL = 32;
 
     public static final int WINDOW = 4;
     /** Free heights are measured up to this far above a floor (a fall into water can be longer than a safe fall). */

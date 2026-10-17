@@ -120,6 +120,9 @@ public final class WorldSnapshot {
                 || st.is(Blocks.SOUL_CAMPFIRE) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.POINTED_DRIPSTONE)
                 || st.getFluidState().is(net.minecraft.tags.FluidTags.LAVA))
                 flags |= BlockInfo.HAZARD;
+            // (not sweet berry bushes: their slowdown, Entity.makeStuckInBlock, isn't in the copy, so a jump through one
+            // came down short live: the course's sweet_berry_magma, #69, fell 14 with them allowed, f99)
+            if (st.is(Blocks.CACTUS)) flags |= BlockInfo.HARMFUL;
             if (st.is(BlockTags.CLIMBABLE) || st.is(Blocks.SLIME_BLOCK) || st.is(Blocks.HONEY_BLOCK) || st.is(BlockTags.BEDS)
                 || st.is(Blocks.COBWEB) || st.is(Blocks.SCAFFOLDING) || st.is(Blocks.POWDER_SNOW) || st.is(Blocks.BUBBLE_COLUMN)
                 || st.is(Blocks.NETHER_PORTAL) || st.is(Blocks.END_PORTAL) || st.is(Blocks.END_GATEWAY))

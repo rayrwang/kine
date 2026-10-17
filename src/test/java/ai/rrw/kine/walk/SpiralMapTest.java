@@ -21,6 +21,12 @@ public class SpiralMapTest {
         String tsv = System.getenv("KINE_SPIRAL_TSV");
         Assumptions.assumeTrue(tsv != null && System.getenv("KINE_SPIRAL_CPS") != null, "KINE_SPIRAL_TSV and KINE_SPIRAL_CPS not set");
         if (map != null) return;
+        // KINE_SPIRAL_HARM: Harmful blocks allowed, half hearts (the table's harmful floors and the checks' allowance)
+        String harm = System.getenv("KINE_SPIRAL_HARM");
+        if (harm != null && Integer.parseInt(harm) > 0) {
+            ColumnScan.harmfulFloors = true;
+            Recipe.harmTicks = Integer.parseInt(harm) * Recipe.HARM_TICKS_PER_HP;
+        }
         long t0 = System.nanoTime();
         map = SpiralMap.load(Path.of(tsv));
         long t1 = System.nanoTime();
@@ -236,7 +242,7 @@ public class SpiralMapTest {
                 last = r;
                 if (!r.found) { verdict = "no route (" + describe(r) + ")"; break; }
                 double bound = Loose.costBound(c, start, b.x(), b.z(), b.y(), view);
-                if (r.cost > bound) { verdict = String.format(Locale.ROOT, "too long (%.0f > %.0f)", r.cost, bound); break; }
+                if (r.cost - Loose.harmCost(view, r, c) > bound) { verdict = String.format(Locale.ROOT, "too long (%.0f > %.0f)", r.cost, bound); break; }
                 int[] n = {0};
                 long deadline = t0 + legBudget;
                 java.util.Set<Long> priced = new java.util.HashSet<>();

@@ -141,6 +141,24 @@ final class Loose {
         return Math.max(4.0 * est, est + 600.0) + c.damageAllowed * c.damageTicks;
     }
 
+    /**
+     * The price in route r of its stops on harmful floors (Harmful blocks allowed: Graph.hazardCost's HARM_HITS a
+     * floor), left out when a route is held against costBound: leg 43's two cactus tops put its way over the bound by
+     * their price alone. (Added to the bound instead, the allowance's whole price, every loose route toward a far goal
+     * could be that much longer: the Kine Parkour course's walk dropped off at #64, tower_staircase, f97.)
+     */
+    static double harmCost(View v, PathSearch.Result r, Costs c) {
+        if (r == null || r.path == null) return 0.0;
+        double sum = 0.0;
+        for (int i = 1; i < r.path.length; i++) {
+            long n = r.path[i];
+            ChunkFloors ch = v.chunk(View.nodeX(n), View.nodeZ(n));
+            int idx = ch == null ? -1 : v.index(n);
+            if (idx >= 0 && (ch.flags(idx) & ChunkFloors.HARMFUL) != 0) sum += Graph.HARM_HITS * Graph.HARM_PRICE;
+        }
+        return sum;
+    }
+
     /** How far a bounce off slime is offered: from the take-off to the slime, and from the slime to the landing (blocks,
      *  centre to centre): about a level jump's reach each way. */
     static final double BOUNCE_REACH = 6.2;

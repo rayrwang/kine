@@ -192,15 +192,28 @@ public final class KillAura {
                 if (pre != null) want = pre;
             }
         }
-        if (!turned() && want[0] == viewYaw && want[1] == viewPitch) { holdClicks(mc); return; }   // idle, on your view: hands off
+        if (!turned() && want[0] == viewYaw && want[1] == viewPitch) { yawCarry = 0.0; holdClicks(mc); return; }   // idle, on your view: hands off
         float[] next = MouseTurn.limit(sentYaw, sentPitch, want[0], want[1], TURN_BUDGET);
-        int[] c = MouseTurn.countsTo(p, next[0], next[1]);
+        // the yaw reached is the whole mouse counts nearest the one wanted, up to half a count off it (0.075 degrees at
+        // the default sensitivity, 0.3 at 200%): held on one heading, the same count every tick, so the same error
+        // every tick, and the walk's copy-made inputs drifted sideways by it (the Kine Parkour course's #108: 0.0079
+        // after 83 ticks of a template's walk to its spot, KINE_RECIPE_LOG, c108h, and the template was dropped). The
+        // part not reached is carried to the next tick's aim (error diffusion), so over the ticks the heading averages
+        // to the one wanted; not while the turn is cut short by the budget (a big turn still under way)
+        boolean whole = Math.abs(Mth.wrapDegrees(next[0] - want[0])) < 1e-3;
+        float aim = whole ? (float) (next[0] + yawCarry) : next[0];
+        int[] c = MouseTurn.countsTo(p, aim, next[1]);
         if (c[0] != 0 || c[1] != 0) {
             apply(MouseTurn.by(p, c[0], c[1]));
             Compat.pick(mc, 1.0F);
         }
+        double left = Mth.wrapDegrees(aim - p.getYRot());
+        yawCarry = whole && Math.abs(left) <= MouseTurn.sens(mc, p) * 0.15 ? left : 0.0;
         holdClicks(mc);
     }
+
+    /** The yaw a tick's whole mouse counts fell short of what was wanted, carried to the next tick's aim. */
+    private static double yawCarry = 0.0;
 
     /** Once the player has sent this tick's rotation (VanillaActions, after the entities tick): note it and turn back
      *  to your view. */

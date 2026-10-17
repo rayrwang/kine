@@ -367,7 +367,12 @@ final class RunModel implements Model<RunWorld> {
         if (air0 && s.onGround && !s.inWater && (s.touched & BlockInfo.SLIME) == 0
             && fall > Costs.fallLimit(maxFall, s.landedFallFactor)) c += UNSAFE;
         if ((s.onGround || s.inWater) && s.y < keepAbove - 1e-3) c += UNSAFE;
-        if ((s.touched & BlockInfo.HAZARD) != 0) c += UNSAFE;
+        if ((s.touched & BlockInfo.HAZARD) != 0) {
+            // a cactus within the allowance (Harmful blocks allowed): its damage, a tick's share of a
+            // half heart at the planner's price of one (Graph.HARM_PRICE); else, as every hurting block, unsafe
+            if (Recipe.harmOk(s)) c += harmTickCost;
+            else c += UNSAFE;
+        }
         // a landing on the edge of what holds it over lava (within EDGE_MARGIN): live it comes down a hundredth off the
         // copy's and slides off (RW's far walk cleg1, f61: layer 2 hopping the slabs over the Parkour Spiral's lava field)
         if (air0 && s.onGround && !s.inWater && phys.edgeOverHazard(s, EDGE_MARGIN, 6.0)) c += UNSAFE;
@@ -547,6 +552,9 @@ final class RunModel implements Model<RunWorld> {
      *  scored better, and each time the walk turned back along the route it turned round again (RW's playtest of
      *  ed08088: leg 3 on the bottom level by the sweet berry bushes, leg 1 walked from leg 0's start). */
     double offFieldFloor = 0.0;
+    /** The cost of a tick touching a harmful block within the allowance (Recipe.harmOk): a tenth of a half heart at the
+     *  walk's price of one for harmful blocks (Graph.HARM_PRICE), set by Layer2. */
+    double harmTickCost = 10.0;
 
     /**
      * What sets offFieldFloor for each search (Layer2's, and the unit tests' Layer2Sim): the field's value where the run

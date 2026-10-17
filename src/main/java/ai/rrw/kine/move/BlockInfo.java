@@ -58,6 +58,13 @@ public final class BlockInfo {
      *  from inside their cell (entityInside), which the box finds: a carpet on a cactus is safe to stand on, and the
      *  copy had counted the cactus under it as touched (the Parkour Spiral's cactus garden, 2026-10-15). */
     public static final int STEP_HURTS = 131072;
+    /** Of the HAZARD blocks, one that only hurts a little at a time, by touch (cactus: a half heart at most every half
+     *  second): the walk may touch it at its damage with Harmful blocks allowed (Settings.walkHarmfulBlocks). Not sweet
+     *  berry bushes: their slowdown isn't copied. */
+    public static final int HARMFUL = 262144;
+    /** Only in MoveState.touched: a HAZARD that isn't HARMFUL (lava, fire, magma under the feet, a glide into a wall,
+     *  ...), which Harmful blocks allowed never lets the walk touch. */
+    public static final int DEADLY = 524288;
 
     /**
      * ScaffoldingBlock.getCollisionShape for an entity whose feet were at entityBottom when its collision context was

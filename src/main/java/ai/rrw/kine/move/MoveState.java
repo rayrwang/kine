@@ -57,6 +57,8 @@ public final class MoveState {
     // What the last steps touched, for the planner (not game state)
     /** The player's box touched or stood on a block the copy leaves out or that hurts (BlockInfo flags). */
     public int touched;
+    /** Ticks the box has touched a HARMFUL block (BlockInfo.HARMFUL: a cactus), for its damage. */
+    public int harmTicks;
     /** A jump pressed in the air with a glider worn would open it: the copy stops being right. */
     public boolean wouldGlide;
     /** The last landing's fall (for the elytra guardian's damage rules, not game state): the fall distance the landing
@@ -85,7 +87,7 @@ public final class MoveState {
         hasSupport = o.hasSupport; onGroundNoBlocks = o.onGroundNoBlocks;
         supX = o.supX; supY = o.supY; supZ = o.supZ;
         lastKeys = o.lastKeys; lastMoveForward = o.lastMoveForward;
-        touched = o.touched; wouldGlide = o.wouldGlide;
+        touched = o.touched; harmTicks = o.harmTicks; wouldGlide = o.wouldGlide;
         landedFall = o.landedFall; landedFallFactor = o.landedFallFactor;
     }
 

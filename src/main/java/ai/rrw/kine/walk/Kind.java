@@ -34,6 +34,9 @@ public final class Kind {
     public static final int SLOW = 128;
     /** A closed door the walk can open by hand (a wooden door: DoorOpener); iron ones need redstone. */
     public static final int CLOSED_DOOR = 256;
+    /** Of the HAZARD kinds, one that hurts only a little at a time by touch (cactus): with Harmful blocks allowed
+     *  (ColumnScan.harmfulFloors) its top is a floor, priced by its damage. */
+    public static final int HARMFUL = 512;
 
     /** The middle of a column the player's box covers when standing at its centre: 0.2 to 0.8 on x and z. */
     public static final double FOOT_LO = 0.2, FOOT_HI = 0.8;
@@ -142,6 +145,7 @@ public final class Kind {
         if ((flags & LAVA) != 0) moveFlags |= BlockInfo.FLUID | BlockInfo.HAZARD;
         if ((flags & (HAZARD | FLOOR_HAZARD)) != 0) moveFlags |= BlockInfo.HAZARD;
         if ((flags & FLOOR_HAZARD) != 0) moveFlags |= BlockInfo.STEP_HURTS;   // magma: hurts to stand on (stepOn)
+        if ((flags & HARMFUL) != 0) moveFlags |= BlockInfo.HARMFUL;   // cactus: a little at a time
         if ((flags & (CLIMB | AVOID)) != 0) moveFlags |= BlockInfo.SPECIAL;
         return new Kind(id, name, new BlockInfo(shape, friction, speedFactor, 1.0F, moveFlags), boxes, flags, drawnTop);
     }

@@ -45,18 +45,38 @@ public final class ColumnScan {
         return b.build(STAMPS.incrementAndGet());
     }
 
+    /**
+     * Harmful blocks allowed (Settings.walkHarmfulBlocks, with Parkour; WalkTable rebuilds the table when it changes):
+     * a harmful kind (Kind.HARMFUL: cactus) is no hazard height and blocks no body here; a cactus's top is a floor (and
+     * a floor with a harmful kind without collision at the feet or the head would be one: none now), flagged
+     * ChunkFloors.HARMFUL
+     * (priced by their damage: Graph.hazardCost). Off: as before, a hazard like the rest.
+     */
+    static volatile boolean harmfulFloors = false;
+
+    /** Whether kind k is passable or stood on here at its damage (harmfulFloors and a harmful kind). */
+    static boolean harmful(Kind k, boolean on) {
+        return on && k.is(Kind.HARMFUL) && !k.is(Kind.LAVA) && !k.is(Kind.AVOID);
+    }
+
+    /** Whether kind k blocks the body here (Kind.blocksBody, but for a harmful kind with harmfulFloors). */
+    static boolean blocks(Kind k, boolean on) {
+        return k.blocksBody() && !harmful(k, on);
+    }
+
     /** One column's floors, in height order, into `out`; its hazard heights into `haz`; returns how many hazards. */
     static int column(int[] ids, int minY, List<ChunkFloors.Floor> out, int[] haz) {
         int n = ids.length, nHaz = 0;
+        boolean hf = harmfulFloors;
         for (int yi = 0; yi < n; yi++) {
             Kind k = Palette.get(ids[yi]);
             int y = minY + yi;
-            if (k.blocksBody()) haz[nHaz++] = y;
+            if (blocks(k, hf)) haz[nHaz++] = y;
 
             // GROUND: the top of this block's collision inside the footprint
-            if (!Float.isNaN(k.footTop) && !k.blocksBody() && !k.is(Kind.FLOOR_HAZARD)) {
+            if (!Float.isNaN(k.footTop) && !blocks(k, hf) && !k.is(Kind.FLOOR_HAZARD)) {
                 float h = y + k.footTop;
-                float ceil = ceiling(ids, minY, yi + 1, h, true);
+                float ceil = ceiling(ids, minY, yi + 1, h, true, hf);
                 float head = Math.min(ceil - h, ChunkFloors.MAX_CLEAR);
                 if (head >= 1.8F - 1e-5F) {
                     int fyi = (int) Math.floor(h + 1e-4) - minY;   // the block the feet are in
@@ -69,11 +89,12 @@ public final class ColumnScan {
                         f.head = head;
                         f.fb = y;
                         f.cellTop = y + k.cellTop;
-                        f.cellClear = Math.min(ceiling(ids, minY, yi + 1, f.cellTop, false) - f.cellTop, ChunkFloors.MAX_CLEAR);
+                        f.cellClear = Math.min(ceiling(ids, minY, yi + 1, f.cellTop, false, hf) - f.cellTop, ChunkFloors.MAX_CLEAR);
                         int fl = 0;
                         if (feet.is(Kind.WATER) || k.is(Kind.WATER)) fl |= ChunkFloors.WADE;
                         if (feet.is(Kind.CLIMB)) fl |= ChunkFloors.CLIMB_FEET;
                         if (k.is(Kind.SLOW) || feet.is(Kind.SLOW)) fl |= ChunkFloors.SLOW;
+                        if (harmful(k, hf) || harmful(feet, hf) || harmful(headK, hf)) fl |= ChunkFloors.HARMFUL;
                         if (k.topFull && k.footTop == k.cellTop && f.cellClear >= f.head - 1e-5F)
                             fl |= feet.is(Kind.CLIMB) ? (feet.empty() ? ChunkFloors.CLIMB_PLAIN : 0) : ChunkFloors.SIMPLE;
                         f.flags = fl;
@@ -172,6 +193,11 @@ public final class ColumnScan {
      *  anywhere in the cell when !footprint), or the bottom of a block not to be entered; scanning blocks from index j0
      *  up, at most MAX_CLEAR above `from`. */
     private static float ceiling(int[] ids, int minY, int j0, float from, boolean footprint) {
+        return ceiling(ids, minY, j0, from, footprint, false);
+    }
+
+    /** As above; hf: harmfulFloors (a harmful kind without a collision, a berry bush, is no ceiling then). */
+    private static float ceiling(int[] ids, int minY, int j0, float from, boolean footprint, boolean hf) {
         int n = ids.length;
         float cap = from + ChunkFloors.MAX_CLEAR;
         for (int j = Math.max(0, j0); j < n; j++) {
@@ -186,7 +212,7 @@ public final class ColumnScan {
                 // the box spans `from`: there is no free space here at all
                 return from;
             }
-            if (k.blocksBody()) return Math.max(from, Math.min(y, cap));
+            if (blocks(k, hf)) return Math.max(from, Math.min(y, cap));
         }
         return Math.max(from, Math.min(minY + n, cap));
     }

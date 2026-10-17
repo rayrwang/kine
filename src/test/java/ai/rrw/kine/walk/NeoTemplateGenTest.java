@@ -1031,6 +1031,10 @@ public class NeoTemplateGenTest {
     void generate() throws Exception {
         String out = System.getenv("KINE_NEO_GEN");
         if (out == null) return;
+        // KINE_NEO_FALL_HP: Fall damage allowed (half hearts) for the landings (Recipe.hurts): the course's down jumps
+        // (down_5m1, down_6m3, ...) land from falls past the safe 3, which a walk with the setting may take
+        String fallHp = System.getenv("KINE_NEO_FALL_HP");
+        if (fallHp != null) Recipe.safeFall = Costs.withFallDamage(Costs.LAYER2, Integer.parseInt(fallHp)).safeFall;
         String only = System.getenv("KINE_NEO_IDS");
         int threads = Math.max(1, Math.min(4, Integer.parseInt(System.getenv().getOrDefault("KINE_NEO_THREADS", "4"))));
         int width = Integer.parseInt(System.getenv().getOrDefault("KINE_NEO_WIDTH", "3000"));

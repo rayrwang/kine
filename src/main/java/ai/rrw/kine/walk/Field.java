@@ -73,7 +73,7 @@ public final class Field {
     boolean[] joined;
 
     /** Walking without a route: the floors the graph joins to the goal within `radius` (horizontal) of (x, z), from
-     *  3.2 below to 1.3 above y, best (lowest time plus the straight line to them) first; at most `max`. */
+     *  SHALLOW below to 1.3 above y, best (lowest time plus the straight line to them) first; at most `max`. */
     int[] joinedNear(double x, double y, double z, double radius, int max) {
         return joinedNear(x, y, z, radius, max, false);
     }
@@ -81,12 +81,18 @@ public final class Field {
     /** As above; climb: a climbable's cells joined to the goal count too (the jump search's landings: ladder_5b's
      *  ladder, trapdoor_ladder's, whose templates land held on them; detect_c14 searched only the floors). */
     int[] joinedNear(double x, double y, double z, double radius, int max, boolean climb) {
+        return joinedNear(x, y, z, radius, max, climb, SHALLOW);
+    }
+
+    /** As above, from `down` under the feet (SHALLOW, or below() for the jump search when nothing shallower is
+     *  joined in reach). */
+    int[] joinedNear(double x, double y, double z, double radius, int max, boolean climb, double down) {
         if (joined == null) return new int[0];
         java.util.List<double[]> c = new java.util.ArrayList<>();
         for (int i = 0; i < n; i++) {
             if (!joined[i] || !(type[i] == ChunkFloors.GROUND || climb && type[i] == ChunkFloors.CLIMB)) continue;
             double d = Math.hypot(px[i] - x, pz[i] - z);
-            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3 && !scaffoldTop(i, y)) continue;
+            if (d > radius || py[i] < y - down || py[i] > y + 1.3 && !scaffoldTop(i, y)) continue;
             // the floors first, then the climbables (a jump onto a floor before one onto a ladder: detect_c15's first
             // walk took ladder_diagonal by its ladder, and the walk on from it fell)
             c.add(new double[]{value[i] + d * rate + (type[i] == ChunkFloors.CLIMB ? 1e9 : 0), i});
@@ -95,6 +101,18 @@ public final class Field {
         int[] out = new int[Math.min(max, c.size())];
         for (int k = 0; k < out.length; k++) out[k] = (int) c.get(k)[1];
         return out;
+    }
+
+    /** How far under the feet a joined floor is offered as a landing first (blocks): a jump's fall from its apex within
+     *  the safe 3.9. */
+    static final double SHALLOW = 3.2;
+
+    /** And when nothing that shallow is joined in reach: more by what the jump search may land from past the safe fall
+     *  (Recipe.safeFall: Fall damage allowed). At 3.2 alone the course's down_7p0625m5_record (#109), 5 down, was never a
+     *  landing, so its template was never searched for. Only then: offered at once, deeper floors came before shallower
+     *  ones (as the hops' deeper floors did at #22, f113). */
+    static double below() {
+        return SHALLOW + Math.max(0.0, Recipe.safeFall - Recipe.SAFE_FALL);
     }
 
     /** How far above the feet a scaffolding column's top may be for joinedNear (blocks): a jump into its side and the
@@ -143,13 +161,19 @@ public final class Field {
     }
 
     /**
-     * Floors joined to the goal within radius horizontally and 3.2 below to 1.3 above y that bring the walk nearer it than
+     * Floors joined to the goal within radius horizontally and SHALLOW below (below() if none) to 1.3 above y that bring the walk nearer it than
      * the floor at (x, y, z) (their value less than its, by at least 0.5; every joined one when the walk's floor is not
      * joined), most progress first, at most max; each {x, y, z} as the searches name a landing. The templates' landings:
      * on RW's triple neo the floor right past the wall was not among joinedNear's four (the walkway past it and the
      * platform after it came first), so the triple template's landing, 4 ahead, was never tried.
      */
     int[][] progressNear(double x, double y, double z, double radius, int max) {
+        int[][] shallow = progressNear(x, y, z, radius, max, SHALLOW);
+        return shallow.length > 0 || below() <= SHALLOW + 1e-9 ? shallow : progressNear(x, y, z, radius, max, below());
+    }
+
+    /** As above, from `down` under the feet. */
+    int[][] progressNear(double x, double y, double z, double radius, int max, double down) {
         if (joined == null) return new int[0][];
         int here = nodeAt(x, y, z);
         double hv = here >= 0 && joined[here] ? value[here] : Double.POSITIVE_INFINITY;
@@ -157,7 +181,7 @@ public final class Field {
         for (int i = 0; i < n; i++) {
             if (!joined[i] || type[i] != ChunkFloors.GROUND || i == here) continue;
             double d = Math.hypot(px[i] - x, pz[i] - z);
-            if (d > radius || py[i] < y - 3.2 || py[i] > y + 1.3) continue;
+            if (d > radius || py[i] < y - down || py[i] > y + 1.3) continue;
             if (!(value[i] < hv - 0.5)) continue;
             c.add(new double[]{value[i], i});
         }
@@ -731,7 +755,19 @@ public final class Field {
                     if (j >= 0 && j != own && value[j] < f0 && py[j] > py[own] + 0.4 && py[j] <= py[own] + 1.6
                         && (next < 0 || value[j] < value[next])) next = j;
                 }
-            if (next >= 0) f0 = f0 + (value[next] - f0) * Math.max(0.0, Math.min(1.0, y - py[own]));
+            if (next >= 0) {
+                f0 = f0 + (value[next] - f0) * Math.max(0.0, Math.min(1.0, y - py[own]));
+                // standing on the ladder's top from beside its column (the box over its edge: the ladder's floor is
+                // this place's only as a neighbour's, nodeAt), the floor it climbs off onto is still that far across:
+                // its time over the way there. Without it the ladder's top edge was worth the climb-off floor itself,
+                // and layer 2 stood on the edge pressing on toward the jump beyond (the aim) with the shift key, never
+                // stepping onto the take-off: the Parkour Spiral's leg 4 at (36.49,81,33.70), 1.3 from the take-off
+                // (35,81,34) its jump goes from, Stuck (f61, f71, f92, f94, l4b). Not in the ladder's own column: there
+                // it made the top of the climb worth less than just under it, and on leg 20 layer 2 hung at the top
+                // of the ladder on the pillar's side and never climbed off (l20b, da0458a)
+                if (y - py[own] >= 1.0 - 1e-6 && next != up && ((int) Math.floor(x) != bx || (int) Math.floor(z) != bz))
+                    f0 += Math.hypot(px[next] - x, pz[next] - z) * rate;
+            }
             // on a climbable the column is the place: no blend with the columns beside it. Blended, the wall a vine
             // hangs on (no floor at the climber's height) counted a sprint's time more, so pressing into the wall to
             // climb scored worse than hanging still at the vine's foot (the course's vine_jump, RW 2026-10-14)

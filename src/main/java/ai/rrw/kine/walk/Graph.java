@@ -1023,11 +1023,22 @@ final class Graph {
 
     /** The extra for a floor next to hazards: each of the eight columns around with one at body height. */
     double hazardCost(ChunkFloors b, int bj, int bx, int bz) {
-        if (c.hazardNear <= 0) return 0;
+        // a floor on or in a harmful block (Harmful blocks allowed: a cactus's top): the hits while
+        // there, HARM_HITS half hearts at the planner's price of one
+        double harm = (b.flags(bj) & ChunkFloors.HARMFUL) != 0 ? HARM_HITS * HARM_PRICE : 0.0;
+        if (c.hazardNear <= 0) return harm;
         float h = b.h(bj);
         int y0 = (int) Math.floor(h - 1e-4), y1 = (int) Math.floor(h + H);
         int k = 0;
         for (int d = 0; d < 8; d++) if (v.hazardIn(bx + DX[d], bz + DZ[d], y0, y1)) k++;
-        return k * c.hazardNear;
+        return k * c.hazardNear + harm;
     }
+
+    /** Half hearts a stop on a harmful floor is priced at: a landing and the jump on from it (a touch hurts every half
+     *  second at most, Recipe.HARM_TICKS_PER_HP). */
+    static final double HARM_HITS = 2.0;
+    /** The price of a half heart lost to a harmful block (ticks): a quarter of a fall's (Costs.damageTicks, 400), the
+     *  setting being the walker's say-so for this damage. At the fall's price leg 43's two cactus stops cost 1600 and
+     *  its searches expanded 38000 floors each, 75 s for the checked way (bench); the walk ran out of its 2400 ticks. */
+    static final double HARM_PRICE = 100.0;
 }

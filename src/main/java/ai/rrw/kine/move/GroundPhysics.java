@@ -363,7 +363,7 @@ public final class GroundPhysics {
         s.vx = mx * 0.99F; s.vy = my * 0.98F; s.vz = mz * 0.99F;
         move(s, keys);
         if (s.horizontalCollision && (lastSpeed - Math.sqrt(s.vx * s.vx + s.vz * s.vz)) * 10.0 - 3.0 > 0.0)
-            s.touched |= BlockInfo.HAZARD;   // handleFallFlyingCollisions: flyIntoWall
+            s.touched |= BlockInfo.HAZARD | BlockInfo.DEADLY;   // handleFallFlyingCollisions: flyIntoWall
     }
 
     /** LivingEntity.travelInAir, with LivingEntity.handleRelativeFrictionAndCalculateMovement's climbing. */
@@ -469,7 +469,7 @@ public final class GroundPhysics {
                     double bottom = y;
                     double top = bottom + fluidHeightAt(x, y, z, b);
                     if (top < minY) continue;
-                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; lava = true; continue; }
+                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD | BlockInfo.DEADLY; lava = true; continue; }
                     if (x == eyeX && z == eyeZ && eyeY >= bottom && eyeY <= bottom + eyesHeightAt(x, y, z, b)) eyes = true;
                     height = Math.max(top - entityY, height);
                     if (b.is(BlockInfo.CURRENT)) s.touched |= BlockInfo.SPECIAL | BlockInfo.UNCOPIED;
@@ -503,7 +503,7 @@ public final class GroundPhysics {
                     if (b.fluid == BlockInfo.NO_FLUID) continue;
                     double top = y + fluidHeightAt(x, y, z, b);   // int + float: a float sum
                     if (top < minY) continue;
-                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD; lava = true; continue; }
+                    if (b.fluid == BlockInfo.LAVA_FLUID) { s.touched |= BlockInfo.HAZARD | BlockInfo.DEADLY; lava = true; continue; }
                     water = true;
                     height = Math.max(top - minY, height);
                     if (b.is(BlockInfo.CURRENT)) s.touched |= BlockInfo.SPECIAL | BlockInfo.UNCOPIED;
@@ -964,17 +964,27 @@ public final class GroundPhysics {
         int ya = GameMath.floor(box[1] + 1.0E-5), yb = GameMath.floor(box[4] - 1.0E-5);
         int za = GameMath.floor(box[2] + 1.0E-5), zb = GameMath.floor(box[5] - 1.0E-5);
         int t = 0;
+        boolean harm = false;
         for (int x = xa; x <= xb; x++)
             for (int y = ya; y <= yb; y++)
-                for (int z = za; z <= zb; z++) t |= uncopied(grid.get(x, y, z).flags);
+                for (int z = za; z <= zb; z++) {
+                    int f = uncopied(grid.get(x, y, z).flags);
+                    t |= f;
+                    // a hazard that hurts only a little by touch (a cactus) apart from the rest
+                    if ((f & BlockInfo.HAZARD) != 0) {
+                        if ((f & BlockInfo.HARMFUL) != 0) harm = true;
+                        else t |= BlockInfo.DEADLY;
+                    }
+                }
         if (s.onGround) {
             // the block stood on (getOnPosLegacy): its stepOn (magma) hurts; a cactus under a carpet doesn't (entityInside
             // only, from inside its cell: the box above finds that)
             int on = uncopied(blockAt(onPos(s, 0.2F)).flags);
             t |= on & (BlockInfo.SPECIAL | BlockInfo.UNCOPIED);
-            if ((on & BlockInfo.STEP_HURTS) != 0) t |= BlockInfo.HAZARD;
+            if ((on & BlockInfo.STEP_HURTS) != 0) t |= BlockInfo.HAZARD | BlockInfo.DEADLY;
         }
-        s.touched |= t & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.FLUID | BlockInfo.UNCOPIED);
+        if (harm) { t |= BlockInfo.HARMFUL; s.harmTicks++; }
+        s.touched |= t & (BlockInfo.HAZARD | BlockInfo.SPECIAL | BlockInfo.FLUID | BlockInfo.UNCOPIED | BlockInfo.HARMFUL | BlockInfo.DEADLY);
     }
 
     /**

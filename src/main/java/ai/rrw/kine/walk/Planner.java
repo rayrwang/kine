@@ -427,7 +427,7 @@ public final class Planner {
                 looseLog(job, it, r, "no route: " + job.failure);
                 return;
             }
-            if (r.cost > bound) {
+            if (r.cost - Loose.harmCost(view, r, costs) > bound) {
                 job.failure = String.format(java.util.Locale.ROOT, "only a loose way round far (%.0f ticks against at most %.0f)", r.cost, bound);
                 parent.looseWhy = job.failure;
                 looseLog(job, it, r, job.failure);

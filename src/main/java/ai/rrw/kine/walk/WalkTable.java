@@ -106,6 +106,13 @@ public final class WalkTable {
     /** End of a client tick: copy the sections of the dirty chunks nearest the player and hand them to the worker. */
     public static void tick(Minecraft mc) {
         if (mc.level != level) { if (mc.level == null) { reset(null); return; } reset(mc.level); }
+        // Harmful blocks allowed changed (with Parkour): every loaded chunk scanned again with it (ColumnScan.harmfulFloors)
+        boolean hf = ai.rrw.kine.Settings.walkHarmfulBlocks > 0 && ai.rrw.kine.Settings.walkParkour;
+        if (hf != ColumnScan.harmfulFloors) {
+            ColumnScan.harmfulFloors = hf;
+            SEEN.clear();
+            DIRTY.addAll(LOADED);
+        }
         if (!Settings.walkPathfinder || mc.player == null || DIRTY.isEmpty()) { pending = DIRTY.size() + IN_FLIGHT.size(); return; }
         int px = mc.player.getBlockX() >> 4, pz = mc.player.getBlockZ() >> 4;
         long t0 = System.nanoTime();

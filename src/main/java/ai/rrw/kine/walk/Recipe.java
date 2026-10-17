@@ -266,7 +266,27 @@ public final class Recipe {
      *  path is no longer the game's from there (the course's cobweb jump: a way through the web's edge, slowed in the
      *  game, fell). */
     static boolean spoils(MoveState s) {
-        return (s.touched & (ai.rrw.kine.move.BlockInfo.HAZARD | ai.rrw.kine.move.BlockInfo.UNCOPIED)) != 0;
+        int t = s.touched;
+        if ((t & ai.rrw.kine.move.BlockInfo.UNCOPIED) != 0) return true;
+        if ((t & ai.rrw.kine.move.BlockInfo.HAZARD) == 0) return false;
+        return !harmOk(s);
+    }
+
+    /**
+     * Ticks of touching harmful blocks (a cactus: BlockInfo.HARMFUL) a jump or a run may take, from the
+     * setting Harmful blocks allowed (Settings.walkHarmfulBlocks, half hearts) and the health now (Walk.harmAllowance,
+     * set each tick): a touch hurts a half heart at most every 10 ticks (the game's invulnerable time after a hit), so
+     * ten ticks a half heart. 0: none, every hurting block spoils a jump as before.
+     */
+    static volatile int harmTicks = 0;
+    /** Ticks of touching harmful blocks a half heart buys (the game's hurt cooldown, 10 of its 20 invulnerable ticks). */
+    static final int HARM_TICKS_PER_HP = 10;
+
+    /** Whether the hazards s touched this tick are only harmful ones (no lava, fire, magma...), within harmTicks so far. */
+    static boolean harmOk(MoveState s) {
+        int t = s.touched, allowed = harmTicks;
+        return allowed > 0 && (t & ai.rrw.kine.move.BlockInfo.DEADLY) == 0 && (t & ai.rrw.kine.move.BlockInfo.HARMFUL) != 0
+            && s.harmTicks <= allowed;
     }
 
     /** Whether a try, before its jump, stands on another floor than the one it started from: more than 0.6 lower (the
@@ -513,7 +533,12 @@ public final class Recipe {
 
     /** As above; dyMax: how far up or down from the start it may come to rest (0: at the start's height). */
     static Recipe approachFar(GroundPhysics phys, MoveState start, float startYaw, double tx, double tz, double dyMax) {
-        Recipe a = approach(phys, start, startYaw, tx, tz, 60, 16, SPOT_NEAR, dyMax);
+        // the walk's length: 60 ticks (13 blocks at walking speed), more for a spot further off (a template's run-up:
+        // the course's down_6m3 starts 19 blocks back along its runway, and from where the walk stood, 15 short of it,
+        // no walk there came within reach: the template never fitted, cj101)
+        double dist = Math.hypot(tx - start.x, tz - start.z);
+        int maxWalk = Math.min(FAR_WALK_MAX, Math.max(60, (int) Math.ceil(dist / 0.2) + 10));
+        Recipe a = approach(phys, start, startYaw, tx, tz, maxWalk, 16, SPOT_NEAR, dyMax);
         if (a == null) return null;
         double err = Math.hypot(a.endX - tx, a.endZ - tz);
         if (err <= SPOT_FINE) return a;
@@ -539,6 +564,9 @@ public final class Recipe {
         Recipe b = approach(phys, m, a.yaw[a.ticks - 1], tx, tz, 0, 6, err - 0.003, 0.0);
         return b == null ? a : concatMoves(a, b);
     }
+
+    /** The most ticks a walk to a far spot (approachFar) walks before sneaking to it: a 28-block run-up. */
+    static final int FAR_WALK_MAX = 150;
 
     /** How far up or down a walk to a spot may come to rest from where it starts (blocks): a step. */
     static final double STEP_TO_SPOT = 0.6;

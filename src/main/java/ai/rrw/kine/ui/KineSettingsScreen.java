@@ -209,6 +209,12 @@ public abstract class KineSettingsScreen extends Screen {
         "The most a drop may hurt you on the walk, in hearts: 0 (the default) takes no drop that hurts, as before; more "
         + "lets the route and the jumps take drops that cost up to that much, never below four hearts left. Armour and "
         + "Feather Falling are not counted yet: the real damage is that or less.";
+    private static final String DESC_WALK_HARMFUL =
+        "With Parkour on, the most cactus may hurt you on the walk, in hearts (standing on its top, brushing its sides). "
+        + "Off (the default) takes no route or jump that touches it, as before; more lets the route stand on cactus tops "
+        + "and the jumps touch cactus, each touch priced by its damage (a half heart at most every half second), never "
+        + "below four hearts left. Lava, fire, campfires, magma, sweet berry bushes, wither roses, powder snow and pointed "
+        + "dripstone stay out either way.";
     private static final String DESC_WALK_GAIT =
         "The most the walk may use, like a thrust lever: it never goes faster, and still jumps where the ground needs it "
         + "(a step up, out of water). Walk: no sprinting at all. Sprint: sprints, jumping only where the ground needs a "
@@ -390,6 +396,9 @@ public abstract class KineSettingsScreen extends Screen {
             Opt.of("Open doors", DESC_WALK_OPEN_DOORS, Settings.WALK_OPEN_DOORS),
             Opt.of("Fall damage allowed", DESC_WALK_FALL_DAMAGE, Settings.WALK_FALL_DAMAGE, () -> Settings.walkPathfinder,
                    v -> String.format(java.util.Locale.ROOT, "%.1f hearts", v / 2.0)),
+            Opt.of("Harmful blocks allowed", DESC_WALK_HARMFUL, Settings.WALK_HARMFUL_BLOCKS,
+                   () -> Settings.walkPathfinder && Settings.walkParkour,
+                   v -> v == 0 ? "OFF" : String.format(java.util.Locale.ROOT, "%.1f hearts", v / 2.0)),
             Opt.of("Gait", DESC_WALK_GAIT, Settings.WALK_GAIT),
             Opt.of("Distance and ETA", DESC_WALK_READOUTS, Settings.WALK_READOUTS),
             Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,

@@ -126,6 +126,8 @@ public class NeoTemplatesTest {
     @Test
     void survey() throws Exception {
         if (System.getenv("KINE_TEMPLATE_SURVEY") == null) return;
+        String fallHp = System.getenv("KINE_NEO_FALL_HP");   // Fall damage allowed for the landings (the down jumps)
+        if (fallHp != null) Recipe.safeFall = Costs.withFallDamage(Costs.LAYER2, Integer.parseInt(fallHp)).safeFall;
         String only = System.getenv("KINE_TEMPLATE_IDS");
         java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
         for (NeoTemplates.Template t : NeoTemplates.load()) ids.add(t.id());

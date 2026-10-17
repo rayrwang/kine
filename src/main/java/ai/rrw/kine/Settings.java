@@ -82,6 +82,10 @@ public final class Settings {
     /** The most health (half hearts) the walk may lose to a drop (RW 2026-10-14: "a todo seting how big jumps the
      *  pathifnder is allwod to take damange"); 0: no drop that hurts. */
     public static int walkFallDamage;
+    /** The most health (half hearts) the walk may lose to blocks that hurt a little at a time by touch (cactus; not
+     *  berry bushes, whose slowdown the movement copy lacks), on a route or a jump (RW 2026-10-16 17:54, the Parkour Spiral's leg 43 over cactus tops:
+     *  "cactus can be another setting under parkour like allow harmful blocks"); 0: none, as before. With Parkour. */
+    public static int walkHarmfulBlocks;
     public static Show displaySpeed, displayGroundSpeed,
         displayHeadingArc, displayAltitude, displayHeightAboveGround, displayNavReadouts, displayFlightDirectors, displayFlightPathVector,
         displayFlightProfile, displayRangeEndurance, displayFireworkFuel, flightRibbon;
@@ -237,6 +241,8 @@ public final class Settings {
     public static final Option WALK_OPEN_DOORS            = toggle("walkOpenDoors", WALK, true, v -> walkOpenDoors = v);
     // the most a drop may hurt, half hearts (the spiral agent, 2026-10-15: a parkour map's drops of 3.5 and 4)
     public static final Option WALK_FALL_DAMAGE           = level("walkFallDamage", WALK, 0, 20, v -> walkFallDamage = v);
+    // the most harmful blocks (cactus) may hurt, half hearts, with Parkour (the spiral agent, 2026-10-16)
+    public static final Option WALK_HARMFUL_BLOCKS        = level("walkHarmfulBlocks", WALK, 0, 20, v -> walkHarmfulBlocks = v);
     public static final Option WALK_READOUTS              = toggle("walkReadouts", WALK, true, v -> walkReadouts = v);
 
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);

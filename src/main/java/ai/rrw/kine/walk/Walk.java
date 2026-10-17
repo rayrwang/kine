@@ -215,6 +215,38 @@ public final class Walk {
         return hp <= 0 ? base : Costs.withFallDamage(base, hp);
     }
 
+    /**
+     * The safe fall of the jump search and the checks (Recipe.safeFall): the costs' (above), and toward a far goal too
+     * the whole Fall damage allowed (fallAllowance keeps it from layer 1's routes toward a far goal: their nearest
+     * floor lay on the ground under the Kine Parkour course). A jump the search picks lands where it aims, so the
+     * damage is its own choice of jump: the course's down_6m3 and down_7p0625m5_record land from falls past the safe 3,
+     * and on the way to the course's far target their templates were judged at the safe fall alone and never fitted
+     * (c108e: safe fall 3.90 with 6 allowed).
+     */
+    static double jumpSafeFall() {
+        Costs base = Costs.forGait(Settings.walkLayer2 ? Costs.LAYER2 : Costs.BARITONE, gait());
+        int hp = fallAllowanceAnyGoal();
+        return hp <= 0 ? base.safeFall : Costs.withFallDamage(base, hp).safeFall;
+    }
+
+    /** As fallAllowance, toward any goal (the health guard kept). */
+    static int fallAllowanceAnyGoal() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null || Settings.walkFallDamage <= 0) return 0;
+        return Math.max(0, Math.min(Settings.walkFallDamage, (int) Math.floor(p.getHealth()) - 8));
+    }
+
+    /** Health the walk may lose to harmful blocks (cactus) now: Settings.walkHarmfulBlocks (half hearts),
+     *  with Parkour, never below 8 left (four hearts), as ticks of touching them (Recipe.HARM_TICKS_PER_HP a half
+     *  heart); 0: none. */
+    static int harmAllowance() {
+        if (Settings.walkHarmfulBlocks <= 0 || !Settings.walkParkour) return 0;
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) return 0;
+        int hp = Math.max(0, Math.min(Settings.walkHarmfulBlocks, (int) Math.floor(p.getHealth()) - 8));
+        return hp * Recipe.HARM_TICKS_PER_HP;
+    }
+
     /** Health the walk may lose to a drop now (Settings.walkFallDamage, half hearts), never below 8 left (four hearts):
      *  a drop of the safe 3 plus this hurts no more (Minecraft's fall damage is the fall past 3, rounded up, before
      *  armour; armour and Feather Falling only lower it). */
@@ -424,6 +456,7 @@ public final class Walk {
         noWaySeen = false;
         hop = null; hopY = Double.NaN; hopFromY = Double.NaN; hopNode = View.NONE;
         hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest.reset(); hops = 0; hopsBlind = 0; hopsOff = false; hopFails = 0; hopOnSince = -1; hopTaken = false;
+        hopLeft = View.NONE;
         hopsChained = 0;
         blocked.clear();
         looseMemo.clear();
@@ -560,7 +593,8 @@ public final class Walk {
             : null;
         if (job != null) job.cancelled = true;   // a loose job still checking the old plan's moves lets go
         Graph.doorsOn = Settings.walkOpenDoors;
-        Recipe.safeFall = costs().safeFall;   // the jump search and the checks take the walk's safe fall
+        Recipe.safeFall = jumpSafeFall();   // the jump search and the checks take the walk's safe fall
+        Recipe.harmTicks = harmAllowance();   // and its harmful-blocks allowance
         jobKeep = keepAbove(p.getY());
         job = Planner.plan(view, start, d[0], d[1], walkY, costs(), margin(), canSprint, parkour(), glides, budget, loose,
             jobKeep);
@@ -851,8 +885,13 @@ public final class Walk {
         long start = startNode(view, p);
         if (start == View.NONE) return false;
         hopStood(standDistance(p, d), p.getY());
-        long pick = Hop.pick(view, costs(), p.getX(), p.getY(), p.getZ(), d[0], d[1], walkY, hopBest, hopsTried, costs().safeFall, HOP_REACH,
-            keepAbove(p.getY()));
+        // not back onto the floor the last hop left (it was stood on, so it is no nearer): on the course a pad and the
+        // next jump's start beside it, a step apart, each counted nearer from the other (the start by the step up, the
+        // pad by its height nearer the goal's Y), and the walk went pad, start, pad, ..., its jump searched from the
+        // pad (diag_4x1, #95: three rounds, then given up; trapdoor_jump the same with the plan to the nearest floor)
+        java.util.Set<Long> tried = hopsTried;
+        if (hopLeft != View.NONE && hopLeft != start) { tried = new java.util.HashSet<>(hopsTried); tried.add(hopLeft); }
+        long pick = hopPick(view, p.getX(), p.getY(), p.getZ(), d, hopBest, tried);
         if (pick == View.NONE) return false;
         if (hopTries.merge(pick, 1, Integer::sum) >= HOP_TRIES) hopsTried.add(pick);
         int x = View.nodeX(pick), z = View.nodeZ(pick);
@@ -866,6 +905,7 @@ public final class Walk {
         hopFromY = p.getY();
         hopOnSince = -1;
         hopTaken = false;
+        hopLeft = start;
         hops++;
         hopsBlind++;
         Layer2.newTry();   // a new try from here: layer 2's jump search may search again from the floor it stands on
@@ -875,6 +915,22 @@ public final class Walk {
         message = String.format(java.util.Locale.ROOT, "No route on from here: walking without one to %d %d %d", x, (int) Math.floor(h), z);
         if (replanWhy.size() < 200) replanWhy.add(tick + ": without a route to " + x + " " + z + " (hop " + hops + ")");
         return true;
+    }
+
+    /**
+     * The next hop's floor (Hop.pick): within the safe fall first; only if none, as far down as the jump search may land
+     * (jumpSafeFall: Fall damage allowed toward any goal). The course's down_7p0625m5_record (#109) lands 5 down, past
+     * the safe 3.9, so it was never offered (c109a: stopped in 31 ticks on its take-off); taken at once, the deeper
+     * allowance put a floor 9 down beside slime_bounce's take-off (#22) before the bounce's own landing, and the walk
+     * stood there through three hops (f113 G2a).
+     */
+    private static long hopPick(View view, double x, double y, double z, int[] d, Hop.Best best, java.util.Set<Long> tried) {
+        Costs c = costs();
+        long pick = Hop.pick(view, c, x, y, z, d[0], d[1], walkY, best, tried, c.safeFall, HOP_REACH, keepAbove(y));
+        double deep = jumpSafeFall();
+        if (pick == View.NONE && deep > c.safeFall + 1e-9)
+            pick = Hop.pick(view, c, x, y, z, d[0], d[1], walkY, best, tried, deep, HOP_REACH, keepAbove(y));
+        return pick;
     }
 
     /** The safety margin in blocks (the setting, in hundredths). */
@@ -955,8 +1011,7 @@ public final class Walk {
         Costs costs = costs();
         double g = Math.hypot(d[0] - Math.floor(x), d[1] - Math.floor(z));
         best.stood(Hop.nearness(costs, g, y, walkY), g, Hop.tie(costs, walkY));
-        long pick = Hop.pick(view, costs, x, y, z, d[0], d[1], walkY, best, new java.util.HashSet<>(), costs.safeFall, HOP_REACH,
-            keepAbove(y));
+        long pick = hopPick(view, x, y, z, d, best, new java.util.HashSet<>());
         if (pick == View.NONE || pick == hopNode) return null;
         int px = View.nodeX(pick), pz = View.nodeZ(pick);
         ChunkFloors c = view.chunk(px, pz);
@@ -1027,6 +1082,8 @@ public final class Walk {
 
     /** Hops taken by a chained jump this walk (tests). */
     public static int hopsChained = 0;
+    /** The floor the last hop started from (startHop): not hopped back onto. */
+    private static long hopLeft = View.NONE;
 
     /** How far under the feet a start's floor may be before a floor within a step down beside it is taken instead. */
     static final double STEP_START = 1.1;
@@ -1249,6 +1306,16 @@ public final class Walk {
                     Planner.Plan dp = directPlan(p, d, np.result.reason);
                     if (dp != null) { adoptDirect(dp); fresh = false; }
                 }
+                // on the way by hops, a way only to a floor no nearer the goal than the block stood on (by the hops'
+                // own measure, standDistance): straight on to the next hop from here. Walked, it took the walk back
+                // off the hop just made: on the course's trapdoor_jump (#94) the take-off a step up was hopped onto,
+                // the nearest floor was the pad below it (one nearer the goal's height), the walk went back down, and
+                // the next hop's jump search ran from the pad, where the jump isn't made (f94 G4, both walks)
+                if (fresh && hops > 0 && np.result.path.length > 0 && p.onGround()) {
+                    long end = np.result.path[np.result.path.length - 1];
+                    double there = Math.hypot(d[0] - View.nodeX(end), d[1] - View.nodeZ(end));
+                    if (there >= standDistance(p, d) - 1e-9 && startHop(p, d)) fresh = false;
+                }
             }
             if (fresh) {
                 hop = null;   // layer 1 has a plan again: the hop, if any, is over
@@ -1321,7 +1388,12 @@ public final class Walk {
                 return;
             } else if ((p.onGround() || holdingClimb(p)) && Math.abs(p.getY() - hopY) < 0.6
                        && Math.hypot(hop[0] + 0.5 - p.getX(), hop[1] + 0.5 - p.getZ()) <= 0.75
-                       && (standing(p) && Layer2.staysPut(p) || holdingClimb(p) || tick - hopOnTick(tick) > SETTLE_TICKS)) {
+                       && (standing(p) && Layer2.staysPut(p) || holdingClimb(p) || tick - hopOnTick(tick) > SETTLE_TICKS)
+                       // or a copy-found jump played to its end left the player holding a climbable (a climb template
+                       // onto a ladder chain's far ladder, not the hop's floor): across, and layer 1 plans the climb on.
+                       // Kept on the hop, layer 2 took the player back down off the fourth ladder to the hop's floor
+                       // (the course's ladder_90_spiral, #101, c101b: its template played to 0.002 of the copy's)
+                       || holdingClimb(p) && Layer2.recipeJustEnded()) {
                 // on a ladder or a vine the walk never stands: it is across once on it in the hop's column (it waited
                 // 30 ticks there and slid off: the course's ladder_diagonal, RW 2026-10-14; the plan up the climb then
                 // takes over, layer 2 keeping hold till it comes, hopTaken below)
@@ -1381,6 +1453,11 @@ public final class Walk {
         // a jump search running, or its jump playing: no stuck time while it does (Layer2.busy)
         boolean l2busy = Layer2.busy() || waitingForCheck() || DoorOpener.active();
         if (l2busy) bestLeftTick = tick;
+        if (ARRIVE_LOG && plan.result.nearest && left < 0.75 && tick % 10 == 0)
+            ai.rrw.kine.Kine.LOGGER.info(String.format(java.util.Locale.ROOT, "Kine arrive: tick %d left %.3f l2busy=%b (l2 %b check %b door %b) ground=%b climb=%b job=%s checked=%b standing=%b staysPut=%b at %.3f %.3f %.3f",
+                tick, left, l2busy, Layer2.busy(), waitingForCheck(), DoorOpener.active(), p.onGround(), p.onClimbable(),
+                job == null ? "none" : job.done ? "done" : "running", nearestCheckedId == plan.id, standing(p), Layer2.staysPut(p),
+                p.getX(), p.getY(), p.getZ()));
         if (!l2busy && plan.result.nearest && left < 0.75 && (p.onGround() || p.isInWater() || p.onClimbable()) && (job == null || job.done)
             && nearestCheckedId != plan.id && (standing(p) && Layer2.staysPut(p) || p.isInWater() || p.onClimbable())) {
             // at the floor nearest a goal with no way onto it: one more search on the table as it is now (ground loaded
@@ -1446,9 +1523,12 @@ public final class Walk {
                     hop = null;
                     hopFails++;
                     if (startHop(p, d)) { measure(t0); return; }
-                } else if (noWaySeen && !plan.direct && startHop(p, d)) {
+                } else if (noWaySeen && startHop(p, d)) {
                     // layer 1's way toward the floor nearest the goal stalled short of its end (a gap move layer 2
-                    // didn't make from here): the next floor without a route, as at the way's end
+                    // didn't make from here): the next floor without a route, as at the way's end. And walking without
+                    // a route to a goal in reach whose last jumps the graph doesn't join (the jump search aims only at
+                    // floors joined to the goal, within 8): the course's neo_chained (#120), its goal 16 off and its
+                    // landing 10.5 from the start, stood until this ended it, no hop to its take-off 3 ahead (c120a)
                     measure(t0);
                     return;
                 }
@@ -1492,7 +1572,8 @@ public final class Walk {
             if (changedAlong(r)) replanFor("blocks changed along the route", mc);
         }
         if (state == State.WALKING) {
-            Recipe.safeFall = costs().safeFall;
+            Recipe.safeFall = jumpSafeFall();
+            Recipe.harmTicks = harmAllowance();
             keepHeight(p);
             DoorOpener.update(mc, p, plan);
             long noDoor = DoorOpener.takeGivenUp();
@@ -1732,7 +1813,27 @@ public final class Walk {
         // within reach, so it was walked back down onto the start and jumped up again, over and over: the course's
         // up_1p25_max_height, #54, 70 to 225 ticks of it, c52a-d)
         if (Math.abs(p.getY() - r.y[1]) < 0.3 && Math.hypot(r.x[1] - p.getX(), r.z[1] - p.getZ()) < 0.8) return false;
-        return p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ()) < 1.5;
+        if (!(p.getY() > r.y[0] + 0.6 && p.getY() < r.y[0] + 2.6 && Math.hypot(r.x[0] - p.getX(), r.z[0] - p.getZ()) < 1.5)) return false;
+        // and only off the table's floors (its case: the player on ground the table has no floor for). Standing on a
+        // floor of the table, the route's own landing at its very edge 0.80 from the middle (the test above wants 0.8),
+        // the walk was taken back toward the route's start over the gap between: the course's tower_staircase, #64
+        // (r107_g2a walk 1): pressed at the sneak edge 35 ticks (fall prevention's sneak) instead of layer 2's jump,
+        // then slid off and fell 12
+        return !onTableFloor(p);
+    }
+
+    /** A line every 10 ticks near the floor nearest an unreachable goal: the arrival check's parts (KINE_ARRIVE_LOG=1,
+     *  a measuring tool, off by default). */
+    static final boolean ARRIVE_LOG = "1".equals(System.getenv("KINE_ARRIVE_LOG"));
+
+    /** Whether the block the player stands on (the game's supporting block) has a floor of the table's at the feet
+     *  (within 0.1): at an edge the feet's own column may be the gap beside it. */
+    private static boolean onTableFloor(LocalPlayer p) {
+        if (p.mainSupportingBlockPos.isEmpty()) return false;
+        net.minecraft.core.BlockPos b = p.mainSupportingBlockPos.get();
+        View v = WalkTable.snapshot();
+        long n = v.nodeAt(b.getX(), p.getY(), b.getZ());
+        return n != View.NONE && groundAt(v, n, p.getY());
     }
 
     /** Move on past waypoints already reached. */
