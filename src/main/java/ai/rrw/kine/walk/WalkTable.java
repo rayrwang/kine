@@ -186,6 +186,37 @@ public final class WalkTable {
         return true;
     }
 
+    /** Whether every chunk over the columns from (x0, z0) to (x1, z1) that is loaded, or within r chunks of chunk
+     *  (pcx, pcz) (the client's view: it will be loaded), is built. Counting only the loaded ones, a Go right after
+     *  joining saw the far side as built before its chunks came (RW's playtest of dev129, 02:26). */
+    public static boolean builtBox(int x0, int z0, int x1, int z1, int pcx, int pcz, int r) {
+        for (int cx = Math.min(x0, x1) >> 4; cx <= Math.max(x0, x1) >> 4; cx++)
+            for (int cz = Math.min(z0, z1) >> 4; cz <= Math.max(z0, z1) >> 4; cz++) {
+                long k = View.key(cx, cz);
+                if (CHUNKS.containsKey(k)) continue;
+                if (LOADED.contains(k) || Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz)) <= r) return false;
+            }
+        return true;
+    }
+
+    /** For the walk's search log: up to four chunks builtBox counts as not built, each "cx,cz loaded|coming d=<chunks
+     *  from (pcx, pcz)>". */
+    public static String unbuiltInBox(int x0, int z0, int x1, int z1, int pcx, int pcz, int r) {
+        StringBuilder sb = new StringBuilder();
+        int n = 0, all = 0;
+        for (int cx = Math.min(x0, x1) >> 4; cx <= Math.max(x0, x1) >> 4; cx++)
+            for (int cz = Math.min(z0, z1) >> 4; cz <= Math.max(z0, z1) >> 4; cz++) {
+                long k = View.key(cx, cz);
+                if (CHUNKS.containsKey(k)) continue;
+                int d = Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz));
+                boolean loaded = LOADED.contains(k);
+                if (!loaded && d > r) continue;
+                all++;
+                if (n++ < 4) sb.append(' ').append(cx).append(',').append(cz).append(loaded ? " loaded" : " coming").append(" d=").append(d);
+            }
+        return all + " not built:" + sb + " (loaded " + LOADED.size() + ", built " + CHUNKS.size() + ", pending " + pending + ")";
+    }
+
     /** Whether the table is up to date within r chunks of (x, z): built, and nothing changed there waiting to be rebuilt. */
     public static boolean settled(int x, int z, int r) {
         if (!builtAround(x, z, r)) return false;

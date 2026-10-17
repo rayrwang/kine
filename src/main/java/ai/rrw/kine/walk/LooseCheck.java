@@ -71,6 +71,18 @@ final class LooseCheck {
         /** Failed full checks by their take-off's and landing's 4 by 4 areas (Planner.landingFailed). */
         final java.util.Map<Long, Integer> areaFails = new ConcurrentHashMap<>();
 
+        /** A copy (the walk's searches ahead check with their own memory: Walk.stageAhead). */
+        Memo copy() {
+            Memo m = new Memo();
+            m.found.putAll(found);
+            m.failed.addAll(failed);
+            m.doubtful.addAll(doubtful);
+            m.priced.addAll(priced);
+            m.landingFails.putAll(landingFails);
+            m.areaFails.putAll(areaFails);
+            return m;
+        }
+
         static long key(long edge, long chainedFrom, long terrain) {
             return edge * 31 + chainedFrom * 0x9E3779B97F4A7C15L + terrain * 0xC2B2AE3D27D4EB4FL;
         }

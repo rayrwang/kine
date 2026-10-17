@@ -115,7 +115,7 @@ public final class Layer2 {
      *  plan carries an unsafe mark (its score above the time left from the start by half the mark: the score itself
      *  grows with the walk's length, so it can't be compared with the mark directly). */
     record Out(RecedingSearch.Result result, int action, float yaw, Field field, int tick, long nanos, Layer2View.Frame frame,
-               boolean unsafe, float heading) {}
+               boolean unsafe, float heading, double[] landing) {}
 
     private static Field field = null;
     private static Future<Field> fieldJob = null;
@@ -166,6 +166,7 @@ public final class Layer2 {
         routeJumpNone = false;
         freeMemory = null;
         airTarget = null;
+        airFromPlan = false;
         field = null;
         if (fieldJob != null) fieldJob.cancel(false);
         fieldJob = null;
@@ -277,6 +278,9 @@ public final class Layer2 {
 
     /** The jump ahead's landing when the player last stood (target in replan): kept as the aim while in the air. */
     private static double[] airTarget = null;
+    /** Whether airTarget is the landing of a jump layer 2's own run made (Out.landing), not a GAP's: then the latest
+     *  plan in the air that comes down safely moves it. */
+    private static boolean airFromPlan = false;
     private static long recipeTryKey = Long.MIN_VALUE;
     /** The copy against the game, tick by tick (KINE_COPY_TRACE=1, a measuring tool, off by default): each tick the
      *  copy's step from the state now with the keys pressed and the player's own yaw (what the game moves by: the
@@ -1451,6 +1455,25 @@ public final class Layer2 {
         return false;
     }
 
+    /**
+     * Where a plan first comes down on the ground after being in the air, in the copy ({x, y, z} of the feet), when it
+     * gets there with no unsafe mark on the way (a hurting block, a fall that hurts, a landing on an edge over lava);
+     * null when it doesn't, or goes into water first. The aim kept in the air after a jump of layer 2's own (endTick).
+     */
+    static double[] firstLanding(RunModel model, RunWorld root, int[] plan, int hold) {
+        RunWorld w = root.copy();
+        boolean air = !w.s.onGround;
+        for (int i = 0; i < plan.length; i++) {
+            double c = model.step(w, plan[i], i % hold, new java.util.SplittableRandom(i));
+            MoveState s = w.s;
+            if (c >= RunModel.UNSAFE / 2 || s.inWater) return null;
+            if (!s.onGround) air = true;
+            else if (air) return new double[]{s.x, s.y, s.z};
+            if (w.arrived) return null;
+        }
+        return null;
+    }
+
     private static void harvest() {
         if (job == null || !job.isDone()) return;
         try {
@@ -1616,7 +1639,19 @@ public final class Layer2 {
         // in the air scored 439, the next tick's, with no aim, 588 and fell 3; KINE_COPY_TRACE: the copy matched the
         // game on every tick; 2 of 3 walks of leg 23 had such a fall in r107_l23, one in f107 led to the time-out)
         boolean airborne = !s.onGround && !s.inWater && !p.onClimbable();
-        if (!airborne) airTarget = ahead;
+        if (!airborne) { airTarget = ahead; airFromPlan = false; }
+        // in the air after a jump of layer 2's own (no GAP's landing to aim at): the landing the plan that made it came
+        // down on in the copy, moved on by each later plan that still comes down safely. The beam's headings are the
+        // field's way on and the shortcut from where a run is; over a pool the field has no floor under the player, the
+        // way on became the bearing to the goal (behind, here) and the shortcut found nothing, so the plans that had
+        // flown toward the far side couldn't be made again and every run fell short: RW's playtest of dev130 (02:38),
+        // leg 1's lava pool at (-22,58,-27), a sprint-jump from (-22.17,60,-29.41) on toward the slab at (-21,60,-26),
+        // three ticks up "every run unsafe" and the follower steered it down into the lava, dead (kick130b: 2 of 3 from
+        // his state after the jump)
+        else if ((airTarget == null || airFromPlan) && last != null && last.landing() != null) {
+            airTarget = last.landing();
+            airFromPlan = true;
+        }
         double[] target = airborne && airTarget != null ? airTarget : ahead;
         RunModel.FreeMemory mem = null;
         if (target != null) {
@@ -1678,7 +1713,8 @@ public final class Layer2 {
             Layer2View.Frame frame = rec != null ? rec.frame(model, root, r) : null;
             boolean unsafe = r.plan() == null || r.score() - model.estimate(root) >= RunModel.UNSAFE / 2;
             if (RUN_LOG && r.plan() != null) runLog(model, root, r, e, at, previous, shift, seed, rs);
-            return new Out(r, a, y, f, at, nanos, frame, unsafe, hd);
+            double[] landing = r.plan() == null ? null : firstLanding(model, root, r.plan(), e.hold);
+            return new Out(r, a, y, f, at, nanos, frame, unsafe, hd, landing);
         });
     }
 }

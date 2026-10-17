@@ -449,6 +449,24 @@ public final class Planner {
             LooseCheck.RouteVerdict v = LooseCheck.checkRoute(r, ctx.grids(), ctx.body(), ctx.memo(), ctx.terrain(), ctx.sprint(), stop,
                 i -> p.checkedTo = i, doubts >= DOUBT_ROUNDS ? EVERY : doubtfulEdges);
             int fail = v.index();
+            // a far way (FAR_ALONG, FAR_LOOSE) whose first move without a way, or doubtful, lies past its first stretch,
+            // every loose move before it with a way: the stretch is the walk's next stage now (Walk.takeStage, from
+            // longRoute), and the rest is searched from there. Searched on for a whole checked way, each round a full
+            // search (2.5 s, 21000 floors) for the next failure near the far end: from the stage at (41,188,-18) by the
+            // Parkour Spiral's checkpoint 35 to the pyramid's tip the job checked 26 rounds and let go, the next one 18
+            // more, the walk standing 75 s there (os125b); in RW's game (dev132, 03:23) 90 s, the job's limit, and then
+            // walked without a route and stood. The failures were 13 to 36 blocks up, by the tip
+            if (fail > 0 && far(r)) {
+                int se = stretchEnd(view, r, Walk.STAGE_RUN, Walk.STAGE_LOOSE);
+                if (se > 0 && fail > se) {
+                    job.longRoute = r;
+                    job.failure = "a far way: its first stretch checked, the rest from there";
+                    parent.looseWhy = job.failure;
+                    looseLog(job, it, r, job.failure + " (" + (v.isDoubtful() ? "doubtful" : "no way") + " at step " + fail + " of "
+                        + r.path.length + ", the stretch to " + se + ")");
+                    return;
+                }
+            }
             if (fail > 1) {
                 double gain = startNear - nearness(view, r.path[fail - 1], gx, gz, goalY, costs);
                 if (gain > prefixGain && gain >= costs.estimate(PREFIX_GAIN, 0.0)) { prefixGain = gain; prefixOf = r; prefixEnd = fail - 1; }
@@ -491,6 +509,45 @@ public final class Planner {
      * (the sea under it, the gate's cleg1 and cgap); in RW's game the strict search's partial route had carried the
      * walk on first, and the loose job from there found the way (2026-10-16 03:00).
      */
+    /** A loose route this long (blocks along, horizontal and vertical) or with this many loose jumps is a far way
+     *  (runLoose: a failure past its first stretch hands the stretch to the walk as a stage). */
+    static final double FAR_ALONG = 3 * Walk.STAGE_RUN;
+    static final int FAR_LOOSE = 3 * Walk.STAGE_LOOSE;
+
+    static boolean far(PathSearch.Result r) {
+        double along = 0;
+        int n = 0;
+        for (int i = 1; i < r.path.length; i++) {
+            along += Math.hypot(View.nodeX(r.path[i]) - View.nodeX(r.path[i - 1]), View.nodeZ(r.path[i]) - View.nodeZ(r.path[i - 1]))
+                + Math.abs(r.pathY[i] - r.pathY[i - 1]);
+            if (r.moves[i] == Graph.LOOSE) n++;
+        }
+        return along >= FAR_ALONG || n >= FAR_LOOSE;
+    }
+
+    /**
+     * The path index where route r's first stretch ends: the first floor walked onto (a WALK onto a ground floor, the
+     * next move a WALK too) at least `run` blocks along it (horizontal plus vertical) or after `loose` of its loose jumps,
+     * short of its end; -1 if none. A far walk's stages (Walk.takeStage).
+     */
+    static int stretchEnd(View v, PathSearch.Result r, double run, int loose) {
+        if (r == null || r.path == null || r.path.length < 3) return -1;
+        double along = 0;
+        int n = 0;
+        for (int i = 1; i < r.path.length - 1; i++) {
+            along += Math.hypot(View.nodeX(r.path[i]) - View.nodeX(r.path[i - 1]), View.nodeZ(r.path[i]) - View.nodeZ(r.path[i - 1]))
+                + Math.abs(r.pathY[i] - r.pathY[i - 1]);
+            if (r.moves[i] == Graph.LOOSE) n++;
+            if (along < run && n < loose) continue;
+            if (r.moves[i] != Graph.WALK || r.moves[i + 1] != Graph.WALK) continue;
+            ChunkFloors c = v.chunk(View.nodeX(r.path[i]), View.nodeZ(r.path[i]));
+            int idx = c == null ? -1 : v.index(r.path[i]);
+            if (idx < 0 || c.type(idx) != ChunkFloors.GROUND || Math.abs(c.h(idx) - r.pathY[i]) > 0.1) continue;
+            return i;
+        }
+        return -1;
+    }
+
     /** The floors the proven moves (gaps too) must reach from a checked start's end for it to be published. */
     static final int POCKET = 200;
 

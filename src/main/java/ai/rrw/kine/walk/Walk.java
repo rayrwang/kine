@@ -431,6 +431,9 @@ public final class Walk {
         stagesTaken = 0;
         stageRetries = 0;
         stagedFrom = null;
+        aheadCancel();
+        fillWaits = 0;
+        fillWaitUntil = -1;
         walkY = destinationY();
         peakY = mc.player.getY();
         lastStand = View.NONE;
@@ -541,6 +544,20 @@ public final class Walk {
         dismissed = true;
     }
 
+    /** A first plan put off while the table is still being built between the player and the destination (see the
+     *  plans' intake): how many times, until when; at most FILL_WAITS of FILL_WAIT_TICKS, over FILL_MARGIN columns about
+     *  the box from the player to the destination. */
+    private static int fillWaits = 0, fillWaitUntil = -1;
+    static final int FILL_WAITS = 30, FILL_WAIT_TICKS = 20, FILL_MARGIN = 32;
+    /** The walk table's chunk loads seen (WalkTable.loads) and the tick the count last moved: the wait goes on only while
+     *  chunks still come in (within FILL_QUIET ticks) or wait to be built. */
+    private static long fillLoadsSeen = -1;
+    private static int fillLoadTick = -1000;
+    static final int FILL_QUIET = 40;
+    /** The chunks about the player (chunks, at most the render distance less 2) the table is waited for though not
+     *  loaded yet: the client will have them. */
+    static final int FILL_VIEW = 12;
+
     /** A stage of a far destination (takeStage): walked to as the destination while set; null when none. */
     private static int[] stage = null;
     private static double stageY = Double.NaN;
@@ -559,20 +576,7 @@ public final class Walk {
 
     /** Set the next stage from loose route r (too long for one walk), if it has a floor far enough along; true if set. */
     private static boolean takeStage(LocalPlayer p, PathSearch.Result r) {
-        if (r == null || r.path == null || r.path.length < 3) return false;
-        View v = WalkTable.snapshot();
-        double run = 0;
-        int loose = 0, pick = -1;
-        for (int i = 1; i < r.path.length - 1; i++) {
-            double dx = View.nodeX(r.path[i]) - View.nodeX(r.path[i - 1]), dz = View.nodeZ(r.path[i]) - View.nodeZ(r.path[i - 1]);
-            run += Math.hypot(dx, dz) + Math.abs(r.pathY[i] - r.pathY[i - 1]);
-            if (r.moves[i] == Graph.LOOSE) loose++;
-            if (run < STAGE_RUN && loose < STAGE_LOOSE) continue;
-            // a floor walked onto (not a jump's landing in the air, a ladder or water), the next move a walk too
-            if (r.moves[i] != Graph.WALK || r.moves[i + 1] != Graph.WALK || !groundAt(v, r.path[i], r.pathY[i])) continue;
-            pick = i;
-            break;
-        }
+        int pick = Planner.stretchEnd(WalkTable.snapshot(), r, STAGE_RUN, STAGE_LOOSE);
         if (pick < 0) return false;
         int[] s = {View.nodeX(r.path[pick]), View.nodeZ(r.path[pick])};
         stagesTaken++;
@@ -604,6 +608,7 @@ public final class Walk {
     private static void goalChanged(LocalPlayer p) {
         if (job != null) job.cancelled = true;
         job = null;
+        aheadCancel();
         plan = null;
         state = State.PLANNING;
         seg = 1;
@@ -613,6 +618,117 @@ public final class Walk {
         hopsTried.clear(); hopTries.clear(); hopArrivals.clear(); hopBest.reset(); hops = 0; hopsBlind = 0; hopsOff = false; hopFails = 0;
         hopOnSince = -1; hopTaken = false; hopLeft = View.NONE;
         Layer2.newTry();
+    }
+
+    /**
+     * The next stage's way searched ahead while the walk goes to this one (the one-shot stood a third of its 20 minutes
+     * at its 43 stages while the searches there ran: os125b and os125c, RW 2026-10-17 01:39 "the pauses are still
+     * there"). From the stage's floor: the search toward the destination (aheadKind 1); from its loose way too long for
+     * one walk, the next stage, and the search toward it (aheadKind 2), its loose moves checked from their take-offs as
+     * any search's are. At the stage, that search is the walk's (takeAhead): its plan, if in, is walked at once. A way
+     * to the destination itself from the stage (aheadKind 3) is taken there the same way.
+     */
+    private static Planner.Job ahead = null;
+    private static int aheadKind = 0;
+    private static long aheadFrom = View.NONE;
+    private static int[] aheadStage = null;
+    private static double aheadStageY = Double.NaN, aheadKeep = Double.NaN;
+    private static PathSearch.Result aheadLong = null;
+
+    private static java.util.Set<Long> aheadBlocked = null;
+    private static LooseCheck.Memo aheadMemo = null;
+
+    private static void aheadCancel() {
+        if (ahead != null) ahead.cancelled = true;
+        aheadBlocked = null;
+        aheadMemo = null;
+        ahead = null;
+        aheadKind = 0;
+        aheadFrom = View.NONE;
+        aheadStage = null;
+        aheadLong = null;
+    }
+
+    /** Each walking tick on the way to a stage: the searches ahead (see ahead). */
+    private static void stageAhead(LocalPlayer p) {
+        if (stage == null || plan == null || plan.direct || !plan.result.found || !parkour() || !Settings.walkLoose) return;
+        // the walk's own search and checks first (they share the threads)
+        if (job != null && (!job.done || job.loose != null && !job.loose.done)) return;
+        int[] d = destination();
+        if (d == null) return;
+        View view = WalkTable.snapshot();
+        long from = view.nodeAt(stage[0], stageY, stage[1]);
+        if (from == View.NONE || !groundAt(view, from, stageY)) return;
+        if (aheadFrom != from) { aheadCancel(); aheadFrom = from; }
+        boolean glides = Settings.walkLayer2 && Settings.walkElytraHops && WorldSnapshot.body(p).canGlide;
+        // their own copies of the moves blocked and the checks' memory: what they strike from the stage's floor stays
+        // theirs until the walk takes their way (a cancelled search ahead can still finish a check, and the walk's own
+        // sets were cleared and refilled by the next walk; nor do blocks from a way never walked belong to the walk's)
+        if (aheadBlocked == null) { aheadBlocked = java.util.concurrent.ConcurrentHashMap.newKeySet(); aheadBlocked.addAll(blocked); aheadMemo = looseMemo.copy(); }
+        Planner.LooseContext loose = new Planner.LooseContext(aheadBlocked, aheadMemo, GridRequests::around, WorldSnapshot.body(p),
+            WalkTable.blockChanges, canSprint(p), false);
+        if (aheadKind == 0) {
+            aheadKeep = keepAbove(stageY);
+            ahead = Planner.plan(view, from, d[0], d[1], destinationY(), costs(), margin(), canSprint(p), parkour(), glides,
+                FIRST_BUDGET, loose, aheadKeep);
+            aheadKind = 1;
+            return;
+        }
+        if (aheadKind != 1 || ahead == null || !ahead.done || ahead.loose != null && !ahead.loose.done) return;
+        Planner.Job lj = ahead.loose;
+        if (lj != null && lj.latest.get() == null && lj.longRoute != null) {
+            int pick = Planner.stretchEnd(view, lj.longRoute, STAGE_RUN, STAGE_LOOSE);
+            if (pick < 0) { aheadKind = 9; return; }
+            aheadLong = lj.longRoute;
+            aheadStage = new int[]{View.nodeX(lj.longRoute.path[pick]), View.nodeZ(lj.longRoute.path[pick])};
+            aheadStageY = lj.longRoute.pathY[pick];
+            ahead = Planner.plan(view, from, aheadStage[0], aheadStage[1], aheadStageY, costs(), margin(), canSprint(p), parkour(),
+                glides, FIRST_BUDGET, loose, aheadKeep);
+            aheadKind = 2;
+        } else if (lj != null && lj.latest.get() != null) {
+            aheadKind = 3;   // a checked way to the destination itself
+        } else {
+            aheadKind = 9;   // nothing to take ahead: planned at the stage as before
+        }
+    }
+
+    /** At a stage: the search made ahead from its floor, if any, as the walk's own; true if taken. */
+    private static boolean takeAhead(LocalPlayer p) {
+        if (ahead == null || ahead.cancelled || (aheadKind != 2 && aheadKind != 3)) return false;
+        View view = WalkTable.snapshot();
+        if (startNode(view, p) != aheadFrom) return false;
+        Planner.Job j = ahead;
+        int kind = aheadKind;
+        int[] next = aheadStage;
+        double nextY = aheadStageY, keep = aheadKeep;
+        PathSearch.Result lr = aheadLong;
+        if (aheadBlocked != null) blocked.addAll(aheadBlocked);   // the way taken: what its search struck is the walk's now
+        ahead = null;
+        aheadCancel();
+        if (kind == 2) {
+            stagesTaken++;
+            stagedFrom = lr;
+            setStage(p, next, nextY);
+            message = String.format(java.util.Locale.ROOT, "Far: walking by stages (stage %d at %d %d %d, searched ahead)", stagesTaken,
+                next[0], (int) Math.floor(nextY), next[1]);
+            if (replanWhy.size() < 200) replanWhy.add(tick + ": far: stage " + stagesTaken + " at " + next[0] + " " + next[1] + " (searched ahead)");
+        } else {
+            clearStage(p, "at stage " + stagesTaken + ": on to the destination (searched ahead)");
+            if (replanWhy.size() < 200) replanWhy.add(tick + ": at stage " + stagesTaken + ": the way on to the destination searched ahead");
+        }
+        job = j;
+        jobKeep = keep;
+        jobStale = false;
+        lastPlanStart = aheadFromStart(view, p);
+        lastPlanTerrain = Layer2.terrain();
+        jobReplay = false;
+        lastPlanTick = tick;
+        plans++;
+        return true;
+    }
+
+    private static long aheadFromStart(View view, LocalPlayer p) {
+        return startNode(view, p);
     }
 
     private static void fail(String why) {
@@ -641,6 +757,8 @@ public final class Walk {
         int[] d = aim();
         if (p == null || d == null) return;
         if (jobBusy()) return;   // one at a time
+        // the searches ahead let go: they share the planner's two threads, and the walk's own replan comes first
+        aheadCancel();
         if (forceDirect && plan == null) {
             Planner.Plan dp = directPlan(p, d, "forced (test)");
             if (dp != null) { adoptDirect(dp); return; }
@@ -1332,6 +1450,7 @@ public final class Walk {
         long t0 = System.nanoTime();
         tick++;
         WalkTable.tick(mc);
+        if (WalkTable.loads != fillLoadsSeen) { fillLoadsSeen = WalkTable.loads; fillLoadTick = tick; }
         GridRequests.serve(mc);
         LocalPlayer p = mc.player;
         if (handBack && (p == null || !ai.rrw.kine.combat.KillAura.turned())) handBack = false;
@@ -1400,6 +1519,32 @@ public final class Walk {
             // route at an angle for a moment every few seconds while the route dimmed (RW, 2026-10-13)
             boolean waitForBest = !jobReplay && plan != null && !job.done;
             boolean fresh = np != null && !waitForBest && (np.id != seenId || np.pass != seenPass);
+            int fx0 = Math.min(p.getBlockX(), d[0]) - FILL_MARGIN, fz0 = Math.min(p.getBlockZ(), d[1]) - FILL_MARGIN;
+            int fx1 = Math.max(p.getBlockX(), d[0]) + FILL_MARGIN, fz1 = Math.max(p.getBlockZ(), d[1]) + FILL_MARGIN;
+            int fview = Math.min(FILL_VIEW, mc.options.renderDistance().get() - 2);
+            // (and only while chunks still come in or wait to be built: with none loaded in FILL_QUIET ticks the table
+            // has what the client will get. Waiting on chunks of the view that never came, the gate's far walks from
+            // leg 0's start, cleg1 and cgap, stood 600 ticks, all 30 waits, on dev130 and dev132: g132_g1s)
+            boolean unfilled = fresh && np.result.nearest && plan == null && job.done && fillWaits < FILL_WAITS
+                && !WalkTable.builtBox(fx0, fz0, fx1, fz1, p.getBlockX() >> 4, p.getBlockZ() >> 4, fview);
+            boolean filling = WalkTable.pending > 0 || tick - fillLoadTick < FILL_QUIET;
+            if (unfilled && Layer2.SEARCH_LOG && (filling || fillWaits == 0))
+                ai.rrw.kine.Kine.LOGGER.info("Kine walk fill wait " + (filling ? fillWaits + 1 : 0) + ": "
+                    + WalkTable.unbuiltInBox(fx0, fz0, fx1, fz1, p.getBlockX() >> 4, p.getBlockZ() >> 4, fview)
+                    + ", last chunk load " + (tick - fillLoadTick) + " ticks ago");
+            if (unfilled && filling) {
+                // a walk's first plan, no way onto the destination, while the table is still being built between here
+                // and it (the game just joined): the searches had only part of the map, so the floor nearest the goal
+                // may lie the other way. Planned again once more is built. RW's playtest of dev128 (02:04): Go 18 s after
+                // joining, from the starting island's spawn; the first plan walked to a floor 16 south, away from the
+                // course, and the loose search's first stage brought it back
+                fillWaits++;
+                fillWaitUntil = tick + FILL_WAIT_TICKS;
+                job = null;
+                message = "Reading the terrain";
+                measure(t0);
+                return;
+            }
             if (fresh) { seenId = np.id; seenPass = np.pass; }
             if (fresh) noWaySeen = np.result.nearest;
             if (fresh && np.result.nearest) {
@@ -1470,7 +1615,7 @@ public final class Walk {
                 replan(mc, FIRST_BUDGET);
             }
         } else if (state == State.PLANNING) {
-            replan(mc, FIRST_BUDGET);
+            if (tick >= fillWaitUntil) replan(mc, FIRST_BUDGET);
         }
 
         if (state != State.WALKING || plan == null) { measure(t0); return; }
@@ -1550,6 +1695,7 @@ public final class Walk {
                 // gives the next stage); the stages not reached count again from here (STAGE_RETRIES in a row: taking a
                 // new stage reset them, and the one-shot stood stuck through 35 stages at checkpoint 20, os123a)
                 stageRetries = 0;
+                if (takeAhead(p)) { measure(t0); return; }
                 clearStage(p, "at stage " + stagesTaken + ": planning on to the destination");
                 replan(mc, FIRST_BUDGET);
                 measure(t0);
@@ -1692,6 +1838,7 @@ public final class Walk {
             Recipe.safeFall = jumpSafeFall();
             Recipe.harmTicks = harmAllowance();
             keepHeight(p);
+            stageAhead(p);
             DoorOpener.update(mc, p, plan);
             long noDoor = DoorOpener.takeGivenUp();
             if (noDoor != 0) {
