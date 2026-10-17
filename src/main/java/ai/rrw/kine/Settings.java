@@ -70,7 +70,7 @@ public final class Settings {
     /** Collision avoidance's quiet time after it lets go, tenths of a second. */
     public static int collisionCooldown;
     public static boolean walkPathfinder, walkPathDisplay, walkSearchDisplay, walkLayer2, walkLayer2Display, walkElytraHops,
-        walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps, walkLoose, walkOpenDoors;
+        walkReadouts, walkSearchDetailed, walkParkour, walkDirect, walkFreeJumps, walkLoose, walkOpenDoors, walkCameraLock;
     /** The walk's gait (RW 2026-10-14, "add teh gaint"): the most the walk may use, as an Airbus thrust lever sets the
      *  most the autothrust may command; it still jumps where the ground needs it. GAIT_WALK: no sprint key at all;
      *  GAIT_SPRINT: sprinting, a jump only where the ground needs one; GAIT_SPRINT_JUMP: sprint-jumping as before (the
@@ -244,6 +244,8 @@ public final class Settings {
     // the most harmful blocks (cactus) may hurt, half hearts, with Parkour (the spiral agent, 2026-10-16)
     public static final Option WALK_HARMFUL_BLOCKS        = level("walkHarmfulBlocks", WALK, 0, 20, v -> walkHarmfulBlocks = v);
     public static final Option WALK_READOUTS              = toggle("walkReadouts", WALK, true, v -> walkReadouts = v);
+    // the camera follows the walk's facing while it walks (view/CameraLock; RW 2026-10-15 23:07, built 2026-10-17)
+    public static final Option WALK_CAMERA_LOCK           = toggle("walkCameraLock", WALK, false, v -> walkCameraLock = v);
 
     public static final Option ELYTRA_DURA_FAILSAFE       = toggle("elytraDuraFailsafe", SAFETY, true, v -> elytraDuraFailsafe = v);
     public static final Option FALL_PREVENTION            = toggle("fallPrevention", SAFETY, true, v -> fallPrevention = v);

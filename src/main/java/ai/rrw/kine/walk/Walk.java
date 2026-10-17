@@ -346,6 +346,11 @@ public final class Walk {
         return state == State.PLANNING || state == State.WALKING;
     }
 
+    /** Whether the walk steers you this tick (walking, its facing the rotation sent): the camera lock follows it then. */
+    public static boolean steeringNow() {
+        return state == State.WALKING && steering;
+    }
+
     /** Whether a walk that no longer controls you is still drawn: paused, arrived, or failed with a route. */
     public static boolean showing() {
         return !active() && plan != null && (state == State.STOPPED || state == State.ARRIVED || state == State.FAILED);

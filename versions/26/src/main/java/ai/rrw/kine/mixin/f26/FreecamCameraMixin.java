@@ -18,7 +18,12 @@ public abstract class FreecamCameraMixin {
 
     @Inject(method = "alignWithEntity", at = @At("TAIL"))
     private void kine$freecam(float partialTicks, CallbackInfo ci) {
-        if (!Freecam.active()) return;
+        if (!Freecam.active()) {
+            // the walk's camera lock (CameraLock): in first person, the facing the walk sends
+            if (ai.rrw.kine.view.CameraLock.frame(partialTicks, detached))
+                setRotation(ai.rrw.kine.view.CameraLock.yaw(), ai.rrw.kine.view.CameraLock.pitch());
+            return;
+        }
         setRotation(Freecam.yaw(), Freecam.pitch());
         setPosition(Freecam.x(partialTicks), Freecam.y(partialTicks), Freecam.z(partialTicks));
         detached = true;

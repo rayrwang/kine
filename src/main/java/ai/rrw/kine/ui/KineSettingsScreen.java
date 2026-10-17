@@ -221,6 +221,11 @@ public abstract class KineSettingsScreen extends Screen {
         + "jump. Sprint-jump: sprint-jumps where that is faster (the default). Elytra hops: that, and with an elytra worn "
         + "it may glide short hops off ledges and over gaps (gliding wears the elytra). Below Sprint-jump Parkour is off: "
         + "it needs sprint-jumps. Chased or about to be hurt, the walk goes faster than this for a while.";
+    private static final String DESC_WALK_CAMERA_LOCK =
+        "While the walk takes you, the camera looks where the walk faces, turning smoothly with it, as for recording a "
+        + "video. Moving the mouse looks round as always; a second after you stop, the camera turns back to the walk. "
+        + "Only the camera: the walk moves and turns you the same with it on or off. First person only. Off: the camera "
+        + "stays on your own view while the walk turns you (the default).";
     private static final String DESC_WALK_READOUTS =
         "While the walk takes you (or is paused with its route), the HUD's nav block gives the walk's destination, the "
         + "distance left along the route and the arrival time, in cyan. On the ground it takes the place of the "
@@ -401,6 +406,7 @@ public abstract class KineSettingsScreen extends Screen {
                    v -> v == 0 ? "OFF" : String.format(java.util.Locale.ROOT, "%.1f hearts", v / 2.0)),
             Opt.of("Gait", DESC_WALK_GAIT, Settings.WALK_GAIT),
             Opt.of("Distance and ETA", DESC_WALK_READOUTS, Settings.WALK_READOUTS),
+            Opt.of("Camera follows the walk", DESC_WALK_CAMERA_LOCK, Settings.WALK_CAMERA_LOCK, () -> Settings.walkPathfinder, null),
             Opt.of("Safety margin", DESC_WALK_MARGIN, Settings.WALK_MARGIN, () -> Settings.walkPathfinder,
                    v -> String.format(java.util.Locale.ROOT, "%.2f", v / 100.0)),
         }),
